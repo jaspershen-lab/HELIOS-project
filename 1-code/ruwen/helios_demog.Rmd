@@ -16,7 +16,7 @@ library(ggplot2)
 ```
 
 ```{r}
-helios_core = read_excel("HELIOS_Core_redacted.xlsx")
+helios_core = read_excel("data/HELIOS_Core_redacted.xlsx")
 helios_core
 table(helios_core$FREG14_Visit_number)
 n_distinct(helios_core$FREG0_PID)
@@ -161,7 +161,7 @@ table(helios_core$DHLQ490_Op4_4)
 
 ## combine to match microbiome
 ```{r}
-metadata_micro = read_csv("metadata_fil_01032024_redacted.csv")
+metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
 metadata_micro
 sample_list = metadata_micro$`Original Sample name`
 
@@ -170,8 +170,8 @@ helios_new
 ```
 
 ```{r}
-FFQ_food = read_xlsx("HELIOS_FFQA.xlsx")
-FFQ_nutrition = read_xlsx("HELIOS_FFQB.xlsx")
+FFQ_food = read_xlsx("data/HELIOS_FFQA.xlsx")
+FFQ_nutrition = read_xlsx("data/HELIOS_FFQB.xlsx")
 FFQ_food
 FFQ_nutrition
 ```
@@ -353,7 +353,7 @@ summary_df <- data.frame(
 )
 summary_df
 
-write.csv(summary_df, "nutrition_summary.csv", row.names=FALSE)
+write.csv(summary_df, "data/nutrition_summary.csv", row.names=FALSE)
 ```
 
 ## blood test glucose （whether fasting)
@@ -691,7 +691,7 @@ helios_new$DLAB81_Insulin
 ## microbiome and hba1c
 ### import data of microbiome
 ```{r}
-species = read_csv("abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv")
+species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv")
 #species$`SAM id`
 helios_new_list = helios_new$FREG1_Barcode
 #sample_list = metadata_micro$`Original Sample name`
@@ -775,7 +775,7 @@ phyloseq_filtered
 ```
 ```{r}
 filtered_species = as.data.frame(otu_table(otu_table_filtered))
-write.csv(filtered_species, "filtered_species.csv")
+write.csv(filtered_species, "data/filtered_species.csv")
 filtered_species
 ```
 
@@ -1510,7 +1510,7 @@ coffee_race
 
 ## DII
 ```{r}
-dii = read_xlsx("Updated_HELIOS_FFQA_with_DII_v2.xlsx")
+dii = read_xlsx("data/Updated_HELIOS_FFQA_with_DII_v2.xlsx")
 dii
 ```
 ```{r}
