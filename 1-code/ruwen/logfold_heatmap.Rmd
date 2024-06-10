@@ -1,0 +1,644 @@
+---
+title: "logfold_heatmap"
+author: "Ruwen Zhou"
+date: "5/30/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+```
+#demographic
+```{r}
+helios_core = read_excel("HELIOS_Core_redacted.xlsx")
+metadata_micro = read_csv("metadata_fil_01032024_redacted.csv")
+sample_list = metadata_micro$`Original Sample name`
+helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
+```
+#food nutrition
+```{r}
+FFQ_food = read_xlsx("HELIOS_FFQA.xlsx")
+FFQ_nutrition = read_xlsx("HELIOS_FFQB.xlsx")
+pid_list = helios_new$FREG0_PID
+food_new = filter(FFQ_food, FREG0_PID %in% pid_list)
+nutrition_new = filter(FFQ_nutrition, FREG0_PID %in% pid_list)
+```
+#species
+```{r}
+species = read_csv("abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv")
+#species$`SAM id`
+helios_new_list = helios_new$FREG1_Barcode
+#sample_list = metadata_micro$`Original Sample name`
+micro_list <- filter(metadata_micro, metadata_micro$`Original Sample name` %in% helios_new_list)
+species_new = filter(species, species$`SAM id` %in% micro_list$`Library ID`)
+species_new
+```
+
+```{r}
+new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
+#new_merge
+species_meta = merge(x = helios_new[,c("FREG1_Barcode", "DLAB27_Hba1C_Percent", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours","FBP16_Caffeine")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+species_meta = species_meta %>% drop_na(DLAB27_Hba1C_Percent)
+species_meta
+```
+
+```{r}
+metadata = species_meta[, c("FREG1_Barcode", "DLAB27_Hba1C_Percent","DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")]
+metadata
+drop = c("DLAB27_Hba1C_Percent", "Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
+species_data = species_meta[,!(names(species_meta) %in% drop)]
+species_data
+```
+
+#diabetes
+```{r}
+metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
+                                   ifelse(metadata$DLAB27_Hba1C_Percent >= 5.7 & metadata$DLAB27_Hba1C_Percent <= 6.4, "pre-diabetes",
+                                          ifelse(metadata$DLAB27_Hba1C_Percent < 5.7, "normal", NA)))
+
+metadata$glucose <- ifelse(metadata$DLAB25_Gluf_Mmol_L > 7, "diabetes",
+                                   ifelse(metadata$DLAB25_Gluf_Mmol_L >= 5.6 & metadata$DLAB25_Gluf_Mmol_L <= 7, "pre-diabetes",
+                                          ifelse(metadata$DLAB25_Gluf_Mmol_L >= 3.9 & metadata$DLAB25_Gluf_Mmol_L <= 5.6, "normal",
+                                                 ifelse(metadata$DLAB25_Gluf_Mmol_L < 3.9, "hypoglycemia", NA))))
+
+                                         
+
+metadata = metadata[!duplicated(metadata$FREG1_Barcode), ]
+metadata
+species_data = species_data[!duplicated(species_data$FREG1_Barcode), ]
+species_data
+
+```
+
+```{r}
+rownames(species_data) = species_data[,1]
+species_data[1] = NULL
+rownames(metadata) = metadata[,1]
+species_data
+metadata
+```
+
+
+```{r}
+OTU = otu_table(as.matrix(species_data), taxa_are_rows = FALSE)              
+SAM = sample_data(metadata, errorIfNULL = TRUE)
+
+phylo <- phyloseq(OTU, SAM)
+phylo
+phylo = filter_taxa(phylo, function(x) sum(x > 2) > (0.11 * length(x)), TRUE)
+```
+## Drop species that are present in less than 5% of the samples
+## Drop species with a total abundance less than 0.01% of the total reads
+```{r}
+prevalence_threshold <- 0.05
+otu_table_filtered <- filter_taxa(phylo, 
+                                  function(x) sum(x > 0) > (prevalence_threshold * nsamples(otu_table(phylo))),
+                                  prune=TRUE)
+otu_table_filtered
+
+abundance_threshold <- 0.0001
+phyloseq_filtered <- filter_taxa(otu_table_filtered, 
+                                  function(x) sum(x) > (abundance_threshold * sum(otu_table(phylo))),
+                                  prune=TRUE)
+
+phyloseq_filtered
+
+```
+
+## alpha analysis
+```{r}
+sample_data(phyloseq_filtered)$diabetes_status <- factor(sample_data(phyloseq_filtered)$diabetes_status,
+                                                         levels = c("normal", "pre-diabetes", "diabetes"))
+
+plot_richness(phyloseq_filtered, x = "diabetes_status", color = "diabetes_status", measures = c("Shannon", "Simpson", "Chao1", "Fisher")) + geom_boxplot() + theme_bw()
+```
+## Beta analysis
+```{r}
+dist = phyloseq::distance(phyloseq_filtered, method="bray")
+phylo.beta = ordinate(phyloseq_filtered, method="PCoA", distance=dist)
+
+plot_ordination(phyloseq_filtered, phylo.beta, type = "samples", color = "diabetes_status") + theme_bw() + stat_ellipse(aes(group=diabetes_status))
+```
+```{r}
+# Convert glucose levels to a factor
+sample_data(phyloseq_filtered)$diabetes_status <- factor(sample_data(phyloseq_filtered)$diabetes_status)
+
+phyloseq_filtered <- subset_samples(phyloseq_filtered, !is.na(sample_data(phyloseq_filtered)$diabetes_status))
+
+# Calculate the distance matrix using the ape package
+dist <- phyloseq::distance(phyloseq_filtered, method = "bray")
+dist_matrix <- as.matrix(dist)
+
+# Perform PERMANOVA using adonis2
+permanova <- adonis2(dist_matrix ~ sample_data(phyloseq_filtered)$diabetes_status)
+
+# Print the PERMANOVA results
+print(permanova)
+```
+
+
+## DA
+
+
+```{r}
+deseq_data <- phyloseq_to_deseq2(phyloseq_filtered, ~ diabetes_status)
+deseq_data <- DESeq(deseq_data)
+res <- results(deseq_data, contrast = c("diabetes_status", "diabetes", "normal"))
+res <- res[order(res$padj, na.last=NA), ]
+alpha <- 0.05
+res <- res[which(res$padj < alpha), ]
+res
+```
+
+```{r}
+sig_taxa <- rownames(res)
+sig_taxa <- sig_taxa[! sig_taxa %in% c('unclassified')]
+phyloseq_filtered_subset = subset_samples(phyloseq_filtered, diabetes_status %in% c("normal", "diabetes"))
+
+sig_otu_table <- otu_table(phyloseq_filtered_subset)[,sig_taxa]
+
+sig_otu_table_df <- as.data.frame(sig_otu_table)
+
+# Transpose the data frame to have taxa as rows and samples as columns
+
+
+sig_otu_table_log <- log10(sig_otu_table_df + 1)
+
+sig_otu_table_log_t <- t(sig_otu_table_log)
+sig_otu_table_log_matrix <- as.matrix(sig_otu_table_log_t)
+sig_otu_table_log_matrix
+#pheatmap(sig_otu_table_log_matrix)
+
+grouping_df = sample_data(phyloseq_filtered_subset)
+grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
+annotation_data <- as.data.frame(grouping_df$diabetes_status)
+rownames(annotation_data) <- grouping_df$FREG1_Barcode
+colnames(annotation_data) <- c('Group')
+
+group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
+names(group_colors) <- levels(grouping_df$diabetes_status)
+
+```
+
+```{r fig.width=16, fig.height=12}
+grouping_df
+
+grouping_df <- grouping_df[order(grouping_df$diabetes_status),]
+#sig_otu_table_log_matrix
+new = as.character(grouping_df$FREG1_Barcode)
+# Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
+order_matrix <- sig_otu_table_log_matrix[,new]
+
+#order_matrix
+# Reorder the matrix columns according to the order_vector
+#sig_otu_table_log_matrix_ordered <- sig_otu_table_log_matrix[, order_vector]
+#sig_otu_table_log_matrix_ordered
+# Now you can create the heatmap with the ordered matrix
+
+pheatmap(order_matrix, 
+         annotation_col = annotation_data,
+         cluster_cols = FALSE,
+         cluster_rows = T,
+         annotation_colors = list(Group = group_colors))
+
+pheatmap(order_matrix, 
+         annotation_col = annotation_data,
+         cluster_cols = T,
+         cluster_rows = T,
+         annotation_colors = list(Group = group_colors))
+
+```
+
+
+```{r}
+
+# Assuming phyloseq_filtered is already defined and contains the necessary data
+phyloseq_filtered_subset = subset_samples(phyloseq_filtered, diabetes_status %in% c("normal", "diabetes"))
+
+sig_otu_table <- otu_table(phyloseq_filtered_subset)[, sig_taxa]
+sig_otu_table_df <- as.data.frame(sig_otu_table)
+sample_data <- data.frame(sample_data(phyloseq_filtered_subset))
+sample_data$SampleID <- rownames(sample_data)
+combined_df = merge(x = sig_otu_table_df, y = sample_data, by.x = "row.names", by.y = "SampleID")
+rownames(combined_df) <- combined_df$Row.names
+combined_df$Row.names <- NULL
+combined_df
+
+
+metadata_columns <- c("FREG1_Barcode", "DLAB27_Hba1C_Percent", "DLAB25_Gluf_Mmol_L", "FREG10_Fasting_Hours", "FREG5_Ethnic_Group", "FBP16_Caffeine", "glucose")
+
+# Ensure you're working with a data frame that excludes these metadata columns for calculations
+abundance_data <- combined_df[, !(names(combined_df) %in% metadata_columns)]
+
+# Filter to include only normal samples and calculate the mean abundances
+normal_data <- abundance_data[abundance_data$diabetes_status == "normal", sapply(abundance_data, is.numeric)]
+
+# Calculate the mean abundances for these filtered columns
+normal_means <- rowMeans(normal_data, na.rm = TRUE)
+numeric_columns <- sapply(abundance_data, is.numeric)
+
+# Calculate log2 fold changes, ensuring to use only numeric columns
+log2fc <- sweep(abundance_data[, numeric_columns], 1, normal_means, FUN = function(x, y) log2((x + 1)/(y + 1)))
+log2fc_t = t(log2fc)
+# Prepare matrix for heatmap (ensure this only contains the log2fc data)
+log2fc_matrix <- as.matrix(log2fc_t)
+
+
+```
+
+```{r}
+grouping_df = sample_data(phyloseq_filtered_subset)
+grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
+annotation_data <- as.data.frame(grouping_df$diabetes_status)
+rownames(annotation_data) <- grouping_df$FREG1_Barcode
+colnames(annotation_data) <- c('Group')
+
+group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
+names(group_colors) <- levels(grouping_df$diabetes_status)
+
+
+grouping_df <- grouping_df[order(grouping_df$diabetes_status),]
+#sig_otu_table_log_matrix
+new = as.character(grouping_df$FREG1_Barcode)
+# Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
+ordered_log2fc_matrix <- log2fc_matrix[,new]
+ordered_log2fc_matrix
+```
+
+
+```{r fig.width=16, fig.height=12}
+# Generate the heatmap with annotations
+extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+pheatmap(ordered_log2fc_matrix, 
+         cluster_rows = TRUE, 
+         cluster_cols = FALSE, # Set to FALSE to maintain the custom order
+         scale = "none",
+         annotation_col = annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-6, 6, length.out = 101),
+         show_rownames = TRUE,
+         show_colnames = FALSE)
+
+pheatmap(ordered_log2fc_matrix, 
+         cluster_rows = TRUE, 
+         cluster_cols = TRUE, # Set to FALSE to maintain the custom order
+         scale = "none",
+         annotation_col = annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-6, 6, length.out = 101),
+         show_rownames = TRUE,
+         show_colnames = FALSE)
+
+```
+
+##z score
+mean of all samples 
+```{r}
+otu_table <- otu_table(phyloseq_filtered_subset)[, sig_taxa]
+
+sample_ids <- rownames(otu_table)
+otu_table
+# Apply Z-score normalization across columns
+
+z_score_matrix <- apply(otu_table, 2, scale)
+
+# Reapply the row names to the scaled matrix
+rownames(z_score_matrix) <- sample_ids
+#z_score_matrix
+
+grouping_df = sample_data(phyloseq_filtered_subset)
+grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
+annotation_data <- as.data.frame(grouping_df$diabetes_status)
+rownames(annotation_data) <- grouping_df$FREG1_Barcode
+colnames(annotation_data) <- c('Group')
+
+group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
+names(group_colors) <- levels(grouping_df$diabetes_status)
+
+
+grouping_df <- grouping_df[order(grouping_df$diabetes_status),]
+
+new = as.character(grouping_df$FREG1_Barcode)
+# Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
+z_score_matrix_t = t(z_score_matrix)
+
+z_score_matrix_new <- z_score_matrix_t[,new]
+#z_score_matrix_new
+
+
+```
+
+```{r fig.width=16, fig.height=12}
+extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+#png("diabetes_species_zscore.png", width = 1400, height = 1000, res = 120)
+pheatmap(z_score_matrix_new, 
+         cluster_rows = TRUE, 
+         cluster_cols = FALSE, # Set to FALSE to maintain the custom order
+         scale = "none",
+         annotation_col = annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 8)
+#dev.off()
+pheatmap(z_score_matrix_new, 
+         cluster_rows = TRUE, 
+         cluster_cols = TRUE, # Set to FALSE to maintain the custom order
+         scale = "none",
+         annotation_col = annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 8)
+```
+
+
+## ethinity
+```{r}
+phyloseq_filtered_race = subset_samples(phyloseq_filtered, FREG5_Ethnic_Group %in% c("C", "I", "M"))
+
+deseq_data1 <- phyloseq_to_deseq2(phyloseq_filtered_race, ~ FREG5_Ethnic_Group)
+deseq_data1 <- DESeq(deseq_data1)
+res1 <- results(deseq_data1, contrast = c("FREG5_Ethnic_Group", "C", "I"))
+res1 <- res1[order(res1$padj, na.last=NA), ]
+alpha <- 0.05
+res1 <- res1[which(res1$padj < alpha), ]
+rownames(res1)
+```
+
+```{r}
+sig_taxa1 <- rownames(res1)
+sig_taxa1 <- sig_taxa1[! sig_taxa1 %in% c('unclassified')]
+```
+
+##z score
+mean of all samples 
+```{r}
+otu_table1 <- otu_table(phyloseq_filtered_race)[, sig_taxa1]
+
+sample_ids <- rownames(otu_table1)
+
+# Apply Z-score normalization across columns
+
+z_score_matrix1 <- apply(otu_table1, 2, scale)
+
+# Reapply the row names to the scaled matrix
+rownames(z_score_matrix1) <- sample_ids
+#z_score_matrix
+
+grouping_df = sample_data(phyloseq_filtered_race)
+grouping_df$FREG5_Ethnic_Group <- factor(grouping_df$FREG5_Ethnic_Group)
+annotation_data <- as.data.frame(grouping_df$FREG5_Ethnic_Group)
+rownames(annotation_data) <- grouping_df$FREG1_Barcode
+colnames(annotation_data) <- c('Group')
+
+group_colors <- brewer.pal(n = length(levels(grouping_df$FREG5_Ethnic_Group)), "Set1")
+names(group_colors) <- levels(grouping_df$FREG5_Ethnic_Group)
+
+
+grouping_df <- grouping_df[order(grouping_df$FREG5_Ethnic_Group),]
+
+new = as.character(grouping_df$FREG1_Barcode)
+# Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
+z_score_matrix1_t = t(z_score_matrix1)
+
+z_score_matrix_new1 <- z_score_matrix1_t[,new]
+#z_score_matrix_new1
+
+
+```
+
+```{r fig.width=14, fig.height=10}
+extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+png("ethinity_species_zscore.png", width = 1400, height = 1000, res = 120)
+pheatmap(z_score_matrix_new1, 
+         cluster_rows = TRUE, 
+         cluster_cols = FALSE, # Set to FALSE to maintain the custom order
+         scale = "none",
+         annotation_col = annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 5)
+dev.off()
+
+pheatmap(z_score_matrix_new1, 
+         cluster_rows = TRUE, 
+         cluster_cols = TRUE, # Set to FALSE to maintain the custom order
+         scale = "none",
+         annotation_col = annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 8)
+```
+
+# coffee
+#FOOD AND MICROBIOME
+```{r}
+food_new
+
+food_meta = merge(x = helios_new[,c("FREG0_PID", "FREG1_Barcode")], y = food_new, by.y = "FREG0_PID", by.x = "FREG0_PID")
+
+food_meta = food_meta[!duplicated(food_meta$FREG1_Barcode),]
+food_meta
+
+#species_data$rowname <- rownames(species_data)
+species_data_row = species_data
+species_data_row$rowname <- rownames(species_data_row)
+```
+```{r}
+
+#rownames(food_meta) = food_meta[,2]
+#food_meta
+#species_data
+merged_data <- merge(species_data_row, food_meta, by.x = "rowname", by.y = "FREG1_Barcode", all = FALSE)
+merged_data
+```
+
+```{r}
+species_data2 = subset(species_data, rownames(species_data) %in% merged_data$rowname)
+species_data2
+food_meta2 = subset(food_meta, food_meta$FREG1_Barcode %in% merged_data$rowname)
+food_meta2
+```
+
+DFFQA124_coffee_sugar_g_per_day
+
+```{r}
+c("DFFQA124_coffee_sugar_g_per_day", "DFFQA124a_Coffee_condensed_milk", "DFFQA124b_Coffee_evaporated_milk", "DFFQA124c_Coffee_whole_milk", "DFFQA124d_Coffee_lowfat_milk", "DFFQA124e_Coffee_skimmed_milk", "DFFQA124f_Coffee_soya_milk", "DFFQA124g_Coffee_creamer_no_sugar", "DFFQA124h_Coffee_3in1", "DFFQA124i_Coffee_2in1", "DFFQA124j_Coffee_no_milk", "DFFQA130_bottled_coffee_serv_day")
+```
+
+```{r}
+coffee_cols <- c("DFFQA124_coffee_sugar_g_per_day", "DFFQA124a_Coffee_condensed_milk",
+                 "DFFQA124b_Coffee_evaporated_milk", "DFFQA124c_Coffee_whole_milk",
+                 "DFFQA124d_Coffee_lowfat_milk", "DFFQA124e_Coffee_skimmed_milk",
+                 "DFFQA124f_Coffee_soya_milk", "DFFQA124g_Coffee_creamer_no_sugar",
+                 "DFFQA124h_Coffee_3in1", "DFFQA124i_Coffee_2in1",
+                 "DFFQA124j_Coffee_no_milk", "DFFQA130_bottled_coffee_serv_day")
+
+food_meta2$coffee_drinker <- ifelse(rowSums(food_meta2[, coffee_cols] == 0) == length(coffee_cols),
+                                    "No Coffee", "Drinks Coffee")
+table(food_meta2$coffee_drinker)
+```
+
+```{r}
+
+rownames(food_meta2) = food_meta2[,2]
+food_meta3 = food_meta2[, c("FREG1_Barcode", "FREG0_PID", "coffee_drinker")]
+food_meta3
+
+OTU2 = otu_table(as.matrix(species_data2), taxa_are_rows = FALSE)              
+SAM2 = sample_data(food_meta3, errorIfNULL = TRUE)
+
+phylo2 <- phyloseq(OTU2, SAM2)
+phylo2
+#phylo = filter_taxa(phylo, function(x) sum(x > 2) > (0.11 * length(x)), TRUE)
+```
+## Drop species that are present in less than 5% of the samples
+## Drop species with a total abundance less than 0.01% of the total reads
+```{r}
+prevalence_threshold <- 0.01
+otu_table_filtered3 <- filter_taxa(phylo2, 
+                                  function(x) sum(x > 0) > (prevalence_threshold * nsamples(otu_table(phylo2))),
+                                  prune=TRUE)
+
+
+abundance_threshold <- 0.0001
+phyloseq_filtered3 <- filter_taxa(otu_table_filtered3, 
+                                  function(x) sum(x) > (abundance_threshold * sum(otu_table(phylo2))),
+                                  prune=TRUE)
+
+phyloseq_filtered3
+
+```
+
+## alpha analysis
+```{r}
+plot_richness(phylo2, x = "coffee_drinker", color = "coffee_drinker", measures = c("Shannon", "Simpson", "Chao1", "Fisher")) + geom_boxplot() + theme_bw()
+```
+## Beta analysis
+```{r}
+dist = phyloseq::distance(phylo2, method="bray")
+phylo.beta = ordinate(phylo2, method="PCoA", distance=dist)
+
+plot_ordination(phylo2, phylo.beta, type = "samples", color = "coffee_drinker") +
+  theme_bw() +
+  stat_ellipse(aes(group = coffee_drinker)) +
+  scale_color_discrete(name = "Coffee Drinker")
+```
+
+```{r}
+dist_matrix <- as.matrix(dist)
+
+# Perform PERMANOVA using adonis2
+permanova <- adonis2(dist_matrix ~ sample_data(phyloseq_filtered3)$coffee_drinker)
+
+# Print the PERMANOVA results
+permanova
+```
+
+## da
+```{r}
+
+deseq_data2 <- phyloseq_to_deseq2(phyloseq_filtered3, ~ coffee_drinker)
+deseq_data2 <- DESeq(deseq_data2)
+res2 <- results(deseq_data2, contrast = c("coffee_drinker", "Drinks Coffee", "No Coffee"))
+res2 <- res2[order(res2$padj, na.last=NA), ]
+alpha <- 0.05
+res2 <- res2[which(res2$padj < alpha), ]
+
+rownames(res2)
+```
+
+```{r}
+sig_taxa2 <- rownames(res2)
+sig_taxa2 <- sig_taxa2[! sig_taxa2 %in% c('unclassified')]
+```
+
+##z score
+mean of all samples 
+```{r}
+otu_table2 <- otu_table(phyloseq_filtered3)[, sig_taxa2]
+
+sample_ids <- rownames(otu_table2)
+
+# Apply Z-score normalization across columns
+
+z_score_matrix2 <- apply(otu_table2, 2, scale)
+
+# Reapply the row names to the scaled matrix
+rownames(z_score_matrix2) <- sample_ids
+#z_score_matrix
+
+grouping_df = sample_data(phyloseq_filtered3)
+grouping_df$coffee_drinker <- factor(grouping_df$coffee_drinker)
+annotation_data <- as.data.frame(grouping_df$coffee_drinker)
+rownames(annotation_data) <- grouping_df$FREG1_Barcode
+colnames(annotation_data) <- c('Group')
+
+group_colors <- brewer.pal(n = length(levels(grouping_df$coffee_drinker)), "Set1")
+names(group_colors) <- levels(grouping_df$coffee_drinker)
+
+
+grouping_df <- grouping_df[order(grouping_df$coffee_drinker),]
+
+new = as.character(grouping_df$FREG1_Barcode)
+# Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
+z_score_matrix2_t = t(z_score_matrix2)
+
+z_score_matrix_new2 <- z_score_matrix2_t[,new]
+#z_score_matrix_new1
+
+
+```
+
+```{r fig.width=10, fig.height=10}
+extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+png("coffee_species_zscore.png", width = 1400, height = 1000, res = 120)
+pheatmap(z_score_matrix_new2, 
+         cluster_rows = TRUE, 
+         cluster_cols = FALSE, # Set to FALSE to maintain the custom order
+         scale = "none",
+         annotation_col = annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 10)
+dev.off()
+
+pheatmap(z_score_matrix_new2, 
+         cluster_rows = TRUE, 
+         cluster_cols = TRUE, # Set to FALSE to maintain the custom order
+         scale = "none",
+         annotation_col = annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 14)
+```
+
+
+
+
+
+
+
+
