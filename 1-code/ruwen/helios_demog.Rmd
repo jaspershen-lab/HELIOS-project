@@ -13,6 +13,7 @@ library(tidyverse)
 library(dplyr)
 library(readxl)
 library(ggplot2)
+library(phyloseq)
 ```
 
 ```{r}
@@ -794,7 +795,7 @@ phylo.beta = ordinate(phyloseq_filtered, method="PCoA", distance=dist)
 plot_ordination(phyloseq_filtered, phylo.beta, type = "samples", color = "diabetes_status") + theme_bw() + stat_ellipse(aes(group=diabetes_status))
 ```
 ```{r}
-# Convert glucose levels to a factor
+library(vegan)
 sample_data(phyloseq_filtered)$diabetes_status <- factor(sample_data(phyloseq_filtered)$diabetes_status)
 
 phyloseq_filtered <- subset_samples(phyloseq_filtered, !is.na(sample_data(phyloseq_filtered)$diabetes_status))

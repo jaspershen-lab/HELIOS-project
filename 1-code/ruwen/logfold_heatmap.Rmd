@@ -423,7 +423,7 @@ z_score_matrix_new1 <- z_score_matrix1_t[,new]
 
 ```{r fig.width=14, fig.height=10}
 extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
-png("ethinity_species_zscore.png", width = 1400, height = 1000, res = 120)
+#png("ethinity_species_zscore.png", width = 1400, height = 1000, res = 120)
 pheatmap(z_score_matrix_new1, 
          cluster_rows = TRUE, 
          cluster_cols = FALSE, # Set to FALSE to maintain the custom order
@@ -434,7 +434,7 @@ pheatmap(z_score_matrix_new1,
          show_rownames = TRUE,
          show_colnames = FALSE,
          fontsize_row = 5)
-dev.off()
+#dev.off()
 
 pheatmap(z_score_matrix_new1, 
          cluster_rows = TRUE, 
@@ -610,7 +610,7 @@ z_score_matrix_new2 <- z_score_matrix2_t[,new]
 
 ```{r fig.width=10, fig.height=10}
 extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
-png("coffee_species_zscore.png", width = 1400, height = 1000, res = 120)
+#png("coffee_species_zscore.png", width = 1400, height = 1000, res = 120)
 pheatmap(z_score_matrix_new2, 
          cluster_rows = TRUE, 
          cluster_cols = FALSE, # Set to FALSE to maintain the custom order
@@ -621,7 +621,7 @@ pheatmap(z_score_matrix_new2,
          show_rownames = TRUE,
          show_colnames = FALSE,
          fontsize_row = 10)
-dev.off()
+#dev.off()
 
 pheatmap(z_score_matrix_new2, 
          cluster_rows = TRUE, 

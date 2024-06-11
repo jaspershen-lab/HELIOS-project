@@ -66,12 +66,12 @@ species_data
 
 #diabetes
 ```{r}
-#metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
-                                   #ifelse(metadata$DLAB27_Hba1C_Percent >= 5.7 & metadata$DLAB27_Hba1C_Percent <= 6.4, "pre-diabetes",
-                                          #ifelse(metadata$DLAB27_Hba1C_Percent < 5.7, "normal", NA)))
-
 metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
-                                   ifelse(metadata$DLAB27_Hba1C_Percent <= 6.4, "non-diabetes", NA))
+                                   ifelse(metadata$DLAB27_Hba1C_Percent >= 5.7 & metadata$DLAB27_Hba1C_Percent <= 6.4, "pre-diabetes",
+                                          ifelse(metadata$DLAB27_Hba1C_Percent < 5.7, "normal", NA)))
+
+#metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
+                                   #ifelse(metadata$DLAB27_Hba1C_Percent <= 6.4, "non-diabetes", NA))
 
 
 
@@ -128,8 +128,8 @@ phyloseq_filtered
 
 ## alpha analysis
 ```{r}
-sample_data(phyloseq_filtered)$diabetes_status <- factor(sample_data(phyloseq_filtered)$diabetes_status,
-                                                         levels = c("non-diabetes", "diabetes"))
+#sample_data(phyloseq_filtered)$diabetes_status <- factor(sample_data(phyloseq_filtered)$diabetes_status,
+                                                         #levels = c("non-diabetes", "diabetes"))
 
 plot_richness(phyloseq_filtered, x = "diabetes_status", color = "diabetes_status", measures = c("Shannon", "Simpson", "Chao1", "Fisher")) + geom_boxplot() + theme_bw()
 ```
@@ -163,6 +163,7 @@ print(permanova)
 ```{r}
 deseq_data <- phyloseq_to_deseq2(phyloseq_filtered, ~ diabetes_status)
 deseq_data <- DESeq(deseq_data)
+sample_data(phyloseq_filtered)
 res <- results(deseq_data, contrast = c("diabetes_status", "diabetes", "normal"))
 res <- res[order(res$padj, na.last=NA), ]
 alpha <- 0.05
@@ -467,7 +468,7 @@ z_score_matrix_new1
 
 gene_names_italics <- lapply(rownames(z_score_matrix_new1), function(x) bquote(italic(.(x))))
 column_gap_indices <- c(395)
-png("ethinity_genus_zscore_cut_auto.png", width = 1400, height = 1000, res = 120)
+#png("ethinity_genus_zscore_cut_auto.png", width = 1400, height = 1000, res = 120)
 pheatmap(z_score_matrix_new1, 
          cluster_rows = TRUE,
          cluster_cols = FALSE,
@@ -484,7 +485,7 @@ pheatmap(z_score_matrix_new1,
          gaps_col = column_gap_indices)     # Add gaps between row clusters
 
 
-dev.off()
+#dev.off()
 ```
 
 
@@ -500,47 +501,29 @@ dev.off()
 #hc <- hclust(dist_matrix, method = "complete")
 
 # Reorder the rows of the original matrix based on clustering
-z_score_matrix_new1_reordered <- z_score_matrix_new1[ordered_row_names, ]
+#z_score_matrix_new1_reordered <- z_score_matrix_new1[ordered_row_names, ]
 
 #z_score_matrix_new1_reordered
 # Now z_score_matrix_new1_reordered is your matrix with rows reordered according to clustering
-column_gap_indices <- c(395)
-row_gap_indices <- c(22, 46, 54)
+#column_gap_indices <- c(395)
+#row_gap_indices <- c(22, 46, 54)
 #png("ethinity_genus_zscore_cut2.png", width = 1400, height = 1000, res = 120)
-pheatmap(z_score_matrix_new1_reordered, 
-         cluster_rows = FALSE, 
-         cluster_cols = FALSE, # Set to FALSE to maintain the custom order
-         scale = "none",
-         annotation_col = annotation_data,
-         color = rev(extended_palette), 
-         breaks = seq(-1, 1, length.out = 101),
-         show_rownames = TRUE,
-         show_colnames = FALSE,
-         fontsize_row = 10,
-         gaps_col = column_gap_indices,
-         gaps_row = row_gap_indices)
+#pheatmap(z_score_matrix_new1_reordered, 
+         #cluster_rows = FALSE, 
+         #cluster_cols = FALSE, # Set to FALSE to maintain the custom order
+         #scale = "none",
+         #annotation_col = annotation_data,
+         #color = rev(extended_palette), 
+         #breaks = seq(-1, 1, length.out = 101),
+         #show_rownames = TRUE,
+         #show_colnames = FALSE,
+         #fontsize_row = 10,
+         #gaps_col = column_gap_indices,
+         #gaps_row = row_gap_indices)
 #dev.off()
 ```
 
 
-```{r}
-library(grid)
-
-column_gap_indices <- c(395)
-
-heatmap_result <- pheatmap(z_score_matrix_new1, cluster_rows = TRUE, cluster_cols = FALSE, scale = "none", 
-               annotation_col = annotation_data, color = rev(extended_palette), 
-               breaks = seq(-1, 1, length.out = 101), show_rownames = TRUE, show_colnames = FALSE, 
-               fontsize_row = 10, cutree_rows = 4, gaps_row = 1, gaps_col = column_gap_indices)
-
-grid_object <- heatmap_result$gtable
-grid_object
-# Draw the grid graphic
-grid.draw(grid_object)
-
-# Add borders
-grid.rect(gp = gpar(fill = NA, col = "black"))
-```
 
 
 
@@ -707,7 +690,7 @@ z_score_matrix_new2 <- z_score_matrix2_t[,new]
 
 ```{r fig.width=10, fig.height=10}
 extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
-png("coffee_genus_zscore.png", width = 1400, height = 1000, res = 120)
+#png("coffee_genus_zscore.png", width = 1400, height = 1000, res = 120)
 pheatmap(z_score_matrix_new2, 
          cluster_rows = TRUE, 
          cluster_cols = FALSE, # Set to FALSE to maintain the custom order
@@ -718,7 +701,7 @@ pheatmap(z_score_matrix_new2,
          show_rownames = TRUE,
          show_colnames = FALSE,
          fontsize_row = 10)
-dev.off()
+#dev.off()
 pheatmap(z_score_matrix_new2, 
          cluster_rows = TRUE, 
          cluster_cols = TRUE, # Set to FALSE to maintain the custom order
