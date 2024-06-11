@@ -46,7 +46,7 @@ full_data <- meta_data %>%
   left_join(food_intake, by = "Participant_ID") %>%
   left_join(species_abundance, by = "Participant_ID")
 
-colnames(full_data)
+full_data
 
 ```
 
@@ -68,7 +68,7 @@ alluvial_data = subset(alluvial_data, FREG5_Ethnic_Group != "O")
 alluvial_data
 ```
 ```{r fig.width=10, fig.height=15}
-png("figure/alluvial_ethnic_food_micro.png", width = 1000, height = 1400, res = 120)
+#png("figure/alluvial_ethnic_food_micro.png", width = 1000, height = 1400, res = 120)
 ggplot(data = alluvial_data,
        aes(axis1 = Food_Group, axis2 = FREG5_Ethnic_Group, axis3 = Microbiome, y = Abundance)) +
   geom_alluvium(aes(fill = FREG5_Ethnic_Group)) +
@@ -78,11 +78,82 @@ ggplot(data = alluvial_data,
   ggtitle("Relationships between Ethnicity, Diet, and Microbiome") +
   xlab("Categories") +
   ylab("Abundance")
-dev.off()
+#dev.off()
 ```
 
 
+## bubble plot
 
+
+```{r}
+race_food <- meta_data %>%
+  left_join(food_intake, by = "Participant_ID")
+race_food 
+
+summarized_race_food <- race_food %>%
+  group_by(FREG5_Ethnic_Group) %>%
+  summarise(Fish = mean(Fish),
+            Crustacean = mean(Crustacean),
+            Mollusk = mean(Mollusk),
+            Seafood_dishes = mean(Seafood_dishes),
+            Poultry = mean(Poultry),
+            Red_meat = mean(Red_meat),
+            Meat_dishes = mean(Meat_dishes),
+            Processed_meat = mean(Processed_meat),
+            Dairy = mean(Dairy),
+            Cruciferous_vegetables = mean(Cruciferous_vegetables),
+            Legumes = mean(Legumes),
+            Mushroom = mean(Mushroom),
+            Fruits = mean(Fruits),
+            Wholegrain = mean(Wholegrain),
+            Chapati = mean(Chapati),
+            Noodle_dishes = mean(Noodle_dishes),
+            Deep_fried = mean(Deep_fried),
+            Coffee = mean(Coffee),
+            Tea = mean(Tea),
+            )
+
+summarized_race_food
+```
+
+```{r}
+bubble2 = summarized_race_food %>%
+  select(FREG5_Ethnic_Group, Fish, Crustacean, Mollusk,Seafood_dishes,Poultry,Red_meat,Meat_dishes,Processed_meat,Dairy,
+         Cruciferous_vegetables, Legumes, Mushroom, Fruits, Wholegrain, Chapati, Noodle_dishes, Deep_fried,Coffee, Tea) %>%
+  pivot_longer(cols = c(Fish, Crustacean, Mollusk,Seafood_dishes,Poultry,Red_meat,Meat_dishes,Processed_meat,Dairy,
+                        Cruciferous_vegetables, Legumes, Mushroom, Fruits, Wholegrain, Chapati, Noodle_dishes, Deep_fried,Coffee, Tea),
+               names_to = "Food_Group",
+               values_to = "Intake")
+
+bubble2
+```
+```{r}
+ggplot(bubble2, aes(x = FREG5_Ethnic_Group, y = Food_Group, size = Intake, color = Intake)) +
+  geom_point(alpha = 0.7) +
+  scale_size_continuous(range = c(0, 15), name = "Food Intake") +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(title = "Bubble Plot of Food Intake by Ethnicity and Diet",
+       x = "Ethnicity",
+       y = "Diet") +
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+## radar chart
+```{r}
+
+data_long <- pivot_longer(summarized_race_food[1:3,], cols = -FREG5_Ethnic_Group, names_to = "Food_Type", values_to = "Mean_Intake")
+
+# Plotting
+ggplot(data_long, aes(x = FREG5_Ethnic_Group, y = Mean_Intake, fill = FREG5_Ethnic_Group)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_wrap(~ Food_Type, scales = "free_y") +
+  theme_minimal() +
+  labs(x = "Ethnic Group", y = "Average Daily Intake", title = "Daily Food Intake by Ethnic Group")
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1)) # Adjust text angle for better legibility
+
+
+```
 
 
 
