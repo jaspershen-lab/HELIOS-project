@@ -222,6 +222,8 @@ head(sort(setdiff(
 
 sample_info$class <- "Subject"
 
+head(sample_info)
+
 gut_microbiome_data <-
   create_microbiome_dataset(
     expression_data = expression_data,
