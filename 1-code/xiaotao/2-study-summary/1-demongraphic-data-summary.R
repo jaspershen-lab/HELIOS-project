@@ -503,35 +503,78 @@ colnames(df)
 ###age, gender, ethnic_group, bmi, waist, hip, Sbp, dbp
 ##hr (heart rate),
 
-# df %>%
-#   dplyr::mutate(sample_id = factor(sample_id)) %>%
-#   ggplot(aes(x = age, y = sample_id)) +
-#   # geom_line(aes(y = sample_id, x = age, group = sample_id), color = "black") +
-#   geom_segment(aes(
-#     x = 0,
-#     y = sample_id,
-#     xend = age,
-#     yend = sample_id
-#   )) +
-#   labs(x = "Age (years)", y = "Subjects") +
-#   theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
-
-
+###age distributation
 library(gghalves)
 
 plot_age <-
   df %>%
   ggplot(aes(x = "class", y = age)) +
-  geom_half_violin(fill = ggsci::pal_aaas()(n = 10)[4], 
-                   color = "black",
-                   alpha = 0.5) +
+  geom_half_violin(
+    fill = ggsci::pal_aaas()(n = 10)[4],
+    color = "black",
+    alpha = 0.5
+  ) +
   geom_half_boxplot(
     fill = ggsci::pal_aaas()(n = 10)[4],
     alpha = 0.5,
     color = "black",
     side = "r"
   ) +
-  theme_bw() +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = median(y), label = paste("Median:", round(median(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.25), label = paste("25%:", round(
+        quantile(y, 0.25), 2
+      ))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -0.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.75), label = paste("75%:", round(
+        quantile(y, 0.75), 2
+      ))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = min(y), label = paste("Min:", round(min(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -1,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = max(y), label = paste("Max:", round(max(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.5,
+    color = "black"
+  ) +
+  theme_base +
   labs(x = "", y = "Age (years)") +
   scale_x_discrete(expand = expansion(mult = c(0, 0))) +
   theme(
@@ -540,3 +583,572 @@ plot_age <-
     axis.ticks.x = element_blank()
   )
 plot_age
+
+ggsave(plot_age,
+       filename = "age_distributation.pdf",
+       width = 4,
+       height = 7)
+
+ggsave(plot_age,
+       filename = "age_distributation.png",
+       width = 4,
+       height = 7)
+
+#####BMI distributation
+plot_bmi <-
+  df %>%
+  ggplot(aes(x = "class", y = bmi)) +
+  geom_half_violin(
+    fill = ggsci::pal_tron()(n = 10)[1],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = ggsci::pal_tron()(n = 10)[1],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = median(y), label = paste("Median:", round(median(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.25), label = paste("25%:", round(
+        quantile(y, 0.25), 2
+      ))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -0.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.75), label = paste("75%:", round(
+        quantile(y, 0.75), 2
+      ))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = min(y), label = paste("Min:", round(min(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -1,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = max(y), label = paste("Max:", round(max(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.5,
+    color = "black"
+  ) +
+  theme_base +
+  labs(x = "", y = "BMI (kg/m^2)") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0))) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+plot_bmi
+
+ggsave(plot_bmi,
+       filename = "bmi_distributation.pdf",
+       width = 4,
+       height = 7)
+
+ggsave(plot_bmi,
+       filename = "bmi_distributation.png",
+       width = 4,
+       height = 7)
+
+
+##waist distributation
+plot_waist <-
+  df %>%
+  dplyr::mutate(waist = rowMeans(select(., waist1, waist2, waist3), na.rm = TRUE)) %>%
+  ggplot(aes(x = "class", y = waist)) +
+  geom_half_violin(
+    fill = ggsci::pal_tron()(n = 10)[3],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = ggsci::pal_tron()(n = 10)[3],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = median(y), label = paste("Median:", round(median(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.25), label = paste("25%:", round(
+        quantile(y, 0.25), 2
+      ))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -0.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.75), label = paste("75%:", round(
+        quantile(y, 0.75), 2
+      ))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = min(y), label = paste("Min:", round(min(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -1,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = max(y), label = paste("Max:", round(max(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.5,
+    color = "black"
+  ) +
+  theme_base +
+  labs(x = "", y = "Waist (cm)") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0))) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+plot_waist
+
+ggsave(plot_waist,
+       filename = "waist_distributation.pdf",
+       width = 4,
+       height = 7)
+
+ggsave(plot_waist,
+       filename = "waist_distributation.png",
+       width = 4,
+       height = 7)
+
+
+
+
+
+##hip distributation
+plot_hip <-
+  df %>%
+  dplyr::mutate(hip = rowMeans(select(., hip1, hip2, hip3), na.rm = TRUE)) %>%
+  ggplot(aes(x = "class", y = hip)) +
+  geom_half_violin(
+    fill = ggsci::pal_tron()(n = 10)[4],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = ggsci::pal_tron()(n = 10)[4],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = median(y), label = paste("Median:", round(median(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.25), label = paste("25%:", round(
+        quantile(y, 0.25), 2
+      ))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -0.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.75), label = paste("75%:", round(
+        quantile(y, 0.75), 2
+      ))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = min(y), label = paste("Min:", round(min(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -1,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = max(y), label = paste("Max:", round(max(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.5,
+    color = "black"
+  ) +
+  theme_base +
+  labs(x = "", y = "hip (cm)") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0))) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+plot_hip
+
+ggsave(plot_hip,
+       filename = "hip_distributation.pdf",
+       width = 4,
+       height = 7)
+
+ggsave(plot_hip,
+       filename = "hip_distributation.png",
+       width = 4,
+       height = 7)
+
+
+
+
+
+##dbp distributation
+plot_dbp <-
+  df %>%
+  dplyr::mutate(dbp = rowMeans(select(., DBP12_Dbp_1, DBP13_Dbp_2, DBP14_Dbp_3), na.rm = TRUE)) %>%
+  ggplot(aes(x = "class", y = dbp)) +
+  geom_half_violin(
+    fill = ggsci::pal_tron()(n = 10)[5],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = ggsci::pal_tron()(n = 10)[5],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = median(y), label = paste("Median:", round(median(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.25), label = paste("25%:", round(
+        quantile(y, 0.25), 2
+      ))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -0.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.75), label = paste("75%:", round(
+        quantile(y, 0.75), 2
+      ))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = min(y), label = paste("Min:", round(min(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -1,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = max(y), label = paste("Max:", round(max(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.5,
+    color = "black"
+  ) +
+  theme_base +
+  labs(x = "", y = "dbp (cm)") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0))) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+plot_dbp
+
+ggsave(plot_dbp,
+       filename = "dbp_distributation.pdf",
+       width = 4,
+       height = 7)
+
+ggsave(plot_dbp,
+       filename = "dbp_distributation.png",
+       width = 4,
+       height = 7)
+
+
+
+
+
+
+##sbp distributation
+plot_sbp <-
+  df %>%
+  dplyr::mutate(sbp = rowMeans(select(., DBP9_Sbp_1, DBP10_Sbp_2, DBP11_Sbp_3), na.rm = TRUE)) %>%
+  ggplot(aes(x = "class", y = sbp)) +
+  geom_half_violin(
+    fill = ggsci::pal_tron()(n = 10)[6],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = ggsci::pal_tron()(n = 10)[6],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = median(y), label = paste("Median:", round(median(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.25), label = paste("25%:", round(
+        quantile(y, 0.25), 2
+      ))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -0.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.75), label = paste("75%:", round(
+        quantile(y, 0.75), 2
+      ))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = min(y), label = paste("Min:", round(min(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -1,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = max(y), label = paste("Max:", round(max(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.5,
+    color = "black"
+  ) +
+  theme_base +
+  labs(x = "", y = "sbp (cm)") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0))) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+plot_sbp
+
+ggsave(plot_sbp,
+       filename = "sbp_distributation.pdf",
+       width = 4,
+       height = 7)
+
+ggsave(plot_sbp,
+       filename = "sbp_distributation.png",
+       width = 4,
+       height = 7)
+
+
+
+
+##hr distributation
+plot_hr <-
+  df %>%
+  dplyr::mutate(hr = rowMeans(select(., DBP15_Hr_1, DBP16_Hr_2, DBP17_Hr_3), na.rm = TRUE)) %>%
+  ggplot(aes(x = "class", y = hr)) +
+  geom_half_violin(
+    fill = ggsci::pal_tron()(n = 10)[6],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = ggsci::pal_tron()(n = 10)[6],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = median(y), label = paste("Median:", round(median(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.25), label = paste("25%:", round(
+        quantile(y, 0.25), 2
+      ))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -0.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = quantile(y, 0.75), label = paste("75%:", round(
+        quantile(y, 0.75), 2
+      ))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.2,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = min(y), label = paste("Min:", round(min(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = 1.5,
+    hjust = -1,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = function(y) {
+      return(data.frame(y = max(y), label = paste("Max:", round(max(
+        y
+      ), 2))))
+    },
+    geom = "text",
+    vjust = -1.5,
+    hjust = 1.5,
+    color = "black"
+  ) +
+  theme_base +
+  labs(x = "", y = "hr (cm)") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0))) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+plot_hr
+
+ggsave(plot_hr,
+       filename = "hr_distributation.pdf",
+       width = 4,
+       height = 7)
+
+ggsave(plot_hr,
+       filename = "hr_distributation.png",
+       width = 4,
+       height = 7)
+
+
+
