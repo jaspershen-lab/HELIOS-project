@@ -8,6 +8,9 @@ library(tidymass)
 
 load("3-data_analysis/1-data-preparation/1-phenotype-data/phenotype_data.rda")
 
+dictionary <-
+  readxl::read_xlsx("2-data/from_ruwen/SG100K Data Dictionary - v44_redacted.xlsx")
+
 ###plylum
 phylum_data <-
   readr::read_csv(
@@ -122,7 +125,6 @@ required_columns <- c("species",
                       "phylum",
                       "superkingdom")
 
-
 final_info2 <-
   final_info %>%
   purrr::map(function(x) {
@@ -170,7 +172,7 @@ variable_info <-
   dplyr::select(rev(required_columns))
 
 colnames(variable_info) <-
-  c("Domain",
+  c("Kingdom",
     "Phylum",
     "Class",
     "Order",
@@ -219,7 +221,6 @@ head(sort(setdiff(
   colnames(genus_data)[-1], unique(variable_info$Genus)
 )))
 
-
 sample_info$class <- "Subject"
 
 head(sample_info)
@@ -232,6 +233,11 @@ gut_microbiome_data <-
   )
 
 getwd()
+
+gut_microbiome_data <-
+  gut_microbiome_data %>%
+  activate_mass_dataset(what = "sample_info") %>%
+  filter(!is.na(subject_id))
 
 save(gut_microbiome_data, file = "gut_microbiome_data.rda")
 

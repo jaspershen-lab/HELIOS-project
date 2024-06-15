@@ -34,3 +34,12 @@ theme_base <-
     panel.grid.minor = element_blank(),
     plot.title = element_text(size = 14, hjust = 0.5)
   )
+
+
+microbe_class_color <-
+  c(
+    "Archaea" = "#FFA500",
+    "Bacteria" = "#FF6347",
+    "Viruses" = "#FFD700",
+    "NA" = "#A9A9A9"
+  )

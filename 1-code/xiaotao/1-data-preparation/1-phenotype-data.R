@@ -17,56 +17,66 @@ dir.create(
   showWarnings = FALSE,
   recursive = TRUE
 )
+
 setwd("3-data_analysis/1-data-preparation/1-phenotype-data/")
 
-idx <-
+idx1 <-
   match(colnames(data),
         dictionary$`Variable Name - HELIOS Data Dictionary`)
 
-dictionary$`HELIOS Export Table Name (Long)`[idx]
+idx2 <-
+  stringdist::stringdistmatrix(colnames(data),
+                               dictionary$`Variable Name - HELIOS Data Dictionary`) %>%
+  apply(1, function(x) {
+    which.min(x)
+  })
+
+data.frame(
+  colnames(data),
+  dictionary$`Variable Name - HELIOS Data Dictionary`[idx1],
+  dictionary$`Variable Name - HELIOS Data Dictionary`[idx2]
+)
+
+idx2[c(12, 24, 34)] <- NA
+
+colnames(data)
+
+new_colnames <- dictionary$`Variable Name - HELIOS Data Dictionary`[idx2]
+
+new_colnames[which(is.na(new_colnames))] <- colnames(data)[which(is.na(new_colnames))]
+
+colnames(data) <- new_colnames
+
+new_colnames_info <-
+  dictionary[idx2, ]
+
+colnames(data) == new_colnames_info$`Variable Name - HELIOS Data Dictionary`
+
+###remove the clinical information
+unique(new_colnames_info$Subsection)
+
+new_colnames_info$`Description of variable`[which(new_colnames_info$Subsection %in% c("Measurements"))]
+
+##remove Measurements, Chemistry, CBC
 
 data <-
-  data %>%
-  dplyr::rename(subject_id = "FREG0_PID")
+  data[, -which(new_colnames_info$Subsection %in% c("Chemistry", "CBC"))]
+
+new_colnames_info <-
+  new_colnames_info[-which(new_colnames_info$Subsection %in% c("Measurements", "Chemistry", "CBC")), ]
 
 library(plyr)
 
 data$sample_id <-
-  paste(data$subject_id, data$FREG14_Visit_number, sep = "_")
+  paste(data$FREG0_PID, data$FREG14_Visit_number, sep = "_")
 
 data <-
   data %>%
-  dplyr::select(subject_id, sample_id, everything())
-
-data <-
-  data %>%
-  dplyr::rename(
-    "visit_number" = "FREG14_Visit_number",
-    "attended_date" = "FREG3_Attended_Date",
-    "age" = "FREG8_Age",
-    "gender" = "FREG7_Gender",
-    "nationality" = "FREG4_Nationality",
-    "ethnic_group" = "FREG5_Ethnic_Group",
-    "ethnicity_NRIC" = "FREG6_Ethnicity_NRIC",
-    "fasting_hours" = "FREG10_Fasting_Hours",
-    "height" = "DBI13_Height",
-    weight = "DBI14_Weight",
-    waist1 = "FWH16_Waist1",
-    waist2 = "FWH17_Waist2",
-    waist3 = "FWH18_Waist3",
-    hip1 = "FWH19_Hip1",
-    hip2 = "FWH20_Hip2",
-    hip3 = "FWH21_Hip3",
-    caffeine = "FBP16_Caffeine",
-    smoking = "FBP17_Smoking"
-  )
-
-data <-
-  data %>%
-  dplyr::select(subject_id:DLAB101_Lab, DLAB51_Pbf)
+  dplyr::select(FREG0_PID, sample_id, everything())
 
 phenotype_data <-
-  data
+  data %>%
+  dplyr::rename(subject_id = FREG0_PID)
 
 unique(id2$`Library ID`)
 
@@ -74,14 +84,13 @@ id2$`Original Sample name`
 
 id2 <-
   id2 %>%
-  dplyr::rename(library_id = `Library ID`, original_sample_name = "Original Sample name") %>% 
+  dplyr::rename(library_id = `Library ID`, original_sample_name = "Original Sample name") %>%
   dplyr::distinct(original_sample_name, .keep_all = TRUE)
 
 phenotype_data <-
   phenotype_data %>%
   dplyr::mutate(FREG1_Barcode = as.character(FREG1_Barcode)) %>%
-  dplyr::left_join(id2[, c("library_id", "original_sample_name")], 
-                   by = c("FREG1_Barcode" = "original_sample_name")) %>%
+  dplyr::left_join(id2[, c("library_id", "original_sample_name")], by = c("FREG1_Barcode" = "original_sample_name")) %>%
   dplyr::select(subject_id, sample_id, library_id, everything())
 
 save(phenotype_data, file = "phenotype_data.rda")

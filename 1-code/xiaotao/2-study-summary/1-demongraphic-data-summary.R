@@ -10,8 +10,8 @@ load(
   "3-data_analysis/1-data-preparation/3-gut-microbiome-data/gut_microbiome_data.rda"
 )
 
-dir.create("3-data_analysis/2-study-summary")
-setwd("3-data_analysis/2-study-summary/")
+dir.create("3-data_analysis/2-study-summary/1-demongraphic-data-summary")
+setwd("3-data_analysis/2-study-summary/1-demongraphic-data-summary")
 
 sample_info <-
   extract_sample_info(gut_microbiome_data)
@@ -36,10 +36,10 @@ subject_info <-
 library(circlize)
 
 ##age, gender, ethnic_group, bmi
-subject_info$height
-subject_info$weight
+subject_info$DBI13_Height
+subject_info$DBI14_Weight
 subject_info$bmi <-
-  subject_info$weight / (subject_info$height / 100) ^ 2
+  subject_info$DBI14_Weight / (subject_info$DBI13_Height / 100) ^ 2
 
 df <-
   data.frame(
@@ -49,7 +49,7 @@ df <-
     subject_info,
     stringsAsFactors = TRUE
   ) %>%
-  # dplyr::arrange(age) %>%
+  # dplyr::arrange(FREG8_Age) %>%
   dplyr::mutate(factors = factor(factors, levels = factors))
 
 circos.par(
@@ -64,9 +64,9 @@ circos.initialize(factors = df$factors,
                   x = df$x,
                   xlim = c(0.5, 1.5))
 
-##age
-range(df$age, na.rm = TRUE)
-temp_value <- df$age
+##FREG8_Age
+range(df$FREG8_Age, na.rm = TRUE)
+temp_value <- df$FREG8_Age
 
 circos.track(
   factors = df$factors,
@@ -181,7 +181,7 @@ circos.track(
 )
 
 ## sex
-temp_sex <- df$gender
+temp_sex <- df$FREG7_Gender
 temp_sex[is.na(temp_sex)] <- "grey"
 temp_sex[temp_sex == "F"] <- gender_colors["F"]
 temp_sex[temp_sex == "M"] <- gender_colors["M"]
@@ -220,7 +220,7 @@ circos.track(
 )
 
 ## Ethnicity
-temp_ethnicity <- df$ethnic_group
+temp_ethnicity <- df$FREG5_Ethnic_Group
 # temp_ethnicity[is.na(temp_ethnicity)] <- "grey"
 temp_ethnicity[temp_ethnicity == "Caucasian"] <-
   ethnicity_colors["Caucasian"]
@@ -267,13 +267,13 @@ circos.track(
   }
 )
 
-###age
-#####age
-age <-
-  df$age
+###FREG8_Age
+#####FREG8_Age
+FREG8_Age <-
+  df$FREG8_Age
 library(gghalves)
 plot_age <-
-  age %>%
+  FREG8_Age %>%
   data.frame(class = "class", value = .) %>%
   ggplot(aes(x = class, y = value)) +
   geom_boxplot(outlier.shape = NA) +
@@ -296,15 +296,14 @@ plot_age <-
   )
 plot_age
 
-# ggsave(plot_age,
-#        filename = "plot_age.pdf",
-#        width = 3,
-#        height = 10)
-
-# ggsave(plot_age,
-#        filename = "plot_age.png",
-#        width = 3,
-#        height = 10)
+ggsave(plot_age,
+       filename = "plot_age.pdf",
+       width = 3,
+       height = 10)
+ggsave(plot_age,
+       filename = "plot_age.png",
+       width = 3,
+       height = 10)
 
 ###BMI
 
@@ -335,20 +334,20 @@ plot_bmi <-
   )
 plot_bmi
 
-# ggsave(plot_bmi,
-#        filename = "plot_bmi.pdf",
-#        width = 3,
-#        height = 10)
-# ggsave(plot_bmi,
-#        filename = "plot_bmi.png",
-#        width = 3,
-#        height = 10)
+ggsave(plot_bmi,
+       filename = "plot_bmi.pdf",
+       width = 3,
+       height = 10)
+ggsave(plot_bmi,
+       filename = "plot_bmi.png",
+       width = 3,
+       height = 10)
 
 
 ##sex
 
 sex <-
-  df$gender
+  df$FREG7_Gender
 
 plot_sex <-
   sex %>%
@@ -374,19 +373,18 @@ plot_sex <-
 
 plot_sex
 
-# ggsave(plot_sex,
-#        filename = "plot_sex.pdf",
-#        width = 1.5,
-#        height = 10)
-# ggsave(plot_sex,
-#        filename = "plot_sex.png",
-#        width = 1.5,
-#        height = 10)
-
+ggsave(plot_sex,
+       filename = "plot_sex.pdf",
+       width = 1.5,
+       height = 10)
+ggsave(plot_sex,
+       filename = "plot_sex.png",
+       width = 1.5,
+       height = 10)
 
 ##ethnicity
 ethnicity <-
-  df$ethnic_group
+  df$FREG5_Ethnic_Group
 
 plot_ethnicity <-
   ethnicity %>%
@@ -412,25 +410,24 @@ plot_ethnicity <-
 
 plot_ethnicity
 
-# ggsave(
-#   plot_ethnicity,
-#   filename = "plot_ethnicity.pdf",
-#   width = 1.5,
-#   height = 10
-# )
-
-# ggsave(
-#   plot_ethnicity,
-#   filename = "plot_ethnicity.png",
-#   width = 1.5,
-#   height = 10
-# )
+ggsave(
+  plot_ethnicity,
+  filename = "plot_ethnicity.pdf",
+  width = 1.5,
+  height = 10
+)
+ggsave(
+  plot_ethnicity,
+  filename = "plot_ethnicity.png",
+  width = 1.5,
+  height = 10
+)
 
 ###age and sex distributation
 plot <-
   df %>%
   ggplot() +
-  geom_histogram(aes(x = age, fill = gender),
+  geom_histogram(aes(x = FREG8_Age, fill = FREG7_Gender),
                  binwidth = 2,
                  color = "black") +
   scale_fill_manual(values = gender_colors) +
@@ -448,9 +445,11 @@ ggsave(plot,
 plot <-
   df %>%
   ggplot() +
-  geom_histogram(aes(x = age, fill = ethnic_group),
-                 binwidth = 2,
-                 color = "black") +
+  geom_histogram(
+    aes(x = FREG8_Age, fill = FREG5_Ethnic_Group),
+    binwidth = 2,
+    color = "black"
+  ) +
   scale_fill_manual(values = ethnicity_colors) +
   theme_bw() +
   labs(x = "Age (yreas)", y = "Count") +
@@ -458,16 +457,16 @@ plot <-
         legend.justification = c(0, 1))
 
 plot
-# ggsave(plot,
-#        filename = "age_ethnicity.pdf",
-#        width = 7,
-#        height = 7)
+ggsave(plot,
+       filename = "age_ethnicity.pdf",
+       width = 7,
+       height = 7)
 
 ###age and BMI distributation
 plot <-
   df %>%
-  ggplot(aes(age, bmi)) +
-  geom_point(aes(age, bmi), size = 5) +
+  ggplot(aes(FREG8_Age, bmi)) +
+  geom_point(aes(FREG8_Age, bmi), size = 5) +
   theme_bw() +
   geom_smooth(method = "lm", color = "red") +
   labs(x = "Age (yreas)", y = "BMI") +
@@ -476,9 +475,9 @@ plot <-
   geom_text(
     label = paste(
       "Correlation:",
-      cor.test(df$age, df$bmi, method = "spearman")$estimate,
+      cor.test(df$FREG8_Age, df$bmi, method = "spearman")$estimate,
       "\nP-value:",
-      cor.test(df$age, df$bmi, method = "spearman")$p.value
+      cor.test(df$FREG8_Age, df$bmi, method = "spearman")$p.value
     ),
     x = Inf,
     y = Inf,
@@ -489,7 +488,7 @@ plot <-
 
 plot
 
-cor.test(df$age, df$bmi, method = "spearman")
+cor.test(df$FREG8_Age, df$bmi, method = "spearman")
 
 ggsave(plot,
        filename = "age_bmi.pdf",
@@ -499,16 +498,12 @@ ggsave(plot,
 ###all the other demongraphics data
 colnames(df)
 
-##heatmap to show the demongraphis data
-###age, gender, ethnic_group, bmi, waist, hip, Sbp, dbp
-##hr (heart rate),
-
 ###age distributation
 library(gghalves)
 
 plot_age <-
   df %>%
-  ggplot(aes(x = "class", y = age)) +
+  ggplot(aes(x = "class", y = FREG8_Age)) +
   geom_half_violin(
     fill = ggsci::pal_aaas()(n = 10)[4],
     color = "black",
@@ -683,11 +678,12 @@ ggsave(plot_bmi,
        width = 4,
        height = 7)
 
-
 ##waist distributation
 plot_waist <-
   df %>%
-  dplyr::mutate(waist = rowMeans(select(., waist1, waist2, waist3), na.rm = TRUE)) %>%
+  dplyr::mutate(waist = rowMeans(select(
+    ., FWH16_Waist1, FWH17_Waist2, FWH18_Waist3
+  ), na.rm = TRUE)) %>%
   ggplot(aes(x = "class", y = waist)) +
   geom_half_violin(
     fill = ggsci::pal_tron()(n = 10)[3],
@@ -774,14 +770,10 @@ ggsave(plot_waist,
        width = 4,
        height = 7)
 
-
-
-
-
 ##hip distributation
 plot_hip <-
   df %>%
-  dplyr::mutate(hip = rowMeans(select(., hip1, hip2, hip3), na.rm = TRUE)) %>%
+  dplyr::mutate(hip = rowMeans(select(., FWH19_Hip1, FWH20_Hip2, FWH21_Hip3), na.rm = TRUE)) %>%
   ggplot(aes(x = "class", y = hip)) +
   geom_half_violin(
     fill = ggsci::pal_tron()(n = 10)[4],
@@ -867,9 +859,6 @@ ggsave(plot_hip,
        filename = "hip_distributation.png",
        width = 4,
        height = 7)
-
-
-
 
 
 ##dbp distributation
@@ -962,11 +951,6 @@ ggsave(plot_dbp,
        width = 4,
        height = 7)
 
-
-
-
-
-
 ##sbp distributation
 plot_sbp <-
   df %>%
@@ -1057,21 +1041,18 @@ ggsave(plot_sbp,
        width = 4,
        height = 7)
 
-
-
-
 ##hr distributation
 plot_hr <-
   df %>%
   dplyr::mutate(hr = rowMeans(select(., DBP15_Hr_1, DBP16_Hr_2, DBP17_Hr_3), na.rm = TRUE)) %>%
   ggplot(aes(x = "class", y = hr)) +
   geom_half_violin(
-    fill = ggsci::pal_tron()(n = 10)[6],
+    fill = ggsci::pal_tron()(n = 10)[7],
     color = "black",
     alpha = 0.5
   ) +
   geom_half_boxplot(
-    fill = ggsci::pal_tron()(n = 10)[6],
+    fill = ggsci::pal_tron()(n = 10)[7],
     alpha = 0.5,
     color = "black",
     side = "r"
@@ -1150,5 +1131,367 @@ ggsave(plot_hr,
        width = 4,
        height = 7)
 
+###gender, ethnic_group
+df_summary <-
+  df %>%
+  dplyr::group_by(FREG7_Gender) %>%
+  dplyr::summarise(count = dplyr::n()) %>%
+  dplyr::mutate(percentage = count / sum(count) * 100) %>%
+  dplyr::mutate(label = paste0(count, " (", round(percentage, 1), "%)"))
+
+plot_gender <-
+  df %>%
+  dplyr::mutate(class = "class") %>%
+  dplyr::rename(value = FREG7_Gender) %>%
+  dplyr::mutate(value = factor(value, levels = c("M", "F"))) %>%
+  ggplot(aes(x = class)) +
+  geom_bar(
+    aes(fill = value),
+    color = "black",
+    position = "stack",
+    show.legend = FALSE,
+    width = 2
+  ) +
+  scale_fill_manual(values = gender_colors) +
+  theme_base +
+  labs(x = "", y = "") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  geom_text(
+    data = df_summary %>%
+      dplyr::mutate(ypos = cumsum(count) - 0.5 * count),
+    aes(x = "class", y = ypos, label = label),
+    color = "white"
+  )
+
+plot_gender
+
+ggsave(plot_gender,
+       filename = "gender_distributation.pdf",
+       width = 4,
+       height = 7)
+ggsave(plot_gender,
+       filename = "gender_distributation.png",
+       width = 4,
+       height = 7)
 
 
+###ethnic_group, ethnic_group
+df_summary <-
+  df %>%
+  dplyr::mutate(FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group, levels = c("O", "M", "I", "C"))) %>%
+  dplyr::group_by(FREG5_Ethnic_Group) %>%
+  dplyr::summarise(count = dplyr::n()) %>%
+  dplyr::mutate(percentage = count / sum(count) * 100) %>%
+  dplyr::mutate(label = paste0(count, " (", round(percentage, 1), "%)"))
+
+plot_ethnic_group <-
+  df %>%
+  dplyr::mutate(class = "class") %>%
+  dplyr::rename(value = FREG5_Ethnic_Group) %>%
+  dplyr::mutate(value = factor(value, levels = c("C", "I", "M", "O"))) %>%
+  ggplot(aes(x = class)) +
+  geom_bar(
+    aes(fill = value),
+    color = "black",
+    position = "stack",
+    show.legend = FALSE,
+    width = 2
+  ) +
+  scale_fill_manual(values = ethnicity_colors) +
+  theme_base +
+  labs(x = "", y = "") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  geom_text(
+    data = df_summary %>%
+      dplyr::mutate(ypos = cumsum(count) - 0.5 * count),
+    aes(x = "class", y = ypos, label = label),
+    color = "white"
+  )
+
+plot_ethnic_group
+
+ggsave(
+  plot_ethnic_group,
+  filename = "ethnic_group_distributation.pdf",
+  width = 4,
+  height = 7
+)
+ggsave(
+  plot_ethnic_group,
+  filename = "ethnic_group_distributation.png",
+  width = 4,
+  height = 7
+)
+
+
+##heatmap to show the demongraphis data
+###age, gender, ethnic_group, bmi, waist, hip, Sbp, dbp
+##hr (heart rate)
+##age
+plot_age <-
+  df %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = FREG8_Age, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = FREG8_Age,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_aaas()(n = 10)[4],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Age (years)", y = "Participants") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+plot_age
+
+##bmi
+plot_bmi <-
+  df %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = bmi, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = bmi,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[1],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "BMI (kg/m^2)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+plot_bmi
+
+##dbp
+plot_dbp <-
+  df %>%
+  dplyr::mutate(dbp = rowMeans(select(., DBP12_Dbp_1, DBP13_Dbp_2, DBP14_Dbp_3), na.rm = TRUE)) %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = dbp, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = dbp,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[5],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "DBP (mmHg)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+plot_dbp
+
+##sbp
+plot_sbp <-
+  df %>%
+  dplyr::mutate(sbp = rowMeans(select(., DBP9_Sbp_1, DBP10_Sbp_2, DBP11_Sbp_3), na.rm = TRUE)) %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = sbp, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = sbp,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[6],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "SBP (mmHg)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+plot_sbp
+
+###waist
+plot_waist <-
+  df %>%
+  dplyr::mutate(waist = rowMeans(select(., FWH16_Waist1, FWH17_Waist2, FWH18_Waist3), na.rm = TRUE)) %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = waist, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = waist,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[3],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Waist (cm)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+plot_waist
+
+##hip
+plot_hip <-
+  df %>%
+  dplyr::mutate(hip = rowMeans(select(., FWH19_Hip1, FWH20_Hip2, FWH21_Hip3), na.rm = TRUE)) %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = hip, y = sample_id), alpha = 0.5) +
+  geom_segment(aes(
+    x = 0,
+    xend = hip,
+    y = sample_id,
+    yend = sample_id
+  ),
+  color = ggsci::pal_tron()(n = 10)[4]) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Hip (cm)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+plot_hip
+
+
+##hr
+plot_hr <-
+  df %>%
+  dplyr::mutate(hr = rowMeans(select(., DBP15_Hr_1, DBP16_Hr_2, DBP17_Hr_3), na.rm = TRUE)) %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = hr, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = hr,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[7],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "HR (bpm)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+plot_hr
+
+###gender
+plot_gender <-
+  df %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = "class", y = sample_id)) +
+  geom_tile(aes(fill = FREG7_Gender), show.legend = FALSE) +
+  theme_base +
+  scale_fill_manual(values = gender_colors) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Gender", y = "") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0)))
+plot_gender
+
+###ethnicity
+plot_ethnic_group <-
+  df %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = "class", y = sample_id)) +
+  geom_tile(aes(fill = FREG5_Ethnic_Group), show.legend = FALSE) +
+  theme_base +
+  scale_fill_manual(values = ethnicity_colors) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Ethnicity", y = "") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0)))
+plot_ethnic_group
+
+library(patchwork)
+
+demographics_heatmap <-
+  plot_age + plot_bmi + plot_waist + plot_hip + plot_dbp + plot_sbp + plot_hr + plot_gender + plot_ethnic_group +
+  plot_layout(nrow = 1, widths = c(1, 1, 1, 1, 1, 1, 1, 0.3, 0.3)) +
+  theme(axis.title.x = element_text(size = 8))
+
+demographics_heatmap
+
+ggsave(
+  demographics_heatmap,
+  filename = "demographics_heatmap.pdf",
+  width = 10,
+  height = 10
+)
+
+ggsave(
+  demographics_heatmap,
+  filename = "demographics_heatmap.png",
+  width = 10,
+  height = 10
+)

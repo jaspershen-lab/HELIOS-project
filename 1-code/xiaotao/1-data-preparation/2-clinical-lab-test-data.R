@@ -52,11 +52,22 @@ sample_info <-
 
 colnames(expression_data) == sample_info$sample_id
 
+text_distance <-
+  stringdist::stringdistmatrix(rownames(expression_data),
+                               dictionary$`Variable Name - HELIOS Data Dictionary`) %>%
+  apply(1, function(x) {
+    which.min(x)
+  })
+
+data.frame(rownames(expression_data),
+           dictionary$`Variable Name - HELIOS Data Dictionary`[text_distance])
+
+rownames(expression_data) <-
+  dictionary$`Variable Name - HELIOS Data Dictionary`[text_distance]
+
 variable_info <-
   data.frame(variable_id = rownames(expression_data)) %>%
-  dplyr::left_join(dictionary[, c("Variable Name - HELIOS Data Dictionary",
-                                  "Description of variable",
-                                  "Variable type")],
+  dplyr::left_join(dictionary,
                    by = c("variable_id" = "Variable Name - HELIOS Data Dictionary"))
 
 library(tidymass)
