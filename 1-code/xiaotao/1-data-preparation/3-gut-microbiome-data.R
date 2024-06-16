@@ -146,13 +146,14 @@ final_info2 <-
         dplyr::select(species, genus, family, order, class, phylum, superkingdom) %>%
         return()
     }
-    
   })
 
 final_info2 <-
   final_info2 %>%
   do.call(rbind, .) %>%
   as.data.frame()
+
+save(final_info2, file = "final_info2.rda")
 
 sum(final_info2$species == species_name, na.rm = TRUE)
 length(species_name)

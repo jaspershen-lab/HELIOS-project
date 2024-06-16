@@ -49,7 +49,7 @@ ggsave(
 gut_microbiome_data <-
   gut_microbiome_data %>%
   activate_mass_dataset(what = "variable_info") %>%
-  filter(zero_freq < 0.95)
+  filter(zero_freq <= 0.95)
 
 plot <-
   gut_microbiome_data %>%

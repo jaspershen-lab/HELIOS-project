@@ -48,6 +48,12 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
+###ignore all .ai
+*.ai
+
+###ignore all .pdf
+*.pdf
+
 2-data
 2-data/
 
@@ -59,7 +65,6 @@ rsconnect/
 
 5-summary
 5-summary/
-
 
 1-code/ruwen/data/
 
