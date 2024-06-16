@@ -1,70 +1,53 @@
-# History files
-.Rhistory
-.Rapp.history
-
-# Session Data files
-.RData
-.RDataTmp
-
-# User-specific files
-.Ruserdata
 
 # Example code in package build process
-*-Ex.R
-
-# Output files from R CMD build
-/*.tar.gz
-
-# Output files from R CMD check
-/*.Rcheck/
-
-# RStudio files
-.Rproj.user/
-
-# produced vignettes
-vignettes/*.html
-vignettes/*.pdf
-
+# History files
 # OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
-.httr-oauth
-
-# knitr and R markdown default cache directories
-*_cache/
-/cache/
-
-# Temporary files created by R markdown
-*.utf8.md
-*.knit.md
-
+# Output files from R CMD build
+# Output files from R CMD check
 # R Environment Variables
-.Renviron
-
-# pkgdown site
-docs/
-
-# translation temp files
-po/*~
-
 # RStudio Connect folder
-rsconnect/
-
+# RStudio files
+# Session Data files
+# Temporary files created by R markdown
+# User-specific files
+# knitr and R markdown default cache directories
+# pkgdown site
+# produced vignettes
+# translation temp files
 ###ignore all .ai
-*.ai
-
 ###ignore all .pdf
+*-Ex.R
+*.ai
+*.knit.md
 *.pdf
-
-2-data
-2-data/
-
-3-data_analysis
-3-data_analysis/
-
-4-manuscript
-4-manuscript/
-
-5-summary
-5-summary/
+*.utf8.md
+*_cache/
+.RData
+.RDataTmp
+.Rapp.history
+.Renviron
+.Rhistory
+.Rproj.user/
+.Ruserdata
+.httr-oauth
+/*.Rcheck/
+/*.tar.gz
+/cache/
 
 1-code/ruwen/data/
 
+2-data/from_ruwen/HELIOS_FFQA.xlsx
+2-data/from_ruwen/HELIOS_HLQ_20221202_anon.csv
+2-data/from_ruwen/abundance_bracken_standard_16_20221209_taxa_G_unfiltered_reads_decont2.csv
+2-data/from_ruwen/abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv
+
+4-manuscript
+4-manuscript/
+5-summary
+5-summary/
+
+docs/
+po/*~
+rsconnect/
+vignettes/*.html
+vignettes/*.pdf
