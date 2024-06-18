@@ -919,7 +919,7 @@ phyloseq_filtered_no_O <- subset_samples(phyloseq_filtered, FREG5_Ethnic_Group !
 ```{r}
 comparisons <- list(c("C", "I"), c("C", "M"), c("I", "M"))
 
-# Plot alpha diversity and add pairwise statistical comparison
+
 p <- plot_richness(phyloseq_filtered_no_O, x = "FREG5_Ethnic_Group", color = "FREG5_Ethnic_Group",
                   measures = c("Shannon", "Simpson", "Chao1", "Fisher")) +
     geom_boxplot() +
@@ -942,8 +942,8 @@ sample_data(phyloseq_filtered_no_O)$FREG5_Ethnic_Group <- factor(sample_data(phy
 plot_ordination(phyloseq_filtered_no_O, phylo.beta, type = "samples", color = "FREG5_Ethnic_Group") +
   theme_bw() +
   stat_ellipse(aes(group=FREG5_Ethnic_Group)) +
-  scale_color_manual(values = c("C" = "green3", "I" = "indianred1", "M" = "deepskyblue1")) +
-  scale_fill_manual(values = c("C" = "green3", "I" = "indianred1", "M" = "deepskyblue1"))
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors)
 
 ```
 
@@ -955,41 +955,22 @@ library(ggplot2)
 p <- plot_ordination(phyloseq_filtered_no_O, phylo.beta, type = "samples", color = "FREG5_Ethnic_Group") +
   theme_bw() +
   stat_ellipse(aes(group = FREG5_Ethnic_Group)) +
-  scale_color_manual(values = c("C" = "green4", "I" = "indianred1", "M" = "deepskyblue1")) +
-  scale_fill_manual(values = c("C" = "green4", "I" = "indianred1", "M" = "deepskyblue1"))
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors)
 
 # Extract the data from the plot
 plot_data <- p$data
 
 # Add the points in the desired order using geom_point()
 p +
-  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "C"), color = "green4") +
-  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "indianred1") +
-  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "deepskyblue1")
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "C"), color = "#B24745FF") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "#79AF97FF") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "#DF8F44FF")
   #theme(text = element_text(family = "serif"))
 ```
 
 
-```{r}
-# Convert glucose levels to a factor
-sample_data(phyloseq_filtered)$FREG5_Ethnic_Group <- factor(sample_data(phyloseq_filtered)$FREG5_Ethnic_Group)
 
-
-phyloseq_filtered2 <- subset_samples(phyloseq_filtered, !(sample_data(phyloseq_filtered)$FREG5_Ethnic_Group == "O"))
-phyloseq_filtered2 <- subset_samples(phyloseq_filtered2, !is.na(sample_data(phyloseq_filtered2)$FREG5_Ethnic_Group))
-
-
-dist <- phyloseq::distance(phyloseq_filtered2, method = "bray")
-dist_matrix <- as.matrix(dist)
-
-# Perform PERMANOVA using adonis2
-permanova <- adonis2(dist_matrix ~ sample_data(phyloseq_filtered2)$FREG5_Ethnic_Group)
-
-# Print the PERMANOVA results
-permanova
-
-plot_ordination(phyloseq_filtered2, phylo.beta, type = "samples", color = "FREG5_Ethnic_Group") + theme_bw() + stat_ellipse(aes(group=FREG5_Ethnic_Group))
-```
 
 1. The adonis2 model tested the effect of the FREG5_Ethnic_Group variable on the microbiome composition (dist_matrix). The model includes the Residual term, which represents the unexplained variation.
 2. The FREG5_Ethnic_Group variable explains approximately 7% of the total variation in the microbiome composition (R2 = 0.0725). This means that the ethnic group factor accounts for a relatively small portion of the overall variability in the microbiome data.
