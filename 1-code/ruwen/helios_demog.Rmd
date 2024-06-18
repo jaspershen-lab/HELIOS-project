@@ -924,8 +924,10 @@ p <- plot_richness(phyloseq_filtered_no_O, x = "FREG5_Ethnic_Group", color = "FR
                   measures = c("Shannon", "Simpson", "Chao1", "Fisher")) +
     geom_boxplot() +
     theme_bw() +
-    scale_color_manual(values = c("C" = "green4", "I" = "indianred1", "M" = "deepskyblue1")) +
-    scale_fill_manual(values = c("C" = "green4", "I" = "indianred1", "M" = "deepskyblue1")) +
+    scale_color_manual(values = ethnicity_colors) +
+                         
+    scale_fill_manual(values = ethnicity_colors) +
+                        
     stat_compare_means(comparisons = comparisons, method = "t.test", label = "p.signif", symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), symbols = c("***", "**", "*", "ns")))
 print(p)
 #p + theme(text = element_text(family = "serif"))
