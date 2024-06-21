@@ -1,0 +1,124 @@
+---
+title: "network"
+author: "Ruwen Zhou"
+date: "6/19/2024"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+
+library(igraph)
+```
+
+
+#demographic
+```{r}
+food_data = read_csv("data/Summarized_Food_Categories_Only.csv")
+nutrition_data = read_csv("data/nutrition_535.csv")
+species = read_xlsx("data/species_535.xlsx")
+metadata = read_csv("data/demo_535.csv")
+metadata
+nutrition_data
+species
+```
+
+```{r}
+threshold <- nrow(species) * 0.1
+
+species_filtered <- species %>% select_if(function(x) sum(x > 0) > threshold)
+
+abundance_threshold <- 0.0001
+species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+
+species_filtered2
+```
+
+
+```{r}
+full_data <- merge(food_data, species_filtered, by="Participant_ID")
+full_data <- merge(full_data, nutrition_data, by="Participant_ID")
+full_data
+```
+```{r}
+
+results <- list()  # Store results
+nutrition_columns <- names(nutrition_data)[-1]  # Exclude Participant_ID
+species_columns <- names(species_filtered)[-1]  # Exclude Participant_ID
+
+for (nutrient in nutrition_columns) {
+  for (specie in species_columns) {
+    # Correlation test
+    test <- cor.test(nutrition_data[[nutrient]], species_filtered[[specie]], method="spearman")
+    
+    # Check for significant correlation
+    if (test$p.value < 0.05) {
+      results[[length(results) + 1]] <- data.frame(
+        from = nutrient,
+        to = specie,
+        correlation = test$estimate,
+        p_value = test$p.value
+      )
+    }
+  }
+}
+
+# Combine all results into a data frame
+edges <- do.call(rbind, results)
+edges
+```
+```{r}
+
+food_nodes <- names(food_data)[-1]  # Add all food nodes
+nutrient_nodes <- names(nutrition_data)[-1]  # Add all nutrient nodes
+species_nodes <- names(species)[-1]  # Add all species nodes
+
+# Create the graph
+g <- graph_from_data_frame(edges, directed = FALSE)
+
+V(g)$shape <- ifelse(V(g)$name %in% species_nodes, "circle",
+                     ifelse(V(g)$name %in% nutrient_nodes, "square", "square"))
+
+# Plot settings
+vertex.size <- 15
+vertex.color <- "skyblue"
+edge.width <- 2
+plot.size <- 2
+
+# Plot the graph with corrected shapes
+par(mar = rep(0, 4), oma = rep(0, 4))
+plot(g, layout = layout_nicely(g),
+     vertex.shape = V(g)$shape,
+     vertex.size = vertex.size,
+     vertex.color = vertex.color,
+     vertex.frame.color = "gray",
+     vertex.label.color = "black",
+     vertex.label.cex = 0.7,
+     edge.width = edge.width,
+     edge.color = "grey",
+     rescale = plot.size,
+     main = "Network of Food, Nutrition, and Species")
+
+```
+
+
+
+
+
+
+
+
+

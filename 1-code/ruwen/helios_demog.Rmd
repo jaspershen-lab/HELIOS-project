@@ -755,6 +755,7 @@ SAM = sample_data(metadata, errorIfNULL = TRUE)
 phylo <- phyloseq(OTU, SAM)
 phylo
 phylo = filter_taxa(phylo, function(x) sum(x > 2) > (0.11 * length(x)), TRUE)
+phylo
 ```
 ## Drop species that are present in less than 5% of the samples
 ## Drop species with a total abundance less than 0.01% of the total reads
