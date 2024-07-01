@@ -51,6 +51,7 @@ species_filtered2
 
 
 ```{r}
+species_filtered2 = subset(species_filtered2, select = -c(unclassified, others))
 full_data <- merge(food_data, species_filtered2, by="Participant_ID")
 full_data <- merge(full_data, nutrition_data, by="Participant_ID")
 full_data
@@ -114,13 +115,13 @@ combine_t
 ```
 ```{r}
 cor_data <- combine_t  %>%
-  mutate(edge_color = ifelse(correlation > 0, "red", "blue"),
+  mutate(edge_color = ifelse(correlation > 0, "red", "cadetblue2"),
          abs_correlation = abs(correlation))
 
 # Add a column for node shapes
-cor_data <- cor_data %>%
-  mutate(from_shape = ifelse(from %in% food_columns, "square", ifelse(from %in% nutrition_columns, "triangle", "circle")),
-         to_shape = ifelse(to %in% food_columns, "square", ifelse(to %in% nutrition_columns, "triangle", "circle")))
+# cor_data <- cor_data %>%
+#   mutate(from_shape = ifelse(from %in% food_columns, "square", ifelse(from %in% nutrition_columns, "triangle", "circle")),
+#          to_shape = ifelse(to %in% food_columns, "square", ifelse(to %in% nutrition_columns, "triangle", "circle")))
 cor_data
 ```
 ```{r}
@@ -137,66 +138,151 @@ node_info
 ```
 ```{r}
 edge_list <- cor_data %>% select(from, to, edge_color, abs_correlation)
-
+edge_list
 graph <- graph_from_data_frame(d = edge_list, vertices = node_info, directed = FALSE)
 
-V(graph)$shape <- ifelse(V(graph)$type == "Species", "circle", "square")
+V(graph)$shape <- ifelse(V(graph)$type == "Species", "circle",
+                         ifelse(V(graph)$type == "Food", "square", "diamond"))
+
+V(graph)$degree <- degree(graph, mode = "all")
+#plot(graph)
+node_info
+```
 
 
-plot(graph)
+```{r fig.width=14, fig.height=14}
+full_graph = ggraph(graph, layout = "fr") +  # 'fr' can be changed to another layout if needed
+  geom_edge_link(aes(edge_alpha = abs_correlation, edge_width = abs_correlation, edge_color = edge_color), show.legend = FALSE) +
+  geom_node_point(aes(shape = shape, size = degree , color = shape)) +
+  geom_node_text(aes(label = name), repel = TRUE, fontface = "bold", color = "black", size = 3) +
+  scale_size(range = c(4, 10)) + 
+  scale_shape_manual(values = c(circle = 19, square = 15, diamond = 17), labels = c("Species", "Nutrition", "Food")) +
+  scale_edge_color_manual(values = c("#8D3256", "#004697")) +
+  scale_color_manual(values = c("slateblue", "#68B69F", "#F08E59"), labels = c("Species", "Nutrition", "Food")) +
+  theme_graph() +
+  theme(legend.position = "right") +
+  ggtitle("Correlation Network between Species, Food, and Nutrition")
 ```
 
 
 ```{r}
-ggraph(graph, layout = "fr") +  # 'fr' can be changed to another layout if needed
-  geom_edge_link(aes(edge_width = abs_correlation, edge_color = edge_color), show.legend = FALSE) +
-  geom_node_point(aes(shape = shape), size = 5) +
-  scale_shape_manual(values = c(circle = 21, square = 15), labels = c("Species", "Food & Nutrition")) +
-  scale_edge_color_manual(values = c("red", "blue")) +
-  theme_minimal() +
-  theme(legend.position = "right") +
-  ggtitle("Correlation Network between Species, Food, and Nutrition")
-
+png("figure/network_all.png", width = 1400, height = 1400, res = 120)
+full_graph
+dev.off()
 ```
+
+
+
 # seperate ethnic groups
 
 ```{r}
 new_full <- merge(metadata[,c("Participant_ID","FREG5_Ethnic_Group")],full_data, by="Participant_ID")
-new_full
+#new_full
 
 data_c <- new_full %>% filter(FREG5_Ethnic_Group == "C")
 data_i <- new_full %>% filter(FREG5_Ethnic_Group == "I")
 data_m <- new_full %>% filter(FREG5_Ethnic_Group == "M")
-data_c
 ```
 
+
+```{r}
+data_c
+data_i
+data_m
+```
+# unweighted
 ```{r}
 calculate_significant_correlations <- function(data, food_or_nutrition_columns, species_columns) {
   cor_results <- rcorr(as.matrix(data), type = "spearman")
   adjusted_p_values <- matrix(p.adjust(cor_results$P, method = "BH"), nrow = nrow(cor_results$P))
   significant_indices <- which(adjusted_p_values < 0.05, arr.ind = TRUE)
-  
+
   significant_correlations <- data.frame(
     from = colnames(data)[significant_indices[, "row"]],
     to = colnames(data)[significant_indices[, "col"]],
     correlation = cor_results$r[significant_indices],
     adjusted_p_value = adjusted_p_values[significant_indices]
   )
-  
+
   significant_correlations <- significant_correlations[
     significant_correlations$from %in% food_or_nutrition_columns & significant_correlations$to %in% species_columns |
     significant_correlations$from %in% species_columns & significant_correlations$to %in% food_or_nutrition_columns, ]
-  
+
   return(significant_correlations)}
+
 ```
+# weighted
+```{r}
+# library(wCorr)  # Ensure this package is loaded
+# 
+# calculate_significant_correlations <- function(data, food_or_nutrition_columns, species_columns, weights) {
+#   # Extract the relevant columns for the analysis
+#   analysis_data <- data[, c(food_or_nutrition_columns, species_columns)]
+#   
+#   # Convert to numeric matrix if not already
+#   analysis_data[] <- lapply(analysis_data, function(x) as.numeric(as.character(x)))
+#   
+#   # Prepare empty matrices for correlation and p-values
+#   correlation_matrix <- matrix(0, nrow = ncol(analysis_data), ncol = ncol(analysis_data))
+#   p_value_matrix <- matrix(0, nrow = ncol(analysis_data), ncol = ncol(analysis_data))
+#   
+#   # Calculate weighted correlations for each pair of columns
+#   for (i in 1:ncol(analysis_data)) {
+#     for (j in i:ncol(analysis_data)) {
+#       if (i != j) {
+#         # Assuming weightedCorr returns a list with 'estimate' and 'p.value'
+#         corr_result <- weightedCorr(analysis_data[, i], analysis_data[, j], method = "Spearman", weights = weights)
+#         correlation_matrix[i, j] <- corr_result$estimate
+#         correlation_matrix[j, i] <- corr_result$estimate  # Symmetric matrix
+#         p_value_matrix[i, j] <- corr_result$p.value
+#         p_value_matrix[j, i] <- corr_result$p.value  # Symmetric matrix
+#       } else {
+#         correlation_matrix[i, j] <- 1  # Diagonal elements are perfect correlations
+#         p_value_matrix[i, j] <- 0  # Diagonal elements p-value of correlation with itself
+#       }
+#     }
+#   }
+#   
+#   # Adjust p-values using BH method
+#   adjusted_p_values <- p.adjust(as.vector(p_value_matrix), method = "BH")
+#   adjusted_p_matrix <- matrix(adjusted_p_values, nrow = ncol(analysis_data))
+#   
+#   # Identify significant correlations
+#   significant_indices <- which(adjusted_p_matrix < 0.05, arr.ind = TRUE)
+#   
+#   # Create a dataframe of significant correlations
+#   significant_correlations <- data.frame(
+#     from = colnames(analysis_data)[significant_indices[, 1]],
+#     to = colnames(analysis_data)[significant_indices[, 2]],
+#     correlation = correlation_matrix[significant_indices],
+#     adjusted_p_value = adjusted_p_matrix[significant_indices]
+#   )
+#   
+#   # Filter to include only food-species interactions
+#   significant_correlations <- significant_correlations[
+#     (significant_correlations$from %in% food_or_nutrition_columns & significant_correlations$to %in% species_columns) |
+#     (significant_correlations$from %in% species_columns & significant_correlations$to %in% food_or_nutrition_columns), ]
+#   
+#   return(significant_correlations)
+# }
 
-
+```
 
 # chinese
 ```{r}
-food_species_c <- data_c[, c(food_columns, species_columns)]
-nutrition_species_c <- data_c[, c(nutrition_columns, species_columns)]
+set.seed(123) 
 
+selected_indices <- sample(nrow(data_c), 49)
+
+# Subset the DataFrame to get the selected rows
+data_c_49 <- data_c[selected_indices, ]
+data_c_49
+```
+
+
+```{r}
+food_species_c <- data_c_49[, c(food_columns, species_columns)]
+nutrition_species_c <- data_c_49[, c(nutrition_columns, species_columns)]
 
 food_species_correlations_c <- calculate_significant_correlations(food_species_c, food_columns, species_columns)
 nutrition_species_correlations_c <- calculate_significant_correlations(nutrition_species_c, nutrition_columns, species_columns)
@@ -224,8 +310,19 @@ cor_data_c
 
 # indian
 ```{r}
-food_species_i <- data_i[, c(food_columns, species_columns)]
-nutrition_species_i <- data_i[, c(nutrition_columns, species_columns)]
+set.seed(123) 
+
+selected_indices <- sample(nrow(data_i), 49)
+
+# Subset the DataFrame to get the selected rows
+data_i_49 <- data_c[selected_indices, ]
+data_i_49
+```
+
+
+```{r}
+food_species_i <- data_i_49[, c(food_columns, species_columns)]
+nutrition_species_i <- data_i_49[, c(nutrition_columns, species_columns)]
 
 
 food_species_correlations_i <- calculate_significant_correlations(food_species_i, food_columns, species_columns)
@@ -254,7 +351,7 @@ cor_data_i
 
 # malays
 ```{r}
-food_species_m <- data_m[, c(food_columns, species_columns)]
+food_species_m <- data_m[1:49, c(food_columns, species_columns)]
 nutrition_species_m <- data_m[, c(nutrition_columns, species_columns)]
 
 
@@ -283,6 +380,17 @@ cor_data_m <- combine_m  %>%
 cor_data_m
 ```
 
+## power analysis
+```{r}
+# library(pwr)
+# r_observed <- 0.1 
+# result <- pwr.r.test(n = NULL, r = r_observed, sig.level = 0.05, power = 0.80, alternative = "two.sided")
+# print(result)
+
+```
+
+
+
 # find out the nodes we need
 
 
@@ -306,11 +414,11 @@ graph_c <- tbl_graph(edges = cor_data_c, nodes = nodes_df, directed = FALSE)
 graph_i <- tbl_graph(edges = cor_data_i, nodes = nodes_df, directed = FALSE)
 graph_m <- tbl_graph(edges = cor_data_m, nodes = nodes_df, directed = FALSE)
 
-
+  
 
 plot_graph <- function(graph) {
   ggraph(graph, layout = "fr") +
-    geom_edge_link(aes(edge_alpha = log_p, edge_color = edge_color, edge_width = log_p), show.legend = FALSE) +
+    geom_edge_link(aes(edge_alpha = abs_correlation, edge_color = edge_color, edge_width = abs_correlation), show.legend = FALSE) +
     geom_node_point(aes(shape = shape), size = 5) +
     scale_shape_manual(values = c(circle = 16, square = 15, diamond = 18), labels = c("Species","Nutrition", "Food")) +  # Mapping shapes to actual ggplot2 shapes
     theme_minimal() +
@@ -328,7 +436,7 @@ print(plot_i)
 print(plot_m)
 
 ```
-```{r fig.width=10, fig.height=10}
+```{r fig.width=10, fig.height=8}
 
 all_nodes <- unique(c(cor_data_c$from, cor_data_c$to, cor_data_i$from, cor_data_i$to, cor_data_m$from, cor_data_m$to))
 
@@ -353,15 +461,46 @@ graph_c <- tbl_graph(edges = cor_data_c, nodes = nodes_df, directed = FALSE)
 graph_i <- tbl_graph(edges = cor_data_i, nodes = nodes_df, directed = FALSE)
 graph_m <- tbl_graph(edges = cor_data_m, nodes = nodes_df, directed = FALSE)
 
-plot_graph_fixed <- function(graph) {
-  ggraph(graph, layout = 'manual', x = x, y = y) +
-    geom_edge_link(aes(edge_alpha = log_p, edge_color = edge_color, edge_width = log_p), show.legend = FALSE) +
-    geom_node_point(aes(shape = shape), size = 5, color = "black") +
-    scale_shape_manual(values = c(circle = 16, square = 15, diamond = 18), labels = c("Species","Nutrition", "Food")) +  # Mapping shapes to actual ggplot2 shapes
-    theme_graph() +
-    scale_edge_color_manual(values = c("red", "blue"))
-}
+# plot_graph_fixed <- function(graph) {
+#   # Convert igraph object to tbl_graph (tidygraph object)
+#   tbl_graph <- as_tbl_graph(graph)
+#   
+#   # Use mutate to add degree centrality
+#   tbl_graph <- tbl_graph %>%
+#     activate(nodes) %>%
+#     mutate(degree = centrality_degree(mode = "all"))  # Use mode="all", "in", or "out" as needed
+#   
+#   # Create the plot
+#   ggraph(tbl_graph, layout = 'manual', x = x, y = y) +
+#     geom_edge_link(aes(edge_alpha = log_p, edge_color = edge_color, edge_width = log_p), show.legend = FALSE) +
+#     geom_node_point(aes(shape = shape, size = degree, color = label), color = "black") +
+#     scale_shape_manual(values = c(circle = 16, square = 15, diamond = 18), labels = c("Species","Nutrition", "Food")) +
+#     theme_graph() +
+#     scale_edge_color_manual(values = c("red", "blue")) +
+#     scale_size(range = c(3, 10)) +
+#     scale_color_manual(values = c("Species" = "green", "Nutrition" = "orange", "Food" = "purple"))
+# }
 
+
+plot_graph_fixed <- function(graph) {
+  # Calculate the degree of each node
+  V(graph)$degree <- degree(graph, mode = "all")
+  V(graph)$shape <- ifelse(V(graph)$name %in% species_columns, "circle", 
+                         ifelse(V(graph)$name %in% food_columns, "square", "diamond"))
+
+  # Create the plot
+  ggraph(graph, layout = 'manual', x = x, y = y) +
+    geom_edge_link(aes(edge_alpha = abs_correlation, edge_color = edge_color, edge_width = abs_correlation), show.legend = FALSE) +
+    geom_node_point(aes(shape = shape, size = degree, color = shape)) +  # Map 'size' to 'degree'
+    geom_node_text(aes(label = ifelse(degree > 0, name, "")), , color = "black", repel = TRUE, fontface = "bold", size = 3) +
+    scale_shape_manual(values = c(circle = 19, square = 15, diamond = 17), labels = c("Species", "Nutrition", "Food")) +
+    scale_edge_color_manual(values = c("#8D3256", "#004697")) +
+    scale_color_manual(values = c("slateblue", "#68B69F", "#F08E59"), labels = c("Species", "Nutrition", "Food")) +
+    theme_graph() +
+    scale_size(range = c(4, 7))
+}
+#V(graph)$shape <- ifelse(V(graph)$type == "Species", "circle",
+                         #ifelse(V(graph)$type == "Food", "square", "diamond"))
 
 plot_c_fixed <- plot_graph_fixed(graph_c)
 plot_i_fixed <- plot_graph_fixed(graph_i)
@@ -374,20 +513,57 @@ print(plot_m_fixed)
 
 ```
 ```{r fig.width=10, fig.height=10}
-png("figure/network_c.png", width = 1400, height = 1000, res = 120)
+png("figure/network_c_49.png", width = 1400, height = 1000, res = 120)
 plot_c_fixed
 dev.off()
-png("figure/network_i.png", width = 1400, height = 1000, res = 120)
+png("figure/network_i_49.png", width = 1400, height = 1000, res = 120)
 plot_i_fixed
 dev.off()
-png("figure/network_m.png", width = 1400, height = 1000, res = 120)
+png("figure/network_m_49.png", width = 1400, height = 1000, res = 120)
 plot_m_fixed
 dev.off()
 ```
 
 
 
+```{r}
+library(boot)
 
+# Example data frame
+set.seed(123) # For reproducibility
+data <- data.frame(
+  participant = 1:100,
+  food_intake1 = rnorm(100, mean = 50, sd = 10),
+  food_intake2 = rnorm(100, mean = 60, sd = 12),
+  microbiome_species1 = rnorm(100, mean = 100, sd = 20),
+  microbiome_species2 = rnorm(100, mean = 110, sd = 22)
+)
+
+# Define the correlation function
+correlation_function <- function(data, indices) {
+  sample_data <- data[indices, ] # Resample the data
+  # Calculate correlations between food intake and microbiome species
+  cor_matrix <- cor(sample_data[, c("food_intake1", "food_intake2")], 
+                    sample_data[, c("microbiome_species1", "microbiome_species2")])
+  return(as.vector(cor_matrix)) # Return the correlation matrix as a vector
+}
+
+# Perform the bootstrap with 1000 resamples
+results <- boot(data = data, statistic = correlation_function, R = 1000)
+
+# Print the results
+print(results)
+
+# Calculate 95% confidence intervals for the correlations
+ci <- boot.ci(results, type = "perc")
+print(ci)
+
+```
+
+
+```{r}
+
+```
 
 
 
