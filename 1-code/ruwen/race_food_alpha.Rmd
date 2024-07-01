@@ -1,0 +1,93 @@
+---
+title: "race_food_alpha"
+author: "Ruwen Zhou"
+date: "6/18/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(ggalluvial)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(vegan)
+library(phyloseq)
+```
+
+
+
+```{r}
+meta_data <- read.csv("data/demo_535.csv")
+food_intake <- read.csv("data/Summarized_Food_Categories_Only.csv")
+#species_abundance <- read.csv("data/butyrate_pick.csv")
+meta_data = meta_data[,c("Participant_ID","FREG5_Ethnic_Group")]
+
+data <- merge(meta_data, food_intake, by = "Participant_ID")  
+data <- subset(data, FREG5_Ethnic_Group != "O")
+rownames(data) = data[,1]
+data[1] = NULL
+data
+
+```
+
+```{r}
+group_C <- data[data$FREG5_Ethnic_Group == "C", -which(names(data) == "FREG5_Ethnic_Group")]
+group_I <- data[data$FREG5_Ethnic_Group == "I", -which(names(data) == "FREG5_Ethnic_Group")]
+group_M <- data[data$FREG5_Ethnic_Group == "M", -which(names(data) == "FREG5_Ethnic_Group")]
+
+shannon_C <- diversity(group_C, index = "shannon")
+shannon_I <- diversity(group_I, index = "shannon")
+shannon_M <- diversity(group_M, index = "shannon")
+
+simpson_C <- diversity(group_C, index = "simpson")
+simpson_I <- diversity(group_I, index = "simpson")
+simpson_M <- diversity(group_M, index = "simpson")
+
+
+```
+
+```{r}
+data_shannon <- data.frame(
+  Ethnic_Group = c(rep("C", length(shannon_C)), rep("I", length(shannon_I)), rep("M", length(shannon_M))),
+  Diversity_Value = c(shannon_C, shannon_I, shannon_M),
+  Index = "Shannon"
+)
+
+data_simpson <- data.frame(
+  Ethnic_Group = c(rep("C", length(simpson_C)), rep("I", length(simpson_I)), rep("M", length(simpson_M))),
+  Diversity_Value = c(simpson_C, simpson_I, simpson_M),
+  Index = "Simpson"
+)
+
+diversity_data <- rbind(data_shannon, data_simpson)
+diversity_data
+```
+```{r}
+
+ggplot(diversity_data, aes(x = Ethnic_Group, y = Diversity_Value, fill = Ethnic_Group)) +
+  geom_boxplot() +
+  facet_wrap(~ Index, scales = "free") +
+  labs(title = "Diversity Indices by Ethnic Group",
+       x = "Ethnic Group", y = "Diversity Index") +
+  theme_minimal() +
+  scale_color_manual(values = ethnicity_colors) +
+  theme(legend.position = "none")  # Remove legend if redundant
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
