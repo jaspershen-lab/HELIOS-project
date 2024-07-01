@@ -90,19 +90,15 @@ plot <-
 
 plot <- ggplotify::as.ggplot(plot)
 plot
-ggsave(
-  plot,
-  filename = "clinical_heatmap.png",
-  width = 5,
-  height = 10
-)
+ggsave(plot,
+       filename = "clinical_heatmap.png",
+       width = 5,
+       height = 10)
 
-ggsave(
-  plot,
-  filename = "clinical_heatmap.pdf",
-  width = 5,
-  height = 10
-)
+ggsave(plot,
+       filename = "clinical_heatmap.pdf",
+       width = 5,
+       height = 10)
 
 ####box plot for each clinical lab test
 expression_data <-
@@ -235,7 +231,7 @@ plot <-
     color = "black",
     alpha = 0.5
   ) +
-  facet_wrap( ~ variable_id, scales = "free_y", nrow = 7) +
+  facet_wrap(~ variable_id, scales = "free_y", nrow = 7) +
   geom_text(
     stat = "summary",
     fun = median,
@@ -247,7 +243,8 @@ plot <-
   ) +
   geom_text(
     stat = "summary",
-    fun = function(y) quantile(y, 0.25),
+    fun = function(y)
+      quantile(y, 0.25),
     aes(label = paste0("25%: ", round(..y.., 2))),
     vjust = 1.5,
     hjust = 0.5,
@@ -256,7 +253,8 @@ plot <-
   ) +
   geom_text(
     stat = "summary",
-    fun = function(y) quantile(y, 0.75),
+    fun = function(y)
+      quantile(y, 0.75),
     aes(label = paste0("75%: ", round(..y.., 2))),
     vjust = -0.5,
     hjust = 0.5,
