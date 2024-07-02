@@ -176,20 +176,58 @@ dev.off()
 # seperate ethnic groups
 
 ```{r}
-new_full <- merge(metadata[,c("Participant_ID","FREG5_Ethnic_Group")],full_data, by="Participant_ID")
-#new_full
-
-data_c <- new_full %>% filter(FREG5_Ethnic_Group == "C")
-data_i <- new_full %>% filter(FREG5_Ethnic_Group == "I")
-data_m <- new_full %>% filter(FREG5_Ethnic_Group == "M")
+new_full <- merge(metadata[,c("Participant_ID","FREG5_Ethnic_Group","FREG7_Gender", "FREG8_Age", "BMI", "BMI_groups")],full_data, by="Participant_ID")
+df_cm <- new_full %>% filter(FREG5_Ethnic_Group == "C" | FREG5_Ethnic_Group == "M")
+df_im <- new_full %>% filter(FREG5_Ethnic_Group == "I" | FREG5_Ethnic_Group == "M")
+# data_c <- new_full %>% filter(FREG5_Ethnic_Group == "C")
+# data_i <- new_full %>% filter(FREG5_Ethnic_Group == "I")
+# data_m <- new_full %>% filter(FREG5_Ethnic_Group == "M")
+df_cm$groupM_C <- ifelse(df_cm$FREG5_Ethnic_Group == "M", 1,
+                      ifelse(df_cm$FREG5_Ethnic_Group == "C", 0, NA))
+df_im$groupM_I <- ifelse(df_im$FREG5_Ethnic_Group == "M", 1,
+                      ifelse(df_im$FREG5_Ethnic_Group == "I", 0, NA))
+# data_c <- new_full %>% filter(FREG5_Ethnic_Group == "C")
+# data_i <- new_full %>% filter(FREG5_Ethnic_Group == "I")
+# data_m <- new_full %>% filter(FREG5_Ethnic_Group == "M")
 ```
 
+```{r}
+library(MatchIt)
+#library(tableone)
+
+m.out_C <- matchit(groupM_C ~ FREG7_Gender + FREG8_Age + BMI_groups,
+                   data = df_cm, method = "nearest", ratio = 1,
+                   #exact = c("FREG7_Gender", "BMI_groups"),
+                   caliper = 0.1)
+summary(m.out_C)
+matched_data_C <- match.data(m.out_C)
+matched_data_C
+```
+
+
+```{r}
+m.out_I <- matchit(groupM_I ~ FREG7_Gender + FREG8_Age + BMI_groups,
+                   data = df_im, method = "nearest", ratio = 1,
+                   #exact = c("FREG7_Gender"),
+                   caliper = 0.4)
+summary(m.out_I)
+matched_data_I <- match.data(m.out_I)
+#matched_data_I
+```
+
+```{r}
+data_c <- matched_data_C %>% filter(FREG5_Ethnic_Group == "C")
+data_i <- matched_data_I %>% filter(FREG5_Ethnic_Group == "I")
+data_m <- matched_data_C %>% filter(FREG5_Ethnic_Group == "M")
+```
 
 ```{r}
 data_c
 data_i
 data_m
 ```
+
+
 # unweighted
 ```{r}
 calculate_significant_correlations <- function(data, food_or_nutrition_columns, species_columns) {
@@ -270,19 +308,19 @@ calculate_significant_correlations <- function(data, food_or_nutrition_columns, 
 
 # chinese
 ```{r}
-set.seed(123) 
-
-selected_indices <- sample(nrow(data_c), 49)
-
-# Subset the DataFrame to get the selected rows
-data_c_49 <- data_c[selected_indices, ]
-data_c_49
+# set.seed(123) 
+# 
+# selected_indices <- sample(nrow(data_c), 49)
+# 
+# # Subset the DataFrame to get the selected rows
+# data_c_49 <- data_c[selected_indices, ]
+# data_c_49
 ```
 
 
 ```{r}
-food_species_c <- data_c_49[, c(food_columns, species_columns)]
-nutrition_species_c <- data_c_49[, c(nutrition_columns, species_columns)]
+food_species_c <- data_c[, c(food_columns, species_columns)]
+nutrition_species_c <- data_c[, c(nutrition_columns, species_columns)]
 
 food_species_correlations_c <- calculate_significant_correlations(food_species_c, food_columns, species_columns)
 nutrition_species_correlations_c <- calculate_significant_correlations(nutrition_species_c, nutrition_columns, species_columns)
@@ -310,19 +348,19 @@ cor_data_c
 
 # indian
 ```{r}
-set.seed(123) 
-
-selected_indices <- sample(nrow(data_i), 49)
-
-# Subset the DataFrame to get the selected rows
-data_i_49 <- data_c[selected_indices, ]
-data_i_49
+# set.seed(123) 
+# 
+# selected_indices <- sample(nrow(data_i), 49)
+# 
+# # Subset the DataFrame to get the selected rows
+# data_i_49 <- data_c[selected_indices, ]
+# data_i_49
 ```
 
 
 ```{r}
-food_species_i <- data_i_49[, c(food_columns, species_columns)]
-nutrition_species_i <- data_i_49[, c(nutrition_columns, species_columns)]
+food_species_i <- data_i[, c(food_columns, species_columns)]
+nutrition_species_i <- data_i[, c(nutrition_columns, species_columns)]
 
 
 food_species_correlations_i <- calculate_significant_correlations(food_species_i, food_columns, species_columns)
@@ -351,7 +389,7 @@ cor_data_i
 
 # malays
 ```{r}
-food_species_m <- data_m[1:49, c(food_columns, species_columns)]
+food_species_m <- data_m[, c(food_columns, species_columns)]
 nutrition_species_m <- data_m[, c(nutrition_columns, species_columns)]
 
 
@@ -492,7 +530,7 @@ plot_graph_fixed <- function(graph) {
   ggraph(graph, layout = 'manual', x = x, y = y) +
     geom_edge_link(aes(edge_alpha = abs_correlation, edge_color = edge_color, edge_width = abs_correlation), show.legend = FALSE) +
     geom_node_point(aes(shape = shape, size = degree, color = shape)) +  # Map 'size' to 'degree'
-    geom_node_text(aes(label = ifelse(degree > 0, name, "")), , color = "black", repel = TRUE, fontface = "bold", size = 3) +
+    geom_node_text(aes(label = ifelse(degree > 0, name, "")), , color = "black", repel = TRUE, fontface = "bold", size = 4) +
     scale_shape_manual(values = c(circle = 19, square = 15, diamond = 17), labels = c("Species", "Nutrition", "Food")) +
     scale_edge_color_manual(values = c("#8D3256", "#004697")) +
     scale_color_manual(values = c("slateblue", "#68B69F", "#F08E59"), labels = c("Species", "Nutrition", "Food")) +
@@ -513,57 +551,99 @@ print(plot_m_fixed)
 
 ```
 ```{r fig.width=10, fig.height=10}
-png("figure/network_c_49.png", width = 1400, height = 1000, res = 120)
+png("figure/network_c_49.png", width = 1400, height = 1400, res = 120)
 plot_c_fixed
 dev.off()
-png("figure/network_i_49.png", width = 1400, height = 1000, res = 120)
+png("figure/network_i_49.png", width = 1400, height = 1400, res = 120)
 plot_i_fixed
 dev.off()
-png("figure/network_m_49.png", width = 1400, height = 1000, res = 120)
+png("figure/network_m_49.png", width = 1400, height = 1400, res = 120)
 plot_m_fixed
 dev.off()
 ```
 
+## normality test for each food
+```{r}
+distri_food = full_data[,-1]
+
+distri_food = subset(distri_food, FREG5_Ethnic_Group != "O")
+
+# Assuming 'full_data' has one row per participant and multiple food intake columns
+# Reshape the data from wide to long format
+long_data <- distri_food %>%
+  pivot_longer(
+    cols = -FREG5_Ethnic_Group,  # Exclude the group column
+    names_to = "Food_Type",       # New column for food types
+    values_to = "Intake"          # New column for intake values
+  )
+```
 
 
 ```{r}
-library(boot)
 
-# Example data frame
-set.seed(123) # For reproducibility
-data <- data.frame(
-  participant = 1:100,
-  food_intake1 = rnorm(100, mean = 50, sd = 10),
-  food_intake2 = rnorm(100, mean = 60, sd = 12),
-  microbiome_species1 = rnorm(100, mean = 100, sd = 20),
-  microbiome_species2 = rnorm(100, mean = 110, sd = 22)
-)
+food_types <- c("Fish", "Crustacean", "Mollusk", "Seafood_dishes", "Poultry", "Red_meat",
+                "Meat_dishes", "Processed_meat", "Dairy", "Cruciferous_vegetables", "Legumes",
+                "Mushroom", "Fruits", "Wholegrain", "Chapati", "Noodle_dishes", "Deep_fried", 
+                "Coffee", "Tea")
 
-# Define the correlation function
-correlation_function <- function(data, indices) {
-  sample_data <- data[indices, ] # Resample the data
-  # Calculate correlations between food intake and microbiome species
-  cor_matrix <- cor(sample_data[, c("food_intake1", "food_intake2")], 
-                    sample_data[, c("microbiome_species1", "microbiome_species2")])
-  return(as.vector(cor_matrix)) # Return the correlation matrix as a vector
+# if (!dir.exists("figure")) {
+#   dir.create("figure")
+# }
+
+
+for (food in food_types) {
+  current_data <- long_data %>% filter(Food_Type == food)
+  p <- ggplot(current_data, aes(x = Intake, fill = FREG5_Ethnic_Group)) +
+    geom_density(alpha = 0.5, adjust = 1.5) +
+    labs(title = paste("Density Plot of", food),
+         x = "Intake per Day", y = "Density") +
+    scale_fill_manual(values = c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887")) +
+    theme_minimal()+
+    theme(legend.position = "none",
+          plot.title = element_text(size = 20, face = "bold"))
+  png_filename <- paste0("figure/", food, "_density_plot.png")
+  ggsave(png_filename, plot = p, width = 10, height = 6, dpi = 300)
 }
 
-# Perform the bootstrap with 1000 resamples
-results <- boot(data = data, statistic = correlation_function, R = 1000)
-
-# Print the results
-print(results)
-
-# Calculate 95% confidence intervals for the correlations
-ci <- boot.ci(results, type = "perc")
-print(ci)
-
 ```
 
 
 ```{r}
+library(patchwork)
+# Define the vector of food types
+food_types <- c("Fish", "Crustacean", "Mollusk", "Seafood_dishes", "Poultry", "Red_meat",
+                "Meat_dishes", "Processed_meat", "Dairy", "Cruciferous_vegetables", "Legumes",
+                "Mushroom", "Fruits", "Wholegrain", "Chapati", "Noodle_dishes", "Deep_fried", 
+                "Coffee", "Tea")
+
+# Initialize an empty list to store plots
+plots_list <- list()
+
+# Loop through each food type and create a plot
+for (food in food_types) {
+  current_data <- long_data %>% filter(Food_Type == food)
+  
+  p <- ggplot(current_data, aes(x = Intake, fill = FREG5_Ethnic_Group)) +
+    geom_density(alpha = 0.5, adjust = 1.5) +
+    labs(title = paste(food),
+         x = "Intake per Day", y = "Density") +
+    scale_fill_manual(values = c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887")) +
+    theme_minimal()+
+    theme(legend.position = "none")
+  
+  # Add the plot to the list
+  plots_list[[food]] = p
+}
+
+# Combine all plots side by side using patchwork
+combined_plot <- wrap_plots(plots_list, ncol = 1) # Adjust ncol to change the number of columns
+combined_plot
+# Save the combined plot
+#ggsave("combined_density_plots.png", combined_plot, width = 30, height = 20, dpi = 300) # Adjust size as needed
 
 ```
+
+
 
 
 
