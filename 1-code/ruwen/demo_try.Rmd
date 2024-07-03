@@ -1,0 +1,269 @@
+---
+title: "newdemofigure"
+author: "Ruwen Zhou"
+date: "7/3/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+```
+
+```{r}
+xdf = read_xlsx("data/df_demo.xlsx")
+xdf
+```
+```{r}
+plot_age <-
+  df %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = FREG8_Age, y = sample_id,)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = FREG8_Age,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_aaas()(n = 10)[4],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Age (years)", y = "Participants") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+
+plot_bmi <-
+  df %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = bmi, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = bmi,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[1],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "BMI (kg/m^2)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+
+
+##dbp
+plot_dbp <-
+  df %>%
+  dplyr::mutate(dbp = rowMeans(select(., DBP12_Dbp_1, DBP13_Dbp_2, DBP14_Dbp_3), na.rm = TRUE)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = dbp, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = dbp,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[5],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "DBP (mmHg)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+
+##sbp
+plot_sbp <-
+  df %>%
+  dplyr::mutate(sbp = rowMeans(select(., DBP9_Sbp_1, DBP10_Sbp_2, DBP11_Sbp_3), na.rm = TRUE)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = sbp, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = sbp,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[6],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "SBP (mmHg)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+
+
+###waist
+plot_waist <-
+  df %>%
+  dplyr::mutate(waist = rowMeans(select(., FWH16_Waist1, FWH17_Waist2, FWH18_Waist3), na.rm = TRUE)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = waist, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = waist,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[3],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Waist (cm)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+
+
+##hip
+plot_hip <-
+  df %>%
+  dplyr::mutate(hip = rowMeans(select(., FWH19_Hip1, FWH20_Hip2, FWH21_Hip3), na.rm = TRUE)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = hip, y = sample_id), alpha = 0.5) +
+  geom_segment(aes(
+    x = 0,
+    xend = hip,
+    y = sample_id,
+    yend = sample_id
+  ),
+  color = ggsci::pal_tron()(n = 10)[4]) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Hip (cm)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+
+
+
+##hr
+plot_hr <-
+  df %>%
+  dplyr::mutate(hr = rowMeans(select(., DBP15_Hr_1, DBP16_Hr_2, DBP17_Hr_3), na.rm = TRUE)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = hr, y = sample_id)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = hr,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_tron()(n = 10)[7],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "HR (bpm)", y = "") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+
+
+
+###gender
+plot_gender <-
+  df %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = "class", y = sample_id)) +
+  geom_tile(aes(fill = FREG7_Gender), show.legend = FALSE) +
+  theme_base +
+  scale_fill_manual(values = gender_colors) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Gender", y = "") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0)))
+
+
+###ethnicity
+plot_ethnic_group <-
+  df %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = "class", y = sample_id)) +
+  geom_tile(aes(fill = FREG5_Ethnic_Group), show.legend = FALSE) +
+  theme_base +
+  scale_fill_manual(values = ethnicity_colors) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Ethnicity", y = "") +
+  scale_x_discrete(expand = expansion(mult = c(0, 0)))
+
+
+library(patchwork)
+
+demographics_heatmap <-
+  plot_age + plot_bmi + plot_waist + plot_hip + plot_dbp + plot_sbp + plot_hr + plot_gender + plot_ethnic_group +
+  plot_layout(nrow = 1, widths = c(1, 1, 1, 1, 1, 1, 1, 0.3, 0.3)) +
+  theme(axis.title.x = element_text(size = 8))
+
+print(demographics_heatmap)
+```
+```{r}
+ggsave(
+  demographics_heatmap,
+  filename = "figure/demographics_heatmap.png",
+  width = 10,
+  height = 10
+)
+```
+

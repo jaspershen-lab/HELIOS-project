@@ -914,6 +914,8 @@ pheatmap(order_matrix,
 library(ggpubr)
 
 phyloseq_filtered_no_O <- subset_samples(phyloseq_filtered, FREG5_Ethnic_Group != "O")
+
+ethnicity_colors = c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
 ```
 
 
@@ -961,12 +963,12 @@ p <- plot_ordination(phyloseq_filtered_no_O, phylo.beta, type = "samples", color
 
 # Extract the data from the plot
 plot_data <- p$data
-
 # Add the points in the desired order using geom_point()
+#c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
 p +
-  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "C"), color = "#B24745FF") +
-  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "#79AF97FF") +
-  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "#DF8F44FF")
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "C"), color = "#9FDDCA") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "#9EA3F1") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "#E17887")
   #theme(text = element_text(family = "serif"))
 ```
 

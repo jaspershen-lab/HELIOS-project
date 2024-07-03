@@ -395,7 +395,6 @@ sig_taxa1 <- sig_taxa1[! sig_taxa1 %in% c('unclassified')]
 ```
 
 ##z score
-mean of all samples 
 ```{r}
 otu_table1 <- otu_table(phyloseq_filtered_race)[, sig_taxa1]
 
@@ -431,6 +430,251 @@ z_score_matrix_new1 <- z_score_matrix1_t[,new]
 
 ```
 
+```{r}
+# Ensure the rownames of annotation_data match the order of columns in z_score_matrix_new1
+annotation_data_ordered <- annotation_data[match(colnames(z_score_matrix_new1), rownames(annotation_data)), , drop = FALSE]
+
+ethnicity_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887")
+
+gene_names_italics <- lapply(rownames(z_score_matrix_new1), function(x) bquote(italic(.(x))))
+col_annotation <- list(Group = ethnicity_colors)
+
+pheatmap(z_score_matrix_new1, 
+         cluster_rows = TRUE, 
+         cluster_cols = FALSE, # Set to FALSE to maintain the custom order
+         scale = "none",
+         annotation_col = annotation_data_ordered,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         labels_row = as.expression(gene_names_italics),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 10,
+         annotation_colors = col_annotation)
+
+
+```
+# cluster within each groups
+```{r fig.width=6, fig.height=4}
+library(dplyr)
+library(pheatmap)
+#extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+extended_palette <- coolwarm <- colorRampPalette(c("#3C4EC2", "#FFFFFF", "#CE4C3A"))(100)
+
+
+
+# Convert numeric IDs to character if they aren't already
+grouping_df$FREG1_Barcode <- as.character(grouping_df$FREG1_Barcode)
+
+# Split the matrix according to the groups, cluster within each group, and then combine
+groups <- unique(grouping_df$FREG5_Ethnic_Group)  # get unique groups
+list_of_matrices <- list()
+
+for(group in groups) {
+  # Get column names for this group by matching the IDs in the dataframe to column names
+  cols_for_group <- grouping_df$FREG1_Barcode[grouping_df$FREG5_Ethnic_Group == group]
+  sub_matrix <- z_score_matrix_new1[, cols_for_group]
+  # Perform clustering on columns of sub_matrix
+  dist_mat <- dist(t(sub_matrix)) 
+  hclust_mat <- hclust(dist_mat)
+
+  sub_matrix <- sub_matrix[, hclust_mat$order]
+  list_of_matrices[[group]] <- sub_matrix
+}
+
+
+# Combine matrices in the order of the groups
+final_matrix <- do.call(cbind, list_of_matrices)
+
+# Ensure annotation data is ordered correctly
+final_annotation_data <- annotation_data[match(colnames(final_matrix), rownames(annotation_data)), , drop = FALSE]
+
+# Create heatmap
+pheatmap(final_matrix, 
+         cluster_rows = TRUE, 
+         cluster_cols = FALSE, # Clustering was manually done
+         scale = "none",
+         annotation_col = final_annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         labels_row = as.expression(gene_names_italics),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 10,
+         annotation_colors = col_annotation)
+
+
+```
+```{r fig.width=6, fig.height=4}
+library(dplyr)
+library(pheatmap)
+
+# Assuming 'grouping_df' has the group information
+groups <- unique(grouping_df$FREG5_Ethnic_Group)  # get unique groups
+list_of_matrices <- list()
+
+for(group in groups) {
+  # Get column names for this group
+  cols_for_group <- grouping_df$FREG1_Barcode[grouping_df$FREG5_Ethnic_Group == group]
+  
+  # Extract sub-matrix for this group
+  sub_matrix <- z_score_matrix_new1[, cols_for_group, drop = FALSE]
+
+  # Calculate sum of each column, focus on positive values
+  col_sums <- colSums(sub_matrix * (sub_matrix > 0), na.rm = TRUE)
+
+  # Order columns by descending sum
+  ordered_cols <- colnames(sub_matrix)[order(-col_sums)]
+
+  # Reorder sub_matrix according to the sums
+  sub_matrix <- sub_matrix[, ordered_cols]
+
+  list_of_matrices[[group]] <- sub_matrix
+}
+
+# Combine matrices in the order of the groups
+final_matrix <- do.call(cbind, list_of_matrices)
+
+# Assuming 'annotation_data' is correctly ordered to match 'grouping_df' ordering initially
+# If the 'grouping_df' order changes, 'annotation_data' should be reordered to match 'final_matrix'
+final_annotation_data <- annotation_data[match(colnames(final_matrix), rownames(annotation_data)), , drop = FALSE]
+
+# Generate heatmap
+pheatmap(final_matrix, 
+         cluster_rows = TRUE, 
+         cluster_cols = FALSE, # Custom order maintained
+         scale = "none",
+         annotation_col = final_annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         labels_row = as.expression(gene_names_italics),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 10,
+         annotation_colors = col_annotation)
+
+```
+
+```{r fig.width=6, fig.height=4}
+library(dplyr)
+library(pheatmap)
+
+# Assuming 'grouping_df' has the group information
+groups <- unique(grouping_df$FREG5_Ethnic_Group)  # get unique groups
+list_of_matrices <- list()
+
+for(group in groups) {
+  # Get column names for this group
+  cols_for_group <- grouping_df$FREG1_Barcode[grouping_df$FREG5_Ethnic_Group == group]
+  
+  # Extract sub-matrix for this group
+  sub_matrix <- z_score_matrix_new1[, cols_for_group, drop = FALSE]
+
+  # Calculate the number of positive entries for each column in the sub-matrix
+  col_positives <- colSums(sub_matrix > 0, na.rm = TRUE)
+
+  # Order columns by descending number of positives
+  ordered_cols <- names(sort(col_positives, decreasing = TRUE))
+
+  # Reorder sub-matrix according to the counts
+  sub_matrix <- sub_matrix[, ordered_cols]
+
+  list_of_matrices[[group]] <- sub_matrix
+}
+
+# Combine matrices in the order of the groups
+final_matrix <- do.call(cbind, list_of_matrices)
+# Calculate the number of positive entries for each row in the final matrix
+row_positives <- rowSums(final_matrix > 0, na.rm = TRUE)
+
+# Create a distance matrix for rows based on the count of positives
+row_distance <- as.dist(outer(row_positives, row_positives, FUN = function(x, y) abs(x - y)))
+
+# Perform hierarchical clustering of rows based on this distance
+row_clustering <- hclust(row_distance, method = "complete")
+
+# Reorder the final matrix rows according to the clustering
+final_matrix_ordered <- final_matrix[row_clustering$order, ]
+# Assuming 'annotation_data' is correctly ordered to match 'grouping_df' ordering initially
+final_annotation_data <- annotation_data[match(colnames(final_matrix), rownames(annotation_data)), , drop = FALSE]
+
+# Generate heatmap
+pheatmap(final_matrix_ordered, 
+         cluster_rows = FALSE,  # Custom clustering done
+         cluster_cols = FALSE,  # Custom clustering done within groups
+         scale = "none",
+         annotation_col = final_annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         labels_row = as.expression(gene_names_italics),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 10,
+         annotation_colors = col_annotation)
+
+```
+```{r fig.width=6, fig.height=4}
+library(dplyr)
+library(pheatmap)
+
+# First, proceed with the column clustering within each ethnic group as previously described
+
+# Assuming 'grouping_df' has the group information
+groups <- unique(grouping_df$FREG5_Ethnic_Group)  # get unique groups
+list_of_matrices <- list()
+
+for(group in groups) {
+  # Get column names for this group
+  cols_for_group <- grouping_df$FREG1_Barcode[grouping_df$FREG5_Ethnic_Group == group]
+  
+  # Extract sub-matrix for this group
+  sub_matrix <- z_score_matrix_new1[, cols_for_group, drop = FALSE]
+
+  # Calculate the number of positive entries for each column in the sub-matrix
+  col_positives <- colSums(sub_matrix > 0, na.rm = TRUE)
+
+  # Order columns by descending number of positives
+  ordered_cols <- names(sort(col_positives, decreasing = TRUE))
+
+  # Reorder sub-matrix according to the counts
+  sub_matrix <- sub_matrix[, ordered_cols]
+
+  list_of_matrices[[group]] <- sub_matrix
+}
+
+# Combine matrices in the order of the groups
+final_matrix <- do.call(cbind, list_of_matrices)
+
+# Calculate the number of positive entries for each row
+row_positives <- rowSums(final_matrix > 0, na.rm = TRUE)
+
+# Order rows by descending number of positives
+ordered_rows <- names(sort(row_positives, decreasing = TRUE))
+
+# Reorder the final matrix rows according to the sorted order
+final_matrix_ordered <- final_matrix[ordered_rows, ]
+
+# Assuming 'annotation_data' is correctly ordered to match 'final_matrix'
+final_annotation_data <- annotation_data[match(colnames(final_matrix), rownames(annotation_data)), , drop = FALSE]
+
+# Generate heatmap with sorted rows and custom clustered columns
+pheatmap(final_matrix_ordered, 
+         cluster_rows = FALSE,  # Rows are manually sorted
+         cluster_cols = FALSE,  # Columns are manually clustered within groups
+         scale = "none",
+         annotation_col = final_annotation_data,
+         color = rev(extended_palette), 
+         breaks = seq(-1, 1, length.out = 101),
+         labels_row = as.expression(gene_names_italics),
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         fontsize_row = 10,
+         annotation_colors = col_annotation)
+
+```
+
+
+
 ```{r fig.width=10, fig.height=6}
 extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
 #png("ethinity_genus_zscore.png", width = 1400, height = 1000, res = 120)
@@ -446,9 +690,13 @@ pheatmap(z_score_matrix_new1,
          show_colnames = FALSE,
          fontsize_row = 10)
 #dev.off()
+```
 
+
+
+```{r fig.width=10, fig.height=6}
 pheatmap(z_score_matrix_new1, 
-         cluster_rows = TRUE, 
+         cluster_rows = FALSE, 
          cluster_cols = TRUE, # Set to FALSE to maintain the custom order
          scale = "none",
          annotation_col = annotation_data,
@@ -461,16 +709,18 @@ pheatmap(z_score_matrix_new1,
 ```
 ```{r}
 #write.csv(z_score_matrix_new1, "italic.csv")
-z_score_matrix_new1
+#z_score_matrix_new1
 ```
 
 ```{r fig.width=10, fig.height=10}
+ethnicity_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887")
 
 gene_names_italics <- lapply(rownames(z_score_matrix_new1), function(x) bquote(italic(.(x))))
 column_gap_indices <- c(395)
-#png("ethinity_genus_zscore_cut_auto.png", width = 1400, height = 1000, res = 120)
+col_annotation <- list(Group = ethnicity_colors)
+#png("figure/ethinity_genus_zscore_cut_auto.png", width = 1400, height = 1000, res = 120)
 pheatmap(z_score_matrix_new1, 
-         cluster_rows = TRUE,
+         cluster_rows = FALSE,
          cluster_cols = FALSE,
          scale = "none", 
          annotation_col = annotation_data, 
@@ -482,47 +732,12 @@ pheatmap(z_score_matrix_new1,
          labels_row = as.expression(gene_names_italics),
          cutree_rows = 4,  # Specify the number of clusters
          gaps_row = 1,
-         gaps_col = column_gap_indices)     # Add gaps between row clusters
+         gaps_col = column_gap_indices,
+         annotation_colors = col_annotation)     
 
 
 #dev.off()
 ```
-
-
-
-
-```{r fig.width=6, fig.height=6}
-
-# Load your matrix (assuming it's already loaded as z_score_matrix_new1)
-
-#dist_matrix <- dist(z_score_matrix_new1, method = "manhattan")
-
-# Perform hierarchical clustering using complete linkage
-#hc <- hclust(dist_matrix, method = "complete")
-
-# Reorder the rows of the original matrix based on clustering
-#z_score_matrix_new1_reordered <- z_score_matrix_new1[ordered_row_names, ]
-
-#z_score_matrix_new1_reordered
-# Now z_score_matrix_new1_reordered is your matrix with rows reordered according to clustering
-#column_gap_indices <- c(395)
-#row_gap_indices <- c(22, 46, 54)
-#png("ethinity_genus_zscore_cut2.png", width = 1400, height = 1000, res = 120)
-#pheatmap(z_score_matrix_new1_reordered, 
-         #cluster_rows = FALSE, 
-         #cluster_cols = FALSE, # Set to FALSE to maintain the custom order
-         #scale = "none",
-         #annotation_col = annotation_data,
-         #color = rev(extended_palette), 
-         #breaks = seq(-1, 1, length.out = 101),
-         #show_rownames = TRUE,
-         #show_colnames = FALSE,
-         #fontsize_row = 10,
-         #gaps_col = column_gap_indices,
-         #gaps_row = row_gap_indices)
-#dev.off()
-```
-
 
 
 
