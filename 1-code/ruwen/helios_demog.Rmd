@@ -1621,6 +1621,38 @@ permanova
 
 ```
 
+## from xiaotao
+```{r}
+xdf = read_xlsx("data/demo_df.xlsx")
+xdf 
+```
+```{r}
+plot_age <-
+  xdf %>%
+  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = FREG8_Age, y = sample_id,)) +
+  geom_segment(
+    aes(
+      x = 0,
+      xend = FREG8_Age,
+      y = sample_id,
+      yend = sample_id
+    ),
+    color = ggsci::pal_aaas()(n = 10)[4],
+    alpha = 0.5
+  ) +
+  theme_base +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "cm"),
+    panel.spacing = unit(0, "cm")
+  ) +
+  labs(x = "Age (years)", y = "Participants") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
+plot_age
+```
 
 
 

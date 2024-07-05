@@ -1,6 +1,7 @@
 library(r4projects)
 setwd(get_project_wd())
 rm(list = ls())
+
 source('1-code/100-tools.R')
 library(tidyverse)
 
@@ -271,6 +272,7 @@ circos.track(
 #####FREG8_Age
 FREG8_Age <-
   df$FREG8_Age
+
 library(gghalves)
 plot_age <-
   FREG8_Age %>%
@@ -486,6 +488,7 @@ plot <-
     size = 5
   )
 
+
 plot
 
 cor.test(df$FREG8_Age, df$bmi, method = "spearman")
@@ -667,6 +670,7 @@ plot_bmi <-
     axis.ticks.x = element_blank()
   )
 plot_bmi
+
 
 ggsave(plot_bmi,
        filename = "bmi_distributation.pdf",
@@ -1238,10 +1242,15 @@ ggsave(
 ###age, gender, ethnic_group, bmi, waist, hip, Sbp, dbp
 ##hr (heart rate)
 ##age
+df <- df %>%
+  arrange(FREG5_Ethnic_Group) %>%
+  mutate(sample_id = factor(sample_id, levels = unique(sample_id)))
+df
+
 plot_age <-
   df %>%
-  dplyr::mutate(sample_id = factor(sample_id)) %>%
-  ggplot(aes(x = FREG8_Age, y = sample_id)) +
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
+  ggplot(aes(x = FREG8_Age, y = sample_id,)) +
   geom_segment(
     aes(
       x = 0,
@@ -1268,7 +1277,7 @@ plot_age
 ##bmi
 plot_bmi <-
   df %>%
-  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
   ggplot(aes(x = bmi, y = sample_id)) +
   geom_segment(
     aes(
@@ -1297,7 +1306,7 @@ plot_bmi
 plot_dbp <-
   df %>%
   dplyr::mutate(dbp = rowMeans(select(., DBP12_Dbp_1, DBP13_Dbp_2, DBP14_Dbp_3), na.rm = TRUE)) %>%
-  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
   ggplot(aes(x = dbp, y = sample_id)) +
   geom_segment(
     aes(
@@ -1325,7 +1334,7 @@ plot_dbp
 plot_sbp <-
   df %>%
   dplyr::mutate(sbp = rowMeans(select(., DBP9_Sbp_1, DBP10_Sbp_2, DBP11_Sbp_3), na.rm = TRUE)) %>%
-  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
   ggplot(aes(x = sbp, y = sample_id)) +
   geom_segment(
     aes(
@@ -1354,7 +1363,7 @@ plot_sbp
 plot_waist <-
   df %>%
   dplyr::mutate(waist = rowMeans(select(., FWH16_Waist1, FWH17_Waist2, FWH18_Waist3), na.rm = TRUE)) %>%
-  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
   ggplot(aes(x = waist, y = sample_id)) +
   geom_segment(
     aes(
@@ -1383,7 +1392,7 @@ plot_waist
 plot_hip <-
   df %>%
   dplyr::mutate(hip = rowMeans(select(., FWH19_Hip1, FWH20_Hip2, FWH21_Hip3), na.rm = TRUE)) %>%
-  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
   ggplot(aes(x = hip, y = sample_id), alpha = 0.5) +
   geom_segment(aes(
     x = 0,
@@ -1403,14 +1412,14 @@ plot_hip <-
   labs(x = "Hip (cm)", y = "") +
   scale_x_continuous(expand = expansion(mult = c(0, 0.05)))
 
-plot_hip
+print(plot_hip)
 
 
 ##hr
 plot_hr <-
   df %>%
   dplyr::mutate(hr = rowMeans(select(., DBP15_Hr_1, DBP16_Hr_2, DBP17_Hr_3), na.rm = TRUE)) %>%
-  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
   ggplot(aes(x = hr, y = sample_id)) +
   geom_segment(
     aes(
@@ -1438,7 +1447,7 @@ plot_hr
 ###gender
 plot_gender <-
   df %>%
-  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
   ggplot(aes(x = "class", y = sample_id)) +
   geom_tile(aes(fill = FREG7_Gender), show.legend = FALSE) +
   theme_base +
@@ -1457,7 +1466,7 @@ plot_gender
 ###ethnicity
 plot_ethnic_group <-
   df %>%
-  dplyr::mutate(sample_id = factor(sample_id)) %>%
+  #dplyr::mutate(sample_id = factor(sample_id)) %>%
   ggplot(aes(x = "class", y = sample_id)) +
   geom_tile(aes(fill = FREG5_Ethnic_Group), show.legend = FALSE) +
   theme_base +
@@ -1480,7 +1489,7 @@ demographics_heatmap <-
   plot_layout(nrow = 1, widths = c(1, 1, 1, 1, 1, 1, 1, 0.3, 0.3)) +
   theme(axis.title.x = element_text(size = 8))
 
-demographics_heatmap
+print(demographics_heatmap)
 
 ggsave(
   demographics_heatmap,
