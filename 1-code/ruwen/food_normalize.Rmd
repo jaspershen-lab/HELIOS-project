@@ -1,0 +1,159 @@
+---
+title: "Untitled"
+author: "Ruwen Zhou"
+date: "7/19/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(ggalluvial)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(vegan)
+library(phyloseq)
+library(broom)
+library(tidyr)
+```
+
+```{r}
+meta_data <- read.csv("data/demo_535.csv")
+food_raw <- read.csv("data/food_535.csv")
+# species_abundance <- read.csv("data/butyrate_pick.csv")
+# meta_data = meta_data[,c("Participant_ID","FREG5_Ethnic_Group")]
+food_raw
+meta_data
+
+data_raw <- merge(meta_data[,c("Participant_ID", "FREG5_Ethnic_Group")], food_raw[-c(2:4)], by = "Participant_ID")  
+data_raw <- subset(data_raw, FREG5_Ethnic_Group != "O")
+
+rownames(data_raw) =data_raw[,1]
+data_raw[1] = NULL
+data_raw
+```
+#test Kruskal-Wallis
+```{r}
+data_raw <- data_raw %>% 
+  mutate(FREG5_Ethnic_Group = as.factor(FREG5_Ethnic_Group)) %>% 
+  mutate(across(-FREG5_Ethnic_Group, as.numeric))
+data_raw
+
+
+results <- data_raw %>%
+  pivot_longer(-FREG5_Ethnic_Group, names_to = "food", values_to = "intake") %>%
+  group_by(food) %>%
+  do(tidy(kruskal.test(intake ~ FREG5_Ethnic_Group, data = .))) %>%
+  ungroup() %>%
+  mutate(p.adjusted = p.adjust(p.value, method = "BH")) %>%
+  arrange(p.adjusted)
+
+results
+significant_results <- results %>%
+  filter(p.value < 0.05)
+
+print(significant_results)
+
+
+```
+not much food intake is related to ethnicity
+
+#pca
+```{r}
+library(FactoMineR)
+library(factoextra)
+
+# Perform PCA
+pca_result <- PCA(data_raw %>% select(-FREG5_Ethnic_Group), scale.unit = TRUE)
+
+# Visualize PCA
+fviz_pca_ind(pca_result, 
+             geom.ind = "point", 
+             col.ind = data_raw$FREG5_Ethnic_Group, 
+             palette = "jco",
+             addEllipses = TRUE,
+             legend.title = "Ethnic Group") +
+  labs(title = "PCA of Food Intake by Ethnic Group")
+
+```
+
+
+# random forest
+```{r fig.height=10, fig.width=10}
+library(randomForest)
+
+data_imputed <- data_raw %>%
+  mutate(across(-FREG5_Ethnic_Group, ~ ifelse(is.na(.), 0, .)))
+
+rf_model <- randomForest(FREG5_Ethnic_Group ~ ., data = data_imputed, importance = TRUE)
+
+# Plot variable importance
+varImpPlot(rf_model, main = "Variable Importance in Random Forest")
+
+```
+MeanDecreaseAccuracy:
+
+This column shows the overall importance of each variable for predicting the target variable (ethnic group) across all classes. It represents the mean decrease in accuracy of the model when the variable is permuted. Higher values indicate greater importance.
+
+MeanDecreaseGini:
+
+This column shows the importance of each variable based on the Gini impurity criterion. It represents the total decrease in node impurity that the variable contributes to, averaged over all the trees in the forest. Higher values indicate greater importance.
+
+
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Extract variable importance
+importance <- importance(rf_model)
+var_importance <- data.frame(Variable = rownames(importance), 
+                             MeanDecreaseAccuracy = importance[, "MeanDecreaseAccuracy"], 
+                             MeanDecreaseGini = importance[, "MeanDecreaseGini"])
+
+# Set negative MeanDecreaseAccuracy values to zero
+# var_importance <- var_importance %>%
+#   mutate(MeanDecreaseAccuracy = ifelse(MeanDecreaseAccuracy < 0, 0, MeanDecreaseAccuracy))
+
+# Select top 20 important variables based on MeanDecreaseAccuracy for better readability
+top_vars <- var_importance %>% arrange(desc(MeanDecreaseAccuracy)) %>% head(20)
+
+# Plot variable importance for top variables
+ggplot(top_vars, aes(x = reorder(Variable, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  theme_bw() +
+  labs(title = "Top 20 Variable Importance in Random Forest",
+       x = "Variable",
+       y = "Mean Decrease in Accuracy")
+
+
+```
+
+```{r}
+# Select top 10 important variables
+top_vars <- head(var_importance[order(-var_importance$Importance), ], 12)
+top_vars
+# Create boxplots for top variables
+data_long <- data_imputed %>%
+  pivot_longer(-FREG5_Ethnic_Group, names_to = "food", values_to = "intake") %>%
+  filter(food %in% top_vars$Variable)
+
+ggplot(data_long, aes(x = FREG5_Ethnic_Group, y = intake, fill = FREG5_Ethnic_Group)) +
+  geom_boxplot() +
+  facet_wrap(~ food, scales = "free") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Top 10 Important Food Intake Variables by Ethnic Group",
+       x = "Ethnic Group",
+       y = "Food Intake")
+
+```
+
+
+
