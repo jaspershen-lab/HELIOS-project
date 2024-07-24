@@ -7,24 +7,180 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+#demographic
+```{r}
+helios_core = read_excel("data/HELIOS_Core_redacted.xlsx")
+metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
+sample_list = metadata_micro$`Original Sample name`
+helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
+```
+#food nutrition
+```{r}
+FFQ_food = read_xlsx("data/HELIOS_FFQA.xlsx")
+FFQ_nutrition = read_xlsx("data/HELIOS_FFQB.xlsx")
+pid_list = helios_new$FREG0_PID
+food_new = filter(FFQ_food, FREG0_PID %in% pid_list)
+nutrition_new = filter(FFQ_nutrition, FREG0_PID %in% pid_list)
+```
+#species
+```{r}
+species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_G_unfiltered_reads_decont2.csv")
+#species$`SAM id`
+helios_new_list = helios_new$FREG1_Barcode
+#sample_list = metadata_micro$`Original Sample name`
+micro_list <- filter(metadata_micro, metadata_micro$`Original Sample name` %in% helios_new_list)
+species_new = filter(species, species$`SAM id` %in% micro_list$`Library ID`)
+species_new
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
+#new_merge
+species_meta = merge(x = helios_new[,c("FREG1_Barcode", "DLAB27_Hba1C_Percent", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours","FBP16_Caffeine")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+species_meta = species_meta %>% drop_na(DLAB27_Hba1C_Percent)
+species_meta
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+metadata = species_meta[, c("FREG1_Barcode", "DLAB27_Hba1C_Percent","DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")]
+metadata
+drop = c("DLAB27_Hba1C_Percent", "Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
+species_data = species_meta[,!(names(species_meta) %in% drop)]
+species_data
+```
+
+```{r}
+metadata = metadata[!duplicated(metadata$FREG1_Barcode), ]
+species_data = species_data[!duplicated(species_data$FREG1_Barcode), ]
+species_data
+metadata
+```
+
+
+```{r}
+rownames(species_data) = species_data[,1]
+species_data[1] = NULL
+rownames(metadata) = metadata[,1]
+species_data
+metadata
+```
+
+```{r}
+merged_data <- merge(metadata[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], species_data, by.x = "FREG1_Barcode", by.y = "FREG1_Barcode",  all = FALSE)
+merged_data = subset(merged_data, FREG5_Ethnic_Group != "O")
+merged_data
+```
+
+# Volcano plot
+```{r}
+data_C <- merged_data[merged_data$FREG5_Ethnic_Group == "C", -(1:2)]
+data_I <- merged_data[merged_data$FREG5_Ethnic_Group == "I", -(1:2)]
+data_M <- merged_data[merged_data$FREG5_Ethnic_Group == "M", -(1:2)]
+
+# Adding a small constant to avoid log2(0) issues
+data_C[data_C == 0] <- 1e-6
+data_I[data_I == 0] <- 1e-6
+data_M[data_M == 0] <- 1e-6
+
+
+calculate_stats <- function(data1, data2) {
+  logFC <- numeric(ncol(data1))
+  p_values <- numeric(ncol(data1))
+  
+  for (i in 1:ncol(data1)) {
+    mean1 <- mean(data1[, i], na.rm = TRUE)
+    mean2 <- mean(data2[, i], na.rm = TRUE)
+    logFC[i] <- log2(mean2 / mean1)
+    
+    if (sd(data1[, i], na.rm = TRUE) == 0 || sd(data2[, i], na.rm = TRUE) == 0) {
+      p_values[i] <- 1
+    } else {
+      p_values[i] <- t.test(data1[, i], data2[, i])$p.value
+    }
+  }
+  
+  results <- data.frame(
+    species = colnames(data1),
+    logFC = logFC,
+    p_value = p_values
+  )
+  
+  results$logP = -log10(results$p_value)
+  return(results)
+}
+
+
+# Calculate stats for each pairwise comparison
+results_CvsI <- calculate_stats(data_C, data_I)
+results_CvsM <- calculate_stats(data_C, data_M)
+results_IvsM <- calculate_stats(data_I, data_M)
+
+# Function to plot volcano plot
+plot_volcano <- function(results, title) {
+  ggplot(results, aes(x = logFC, y = logP)) +
+    geom_point(alpha = 0.5) +
+    theme_minimal() +
+    ggtitle(title) +
+    xlab("Log2 Fold Change") +
+    ylab("-Log10 P-Value") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
+    geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "red")
+}
+
+# Plot the volcano plots
+plot_volcano(results_CvsI, "Volcano Plot: C vs I")
+plot_volcano(results_CvsM, "Volcano Plot: C vs M")
+plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+
+```
+```{r}
+# Function to plot volcano plot with colored significant points
+plot_volcano <- function(results, title) {
+  # Define significance thresholds
+  sig_threshold <- 0.05
+  lfc_threshold <- 1
+  
+  results$significance <- "Not Significant"
+  results$significance[results$p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
+  results$significance[results$p_value < sig_threshold & results$logFC < -lfc_threshold] <- "Down"
+  
+  ggplot(results, aes(x = logFC, y = logP, color = significance)) +
+    geom_point(alpha = 0.5) +
+    theme_minimal() +
+    ggtitle(title) +
+    xlab("Log2 Fold Change") +
+    ylab("-Log10 P-Value") +
+    scale_color_manual(values = c("Up" = "red", "Down" = "blue", "Not Significant" = "black")) +
+    geom_hline(yintercept = -log10(sig_threshold), linetype = "dashed", color = "red") +
+    geom_vline(xintercept = c(-lfc_threshold, lfc_threshold), linetype = "dashed", color = "red")
+}
+
+# Plot the volcano plots with colored significant points
+plot_volcano(results_CvsI, "Volcano Plot: C vs I")
+plot_volcano(results_CvsM, "Volcano Plot: C vs M")
+plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+
+```
+
+
+
+
+
+
+
+
