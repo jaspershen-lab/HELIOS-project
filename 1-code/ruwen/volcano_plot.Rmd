@@ -177,6 +177,41 @@ plot_volcano(results_IvsM, "Volcano Plot: I vs M")
 
 ```
 
+```{r}
+library(ggrepel)
+
+# Function to plot volcano plot with labeled significant points
+plot_volcano <- function(results, title) {
+  # Define significance thresholds
+  sig_threshold <- 0.05
+  lfc_threshold <- 1
+  
+  results$significance <- "Not Significant"
+  results$significance[results$p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
+  results$significance[results$p_value < sig_threshold & results$logFC < -lfc_threshold] <- "Down"
+  
+  # Filter for significant points to label
+  labeled_results <- results %>%
+    filter(significance != "Not Significant")
+  
+  ggplot(results, aes(x = logFC, y = logP, color = significance)) +
+    geom_point(alpha = 0.5) +
+    theme_minimal() +
+    ggtitle(title) +
+    xlab("Log2 Fold Change") +
+    ylab("-Log10 P-Value") +
+    scale_color_manual(values = c("Up" = "red", "Down" = "blue", "Not Significant" = "black")) +
+    geom_hline(yintercept = -log10(sig_threshold), linetype = "dashed", color = "red") +
+    geom_vline(xintercept = c(-lfc_threshold, lfc_threshold), linetype = "dashed", color = "red") +
+    geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+}
+
+# Plot the volcano plots with labeled significant points
+plot_volcano(results_CvsI, "Volcano Plot: C vs I")
+plot_volcano(results_CvsM, "Volcano Plot: C vs M")
+plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+
+```
 
 
 
