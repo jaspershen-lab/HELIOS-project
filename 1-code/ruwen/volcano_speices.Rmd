@@ -1,7 +1,7 @@
 ---
-title: "volcano_plot"
+title: "volcano_species"
 author: "Ruwen Zhou"
-date: "7/24/2024"
+date: "7/26/2024"
 output: html_document
 ---
 
@@ -39,7 +39,7 @@ nutrition_new = filter(FFQ_nutrition, FREG0_PID %in% pid_list)
 ```
 #species
 ```{r}
-species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_G_unfiltered_reads_decont2.csv")
+species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv")
 #species$`SAM id`
 helios_new_list = helios_new$FREG1_Barcode
 #sample_list = metadata_micro$`Original Sample name`
@@ -71,6 +71,28 @@ species_data
 metadata
 ```
 
+```{r}
+
+drop_rare_species <- function(df, threshold = 0.1) {
+  # Calculate the number of samples
+  num_samples <- nrow(df)
+  
+  # Calculate the threshold count
+  threshold_count <- num_samples * threshold
+  
+  # Find columns where the species is present in at least the threshold_count samples
+  species_to_keep <- sapply(df, function(col) sum(col > 0) >= threshold_count)
+  
+  # Subset the dataframe to keep only those species
+  df_filtered <- df[, species_to_keep]
+  
+  return(df_filtered)
+}
+
+# Apply the function to your dataframe
+species_data <- drop_rare_species(species_data)
+species_data
+```
 
 ```{r}
 # rownames(species_data) = species_data[,1]
@@ -180,9 +202,9 @@ plot_volcano(results_IvsM, "Volcano Plot: I vs M")
 ```{r}
 library(ggrepel)
 
-# Function to plot volcano plot with labeled significant points
+
 plot_volcano <- function(results, title) {
-  # Define significance thresholds
+
   sig_threshold <- 0.05
   lfc_threshold <- 1
   
@@ -190,7 +212,7 @@ plot_volcano <- function(results, title) {
   results$significance[results$p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
   results$significance[results$p_value < sig_threshold & results$logFC < -lfc_threshold] <- "Down"
   
-  # Filter for significant points to label
+
   labeled_results <- results %>%
     filter(significance != "Not Significant")
   
@@ -206,22 +228,22 @@ plot_volcano <- function(results, title) {
     geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
 }
 
-# Plot the volcano plots with labeled significant points
+
 plot_volcano(results_CvsI, "Volcano Plot: C vs I")
 plot_volcano(results_CvsM, "Volcano Plot: C vs M")
 plot_volcano(results_IvsM, "Volcano Plot: I vs M")
 
 ```
-
+species 跟diet的联系
 
 ```{r}
-png("figure/volcano_genus_CI.png", width = 1400, height = 1000, res = 120)
+png("figure/volcano_species_CI.png", width = 1400, height = 1000, res = 120)
 plot_volcano(results_CvsI, "Volcano Plot: C vs I")
 dev.off()
-png("figure/volcano_genus_CM.png", width = 1400, height = 1000, res = 120)
+png("figure/volcano_species_CM.png", width = 1400, height = 1000, res = 120)
 plot_volcano(results_CvsM, "Volcano Plot: C vs M")
 dev.off()
-png("figure/volcano_genus_IM.png", width = 1400, height = 1000, res = 120)
+png("figure/volcano_species_IM.png", width = 1400, height = 1000, res = 120)
 plot_volcano(results_IvsM, "Volcano Plot: I vs M")
 dev.off()
 ```
