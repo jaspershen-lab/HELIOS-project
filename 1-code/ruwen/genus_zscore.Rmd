@@ -345,7 +345,6 @@ new = as.character(grouping_df$FREG1_Barcode)
 z_score_matrix_t = t(z_score_matrix)
 
 z_score_matrix_new <- z_score_matrix_t[,new]
-#z_score_matrix_new
 
 
 ```
