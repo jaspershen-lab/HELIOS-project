@@ -92,7 +92,7 @@ data_C <- merged_data[merged_data$FREG5_Ethnic_Group == "C", -(1:2)]
 data_I <- merged_data[merged_data$FREG5_Ethnic_Group == "I", -(1:2)]
 data_M <- merged_data[merged_data$FREG5_Ethnic_Group == "M", -(1:2)]
 
-# Adding a small constant to avoid log2(0) issues
+# Adding a small constant
 data_C[data_C == 0] <- 1e-6
 data_I[data_I == 0] <- 1e-6
 data_M[data_M == 0] <- 1e-6
@@ -125,12 +125,11 @@ calculate_stats <- function(data1, data2) {
 }
 
 
-# Calculate stats for each pairwise comparison
 results_CvsI <- calculate_stats(data_C, data_I)
 results_CvsM <- calculate_stats(data_C, data_M)
 results_IvsM <- calculate_stats(data_I, data_M)
 
-# Function to plot volcano plot
+
 plot_volcano <- function(results, title) {
   ggplot(results, aes(x = logFC, y = logP)) +
     geom_point(alpha = 0.5) +
@@ -142,16 +141,14 @@ plot_volcano <- function(results, title) {
     geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "red")
 }
 
-# Plot the volcano plots
 plot_volcano(results_CvsI, "Volcano Plot: C vs I")
 plot_volcano(results_CvsM, "Volcano Plot: C vs M")
 plot_volcano(results_IvsM, "Volcano Plot: I vs M")
 
 ```
 ```{r}
-# Function to plot volcano plot with colored significant points
+
 plot_volcano <- function(results, title) {
-  # Define significance thresholds
   sig_threshold <- 0.05
   lfc_threshold <- 1
   
@@ -170,7 +167,6 @@ plot_volcano <- function(results, title) {
     geom_vline(xintercept = c(-lfc_threshold, lfc_threshold), linetype = "dashed", color = "red")
 }
 
-# Plot the volcano plots with colored significant points
 plot_volcano(results_CvsI, "Volcano Plot: C vs I")
 plot_volcano(results_CvsM, "Volcano Plot: C vs M")
 plot_volcano(results_IvsM, "Volcano Plot: I vs M")
@@ -180,9 +176,7 @@ plot_volcano(results_IvsM, "Volcano Plot: I vs M")
 ```{r}
 library(ggrepel)
 
-# Function to plot volcano plot with labeled significant points
 plot_volcano <- function(results, title) {
-  # Define significance thresholds
   sig_threshold <- 0.05
   lfc_threshold <- 1
   
@@ -190,7 +184,6 @@ plot_volcano <- function(results, title) {
   results$significance[results$p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
   results$significance[results$p_value < sig_threshold & results$logFC < -lfc_threshold] <- "Down"
   
-  # Filter for significant points to label
   labeled_results <- results %>%
     filter(significance != "Not Significant")
   
@@ -206,7 +199,6 @@ plot_volcano <- function(results, title) {
     geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
 }
 
-# Plot the volcano plots with labeled significant points
 plot_volcano(results_CvsI, "Volcano Plot: C vs I")
 plot_volcano(results_CvsM, "Volcano Plot: C vs M")
 plot_volcano(results_IvsM, "Volcano Plot: I vs M")
