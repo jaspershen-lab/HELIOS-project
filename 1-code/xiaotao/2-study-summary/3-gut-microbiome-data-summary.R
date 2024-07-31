@@ -51,6 +51,8 @@ gut_microbiome_data <-
   activate_mass_dataset(what = "variable_info") %>%
   filter(zero_freq <= 0.95)
 
+dim(gut_microbiome_data)
+
 plot <-
   gut_microbiome_data %>%
   extract_variable_info() %>%
