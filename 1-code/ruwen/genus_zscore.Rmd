@@ -345,7 +345,6 @@ new = as.character(grouping_df$FREG1_Barcode)
 z_score_matrix_t = t(z_score_matrix)
 
 z_score_matrix_new <- z_score_matrix_t[,new]
-#z_score_matrix_new
 
 
 ```
@@ -377,10 +376,21 @@ pheatmap(z_score_matrix_new,
 
 
 ## ethinity
-```{r}
-phyloseq_filtered_race = subset_samples(phyloseq_filtered, FREG5_Ethnic_Group %in% c("C", "I", "M"))
 
-deseq_data1 <- phyloseq_to_deseq2(phyloseq_filtered_race, ~ FREG5_Ethnic_Group)
+### turn into relative count
+```{r}
+
+phyloseq_relative <- transform_sample_counts(phyloseq_filtered, function(x) x / sum(x))
+
+# Print the resulting phyloseq object
+phyloseq_relative@otu_table
+
+```
+
+```{r}
+phyloseq_filtered_race_raw = subset_samples(phyloseq_filtered, FREG5_Ethnic_Group %in% c("C", "I", "M"))
+
+deseq_data1 <- phyloseq_to_deseq2(phyloseq_filtered_race_raw, ~ FREG5_Ethnic_Group)
 deseq_data1 <- DESeq(deseq_data1)
 res1 <- results(deseq_data1, contrast = c("FREG5_Ethnic_Group", "C", "I"))
 res1 <- res1[order(res1$padj, na.last=NA), ]
@@ -396,6 +406,7 @@ sig_taxa1 <- sig_taxa1[! sig_taxa1 %in% c('unclassified')]
 
 ##z score
 ```{r}
+phyloseq_filtered_race = subset_samples(phyloseq_relative, FREG5_Ethnic_Group %in% c("C", "I", "M"))
 otu_table1 <- otu_table(phyloseq_filtered_race)[, sig_taxa1]
 
 sample_ids <- rownames(otu_table1)
@@ -455,7 +466,7 @@ pheatmap(z_score_matrix_new1,
 
 ```
 # cluster within each groups
-```{r fig.width=6, fig.height=4}
+```{r fig.width=15, fig.height=10}
 library(dplyr)
 library(pheatmap)
 #extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
@@ -505,7 +516,7 @@ pheatmap(final_matrix,
 
 
 ```
-```{r fig.width=6, fig.height=4}
+```{r fig.width=15, fig.height=10}
 library(dplyr)
 library(pheatmap)
 
@@ -613,7 +624,7 @@ pheatmap(final_matrix_ordered,
          annotation_colors = col_annotation)
 
 ```
-```{r fig.width=6, fig.height=4}
+```{r fig.width=12, fig.height=8}
 library(dplyr)
 library(pheatmap)
 

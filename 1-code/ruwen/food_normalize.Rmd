@@ -89,10 +89,10 @@ data_imputed <- data_raw %>%
   mutate(across(-FREG5_Ethnic_Group, ~ ifelse(is.na(.), 0, .)))
 
 rf_model <- randomForest(FREG5_Ethnic_Group ~ ., data = data_imputed, importance = TRUE)
-
+png("figure/rf_food.png", width = 1400, height = 1000, res = 120)
 # Plot variable importance
 varImpPlot(rf_model, main = "Variable Importance in Random Forest")
-
+dev.off()
 ```
 MeanDecreaseAccuracy:
 
@@ -106,7 +106,7 @@ This column shows the importance of each variable based on the Gini impurity cri
 
 
 
-```{r}
+```{s'dr}
 library(dplyr)
 library(ggplot2)
 
@@ -149,11 +149,82 @@ ggplot(data_long, aes(x = FREG5_Ethnic_Group, y = intake, fill = FREG5_Ethnic_Gr
   facet_wrap(~ food, scales = "free") +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(title = "Top 10 Important Food Intake Variables by Ethnic Group",
+  labs(title = "Top 12 Important Food Intake Variables by Ethnic Group",
        x = "Ethnic Group",
        y = "Food Intake")
 
 ```
+
+# radar chart
+
+```{r}
+library(dplyr)
+library(fmsb)
+library(randomForest)
+
+# Assuming data_raw is already loaded
+data_raw <- data_raw %>%
+  mutate(across(-FREG5_Ethnic_Group, as.numeric))
+
+# Impute missing values with zeros
+data_imputed <- data_raw %>%
+  mutate(across(-FREG5_Ethnic_Group, ~ ifelse(is.na(.), 0, .)))
+
+# Train Random Forest model
+rf_model <- randomForest(FREG5_Ethnic_Group ~ ., data = data_imputed, importance = TRUE)
+
+# Extract variable importance
+importance <- importance(rf_model)
+var_importance <- data.frame(Variable = rownames(importance), MeanDecreaseAccuracy = importance[, "MeanDecreaseAccuracy"], MeanDecreaseGini = importance[, "MeanDecreaseGini"]) %>%
+  mutate(MeanDecreaseAccuracy = ifelse(MeanDecreaseAccuracy < 0, 0, MeanDecreaseAccuracy))
+```
+
+
+```{r}
+# Select top 5 variables for radar chart
+top_vars <- var_importance %>% arrange(desc(MeanDecreaseAccuracy)) %>% head(10) %>% pull(Variable)
+
+# Prepare data for radar chart
+data_radar <- data_imputed %>% select(FREG5_Ethnic_Group, all_of(top_vars))
+
+# Calculate means for each ethnic group
+data_radar_means <- data_radar %>%
+  group_by(FREG5_Ethnic_Group) %>%
+  summarize(across(everything(), mean))
+
+# Add max and min rows for scaling the radar chart
+data_radar_means <- rbind(rep(1, ncol(data_radar_means)-1), rep(0, ncol(data_radar_means)-1), data_radar_means)
+
+# Rename rows for clarity
+rownames(data_radar_means) <- c("Max", "Min", unique(data_radar$FREG5_Ethnic_Group))
+
+# Remove the FREG5_Ethnic_Group column from the radar chart data
+data_radar_means <- data_radar_means[ , !(names(data_radar_means) %in% "FREG5_Ethnic_Group")]
+
+# Create radar chart with transparent fill colors
+radarchart(data_radar_means, axistype = 1,
+           pcol = c(rgb(1, 0, 0, 0.7), rgb(0, 1, 0, 0.7), rgb(0, 0, 1, 0.7)),  # Set the line colors with transparency
+           pfcol = c(rgb(1, 0, 0, 0.2), rgb(0, 1, 0, 0.2), rgb(0, 0, 1, 0.2)),  # Set the fill colors with transparency
+           plwd = 2,  # Set the line width
+           plty = 1,  # Set the line type
+           title = "Radar Chart of Top Food Intakes by Ethnic Group")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

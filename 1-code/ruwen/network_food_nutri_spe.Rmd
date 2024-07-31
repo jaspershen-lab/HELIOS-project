@@ -474,7 +474,7 @@ print(plot_i)
 print(plot_m)
 
 ```
-```{r fig.width=10, fig.height=8}
+```{r}
 
 all_nodes <- unique(c(cor_data_c$from, cor_data_c$to, cor_data_i$from, cor_data_i$to, cor_data_m$from, cor_data_m$to))
 
@@ -530,7 +530,7 @@ plot_graph_fixed <- function(graph) {
   ggraph(graph, layout = 'manual', x = x, y = y) +
     geom_edge_link(aes(edge_alpha = abs_correlation, edge_color = edge_color, edge_width = abs_correlation), show.legend = FALSE) +
     geom_node_point(aes(shape = shape, size = degree, color = shape)) +  # Map 'size' to 'degree'
-    geom_node_text(aes(label = ifelse(degree > 0, name, "")), , color = "black", repel = TRUE, fontface = "bold", size = 4) +
+    geom_node_text(aes(label = ifelse(degree > 0, name, "")), , color = "black", repel = TRUE, fontface = "bold", size = 3) +
     scale_shape_manual(values = c(circle = 19, square = 15, diamond = 17), labels = c("Species", "Nutrition", "Food")) +
     scale_edge_color_manual(values = c("#8D3256", "#004697")) +
     scale_color_manual(values = c("slateblue", "#68B69F", "#F08E59"), labels = c("Species", "Nutrition", "Food")) +
@@ -561,6 +561,100 @@ png("figure/network_m_49.png", width = 1400, height = 1400, res = 120)
 plot_m_fixed
 dev.off()
 ```
+
+## try bubble
+```{r}
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(dplyr)
+
+# Combine and prepare nodes and edges
+all_nodes <- unique(c(cor_data_c$from, cor_data_c$to, cor_data_i$from, cor_data_i$to, cor_data_m$from, cor_data_m$to))
+nodes_df <- data.frame(name = unique(all_nodes))
+nodes_df$shape <- ifelse(nodes_df$name %in% species_columns, "circle", 
+                         ifelse(nodes_df$name %in% food_columns, "square", "diamond"))
+
+all_edges <- bind_rows(
+  mutate(cor_data_c, graph = 'c'),
+  mutate(cor_data_i, graph = 'i'),
+  mutate(cor_data_m, graph = 'm')
+)
+
+combined_graph <- tbl_graph(edges = all_edges, nodes = nodes_df, directed = FALSE)
+fixed_layout <- create_layout(combined_graph, layout = "fr")
+nodes_df <- left_join(nodes_df, data.frame(name = nodes_df$name, x = fixed_layout$x, y = fixed_layout$y), by = "name")
+
+graph_c <- tbl_graph(edges = cor_data_c, nodes = nodes_df, directed = FALSE)
+graph_i <- tbl_graph(edges = cor_data_i, nodes = nodes_df, directed = FALSE)
+graph_m <- tbl_graph(edges = cor_data_m, nodes = nodes_df, directed = FALSE)
+
+# Function to calculate components and add them to the nodes
+add_component_membership <- function(graph) {
+  components <- components(graph)
+  V(graph)$component <- components$membership
+  return(graph)
+}
+
+# Apply the function to each graph
+graph_c <- add_component_membership(graph_c)
+graph_i <- add_component_membership(graph_i)
+graph_m <- add_component_membership(graph_m)
+
+# Function to calculate and assign degree
+assign_degree <- function(graph) {
+  V(graph)$degree <- degree(graph, mode = "all")
+  return(graph)
+}
+
+# Apply the function to each graph
+graph_c <- assign_degree(graph_c)
+graph_i <- assign_degree(graph_i)
+graph_m <- assign_degree(graph_m)
+```
+
+
+```{r fig.width=10, fig.height=8}
+plot_graph_fixed <- function(graph) {
+  node_data <- as_tibble(as_data_frame(graph, what = "vertices"))
+  ggraph(graph, layout = 'manual', x = node_data$x, y = node_data$y) +
+    geom_edge_link(aes(edge_alpha = abs_correlation, edge_color = edge_color, edge_width = abs_correlation), show.legend = FALSE) +
+    geom_node_point(aes(shape = shape, size = degree, color = as.factor(component)), show.legend = FALSE) +  # Map 'color' to 'component'
+    geom_node_text(aes(label = ifelse(degree > 0, name, "")), color = "black", repel = TRUE, fontface = "bold", size = 3) +
+    scale_shape_manual(values = c(circle = 19, square = 15, diamond = 17), labels = c("Species", "Nutrition", "Food")) +
+    scale_edge_color_manual(values = c("#8D3256", "#004697")) +
+    scale_color_discrete() +  # Use discrete color scale for components
+    theme_graph() +
+    scale_size(range = c(4, 7))
+}
+
+# Plot each graph with the fixed layout
+plot_c_fixed_new <- plot_graph_fixed(graph_c)
+plot_i_fixed_new <- plot_graph_fixed(graph_i)
+plot_m_fixed_new <- plot_graph_fixed(graph_m)
+
+print(plot_c_fixed_new)
+print(plot_i_fixed_new)
+print(plot_m_fixed_new)
+
+
+```
+```{r}
+png("figure/network_c_new.png", width = 1400, height = 1400, res = 120)
+plot_c_fixed_new
+dev.off()
+png("figure/network_i_new.png", width = 1400, height = 1400, res = 120)
+plot_i_fixed_new
+dev.off()
+png("figure/network_m_new.png", width = 1400, height = 1400, res = 120)
+plot_m_fixed_new
+dev.off()
+```
+
+
+
+
+
 
 ## normality test for each food
 ```{r}
