@@ -226,8 +226,8 @@ plot_volcano <- function(results, title) {
     scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697", "Not Significant" = "grey")) +
     geom_hline(yintercept = -log10(sig_threshold), linetype = "dashed", color = "red") +
     geom_vline(xintercept = c(-lfc_threshold, lfc_threshold), linetype = "dashed", color = "red") +
-    geom_text(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
-    #geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+    #geom_text(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+    geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
 }
 
 plot_volcano(results_CvsI, "Volcano Plot: C vs I")

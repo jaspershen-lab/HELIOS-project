@@ -1,0 +1,261 @@
+---
+title: "volcano_food"
+author: "Ruwen Zhou"
+date: "8/2/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r}
+helios_core = read_excel("data/HELIOS_Core_redacted.xlsx")
+#metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
+#sample_list = metadata_micro$`Original Sample name`
+#helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
+food_data535 <- read.csv("data/food_535.csv")
+food_data_all = read_excel("data/HELIOS_FFQA.xlsx")
+helios_core
+food_data535
+food_data_all
+```
+
+```{r}
+merge_535 = merge(helios_core[,c("FREG0_PID", "FREG5_Ethnic_Group")], food_data535[ -c(1, 3, 4) ], by.x = "FREG0_PID", by.y = "FREG0_PID", all = FALSE)
+merge_all = merge(helios_core[,c("FREG0_PID", "FREG5_Ethnic_Group")], food_data_all[ -c(2) ], by.x = "FREG0_PID", by.y = "FREG0_PID", all = FALSE)
+merge_535 = subset(merge_535, FREG5_Ethnic_Group != "O")
+merge_all = subset(merge_all, FREG5_Ethnic_Group != "O")
+merge_535
+merge_all
+```
+
+```{r}
+data_C <- merge_535[merge_535$FREG5_Ethnic_Group == "C", -(1:2)]
+data_I <- merge_535[merge_535$FREG5_Ethnic_Group == "I", -(1:2)]
+data_M <- merge_535[merge_535$FREG5_Ethnic_Group == "M", -(1:2)]
+
+# Adding a small constant to avoid log2(0) issues
+data_C[data_C == 0] <- 1e-6
+data_I[data_I == 0] <- 1e-6
+data_M[data_M == 0] <- 1e-6
+
+
+calculate_stats <- function(data1, data2) {
+  logFC <- numeric(ncol(data1))
+  p_values <- numeric(ncol(data1))
+  
+  for (i in 1:ncol(data1)) {
+    mean1 <- mean(data1[, i], na.rm = TRUE)
+    mean2 <- mean(data2[, i], na.rm = TRUE)
+    logFC[i] <- log2(mean2 / mean1)
+    
+    if (sd(data1[, i], na.rm = TRUE) == 0 || sd(data2[, i], na.rm = TRUE) == 0) {
+      p_values[i] <- 1
+    } else {
+      p_values[i] <- t.test(data1[, i], data2[, i])$p.value
+    }
+  }
+  
+  results <- data.frame(
+    species = colnames(data1),
+    logFC = logFC,
+    p_value = p_values
+  )
+  
+  results$logP = -log10(results$p_value)
+  results <- results[results$logP > 0, ]  # Filter out rows with logP = 0
+  return(results)
+}
+
+
+# Calculate stats for each pairwise comparison
+results_CvsI <- calculate_stats(data_C, data_I)
+results_CvsM <- calculate_stats(data_C, data_M)
+results_IvsM <- calculate_stats(data_I, data_M)
+
+```
+
+
+```{r}
+library(ggrepel)
+
+
+plot_volcano <- function(results, title) {
+
+  sig_threshold <- 0.05
+  lfc_threshold <- 1
+  
+  results$significance <- "Not Significant"
+  results$significance[results$p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
+  results$significance[results$p_value < sig_threshold & results$logFC < -lfc_threshold] <- "Down"
+  
+
+  labeled_results <- results %>%
+    filter(significance != "Not Significant")
+  
+  ggplot(results, aes(x = logFC, y = logP, color = significance)) +
+    geom_point(alpha = 0.8) +
+    theme_minimal() +
+    ggtitle(title) +
+    xlab("Log2 Fold Change") +
+    ylab("-Log10 P-Value") +
+    scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697", "Not Significant" = "grey")) +
+    geom_hline(yintercept = -log10(sig_threshold), linetype = "dashed", color = "red") +
+    geom_vline(xintercept = c(-lfc_threshold, lfc_threshold), linetype = "dashed", color = "red") +
+    #geom_text(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+    geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+}
+
+plot_volcano(results_CvsI, "Volcano Plot: C vs I")
+plot_volcano(results_CvsM, "Volcano Plot: C vs M")
+plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+```
+
+```{r}
+significant_food <- function(results, title) {
+
+  sig_threshold <- 0.05
+  lfc_threshold <- 1
+  
+  results$significance <- "Not Significant"
+  results$significance[results$p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
+  results$significance[results$p_value < sig_threshold & results$logFC < -lfc_threshold] <- "Down"
+  
+
+  labeled_results <- results %>%
+    filter(significance != "Not Significant")
+  
+  return(labeled_results)
+}
+
+significant_food(results_CvsI)
+significant_food(results_CvsM)
+significant_food(results_IvsM)
+```
+
+## ALL 10,000 participants
+```{r}
+data_C <- merge_all[merge_all$FREG5_Ethnic_Group == "C", -(1:2)]
+data_I <- merge_all[merge_all$FREG5_Ethnic_Group == "I", -(1:2)]
+data_M <- merge_all[merge_all$FREG5_Ethnic_Group == "M", -(1:2)]
+
+# Adding a small constant to avoid log2(0) issues
+data_C[data_C == 0] <- 1e-6
+data_I[data_I == 0] <- 1e-6
+data_M[data_M == 0] <- 1e-6
+
+
+calculate_stats <- function(data1, data2) {
+  logFC <- numeric(ncol(data1))
+  p_values <- numeric(ncol(data1))
+  
+  for (i in 1:ncol(data1)) {
+    mean1 <- mean(data1[, i], na.rm = TRUE)
+    mean2 <- mean(data2[, i], na.rm = TRUE)
+    logFC[i] <- log2(mean2 / mean1)
+    
+    if (sd(data1[, i], na.rm = TRUE) == 0 || sd(data2[, i], na.rm = TRUE) == 0) {
+      p_values[i] <- 1
+    } else {
+      p_values[i] <- t.test(data1[, i], data2[, i])$p.value
+    }
+  }
+  
+  results <- data.frame(
+    species = colnames(data1),
+    logFC = logFC,
+    p_value = p_values
+  )
+  
+  results$logP = -log10(results$p_value)
+  results <- results[results$logP > 0, ]  # Filter out rows with logP = 0
+  return(results)
+}
+
+
+# Calculate stats for each pairwise comparison
+results_CvsI <- calculate_stats(data_C, data_I)
+results_CvsM <- calculate_stats(data_C, data_M)
+results_IvsM <- calculate_stats(data_I, data_M)
+
+```
+
+
+```{r}
+library(ggrepel)
+
+
+plot_volcano <- function(results, title) {
+
+  sig_threshold <- 0.05
+  lfc_threshold <- 1
+  
+  results$significance <- "Not Significant"
+  results$significance[results$p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
+  results$significance[results$p_value < sig_threshold & results$logFC < -lfc_threshold] <- "Down"
+  
+
+  labeled_results <- results %>%
+    filter(significance != "Not Significant")
+  
+  ggplot(results, aes(x = logFC, y = logP, color = significance)) +
+    geom_point(alpha = 0.8) +
+    theme_minimal() +
+    ggtitle(title) +
+    xlab("Log2 Fold Change") +
+    ylab("-Log10 P-Value") +
+    scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697", "Not Significant" = "grey")) +
+    geom_hline(yintercept = -log10(sig_threshold), linetype = "dashed", color = "red") +
+    geom_vline(xintercept = c(-lfc_threshold, lfc_threshold), linetype = "dashed", color = "red") +
+    #geom_text(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+    geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+}
+
+plot_volcano(results_CvsI, "Volcano Plot: C vs I")
+plot_volcano(results_CvsM, "Volcano Plot: C vs M")
+plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+```
+
+```{r}
+significant_food <- function(results, title) {
+
+  sig_threshold <- 0.05
+  lfc_threshold <- 1
+  
+  results$significance <- "Not Significant"
+  results$significance[results$p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
+  results$significance[results$p_value < sig_threshold & results$logFC < -lfc_threshold] <- "Down"
+  
+
+  labeled_results <- results %>%
+    filter(significance != "Not Significant")
+  
+  return(labeled_results)
+}
+
+significant_food(results_CvsI)
+significant_food(results_CvsM)
+significant_food(results_IvsM)
+```
+
+
+
+
+
+
+
+
+
+
