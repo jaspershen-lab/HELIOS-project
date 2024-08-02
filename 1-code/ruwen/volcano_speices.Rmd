@@ -143,6 +143,7 @@ calculate_stats <- function(data1, data2) {
   )
   
   results$logP = -log10(results$p_value)
+  results <- results[results$logP > 0, ]  # Filter out rows with logP = 0
   return(results)
 }
 
@@ -217,24 +218,29 @@ plot_volcano <- function(results, title) {
     filter(significance != "Not Significant")
   
   ggplot(results, aes(x = logFC, y = logP, color = significance)) +
-    geom_point(alpha = 0.5) +
+    geom_point(alpha = 0.8) +
     theme_minimal() +
     ggtitle(title) +
     xlab("Log2 Fold Change") +
     ylab("-Log10 P-Value") +
-    scale_color_manual(values = c("Up" = "red", "Down" = "blue", "Not Significant" = "black")) +
+    scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697", "Not Significant" = "grey")) +
     geom_hline(yintercept = -log10(sig_threshold), linetype = "dashed", color = "red") +
     geom_vline(xintercept = c(-lfc_threshold, lfc_threshold), linetype = "dashed", color = "red") +
-    geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+    geom_text(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+    #geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
 }
-
 
 plot_volcano(results_CvsI, "Volcano Plot: C vs I")
 plot_volcano(results_CvsM, "Volcano Plot: C vs M")
 plot_volcano(results_IvsM, "Volcano Plot: I vs M")
 
 ```
+change color?
 species 跟diet的联系
+
+
+
+
 
 ```{r}
 png("figure/volcano_species_CI.png", width = 1400, height = 1000, res = 120)
@@ -248,6 +254,10 @@ plot_volcano(results_IvsM, "Volcano Plot: I vs M")
 dev.off()
 ```
 
+## link with food?
+```{r}
+
+```
 
 
 

@@ -737,6 +737,108 @@ combined_plot
 
 ```
 
+## circular plot
+```{r}
+total_graph <-
+  tidygraph::tbl_graph(nodes = node_data,
+                       edges = edge_data,
+                       directed = TRUE) %>%
+  dplyr::mutate(Degree = centrality_degree(mode = 'all'))
+
+pal <-
+  wesanderson::wes_palette(name = "Zissou1", n = 100, type = "continuous")
+
+library(igraph)
+
+g <- total_graph
+
+V(g)$type <- bipartite_mapping(g)$type
+
+coords <- 
+  create_layout(g, layout = "bipartite") %>%
+  dplyr::select(x, y) 
+
+# coords$index <- 1:nrow(coords)
+# coords <-
+#   coords %>% 
+#   dplyr::arrange(x)
+# 
+# coords$x[coords$y == 0] <- 
+#   seq(0, 332, length.out = sum(coords$y == 0))
+# 
+# coords$x[coords$y == 1] <- 
+#   seq(0, 332, length.out = sum(coords$y == 1))
+
+coords$y[coords$y == 0] <- 0.3
+
+coords <- 
+coords %>% 
+  dplyr::select(x,y) %>% 
+  dplyr::mutate(theta = x / (max(x) + 1) * 2 * pi,
+         r = y + 1, 
+         x = r * cos(theta), 
+         y = r * sin(theta))
+
+my_graph <-
+  create_layout(graph = g,
+                layout = "manual", 
+                x = coords$x,
+                y = coords$y
+                # node.position = coords
+                )
+
+plot <-
+  ggraph(my_graph,
+         layout = 'bipartite') +
+  geom_edge_link(aes(color = Correlation),
+                 show.legend = TRUE) +
+  geom_node_point(
+    aes(fill = Class,
+        size = Degree,
+        alpha = Class),
+    shape = 21,
+    # alpha = 0.6,
+    show.legend = TRUE
+  ) +
+  scale_fill_manual(values = value) +
+  scale_color_manual(values = value) +
+  scale_alpha_manual(values = alpha_value) +
+  geom_node_text(
+    aes(
+      x = x * 1.03,
+      y = y * 1.03,
+      label = ifelse(Class == "Gut microbiome", true_name, true_name),
+      hjust = ifelse(Class == "Gut microbiome", "inward",'outward'),
+      angle = -((-node_angle(x, y) + 90) %% 180) + 90,
+      size = ifelse(Class == "Gut microbiome", 2, 4),
+      # size = 1,
+      colour = Class
+    ),repel = FALSE,
+    # size = 3,
+    alpha = 1,
+    show.legend = FALSE
+  ) +
+  guides(
+    edge_width = guide_legend(title = "-log10(FDR adjusted P value)",
+                              override.aes = list(shape = NA)),
+    edge_color = ggraph::guide_edge_colorbar(title = "Spearman correlation"),
+    fill = guide_legend(
+      title = "Class",
+      override.aes = list(size = 7, linetype = "blank")
+    ),
+    size = guide_legend(title = "Degree", override.aes = list(linetype = 0))
+  ) +
+  ggraph::scale_edge_color_gradientn(colours = pal) +
+  ggraph::scale_edge_width(range = c(0.2, 2)) +
+  scale_size_continuous(range = c(0.5, 5)) +
+  theme_void() +
+  theme(
+    plot.background = element_rect(fill = "transparent", color = NA),
+    panel.background = element_rect(fill = "transparent", color = NA)
+  )
+
+plot
+```
 
 
 
