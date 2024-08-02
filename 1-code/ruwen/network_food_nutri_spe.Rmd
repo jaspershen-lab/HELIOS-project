@@ -427,6 +427,107 @@ cor_data_m
 
 ```
 
+## try circuler layout
+```{r}
+# Assuming cor_data_c, cor_data_i, cor_data_m are data frames with columns: from, to, edge_color, abs_correlation
+
+all_nodes <- unique(c(cor_data_c$from, cor_data_c$to, cor_data_i$from, cor_data_i$to, cor_data_m$from, cor_data_m$to))
+
+# Create a nodes data frame
+nodes_df <- data.frame(name = unique(all_nodes))
+nodes_df$shape <- ifelse(nodes_df$name %in% species_columns, "circle", 
+                         ifelse(nodes_df$name %in% food_columns, "square", "diamond"))
+nodes_df$color <- ifelse(nodes_df$name %in% species_columns, "Species", 
+                         ifelse(nodes_df$name %in% food_columns, "Food", "Nutrition"))
+
+# Create a layout with food/nutrition in the inner circle and species in the outer circle
+food_nodes <- nodes_df$name[nodes_df$name %in% food_columns]
+nutrition_nodes <- nodes_df$name[nodes_df$name %in% nutrition_columns]
+outer_circle_nodes <- nodes_df$name[nodes_df$name %in% species_columns]
+
+inner_circle_positions_food <- data.frame(
+  name = food_nodes,
+  x = 0.5 * cos(seq(0, pi, length.out = length(food_nodes) + 1)[-length(food_nodes)-1]),
+  y = 0.5 * sin(seq(0, pi, length.out = length(food_nodes) + 1)[-length(food_nodes)-1])
+)
+
+inner_circle_positions_nutrition <- data.frame(
+  name = nutrition_nodes,
+  x = 0.5 * cos(seq(pi, 2*pi, length.out = length(nutrition_nodes) + 1)[-length(nutrition_nodes)-1]),
+  y = 0.5 * sin(seq(pi, 2*pi, length.out = length(nutrition_nodes) + 1)[-length(nutrition_nodes)-1])
+)
+
+inner_circle_positions <- rbind(inner_circle_positions_food, inner_circle_positions_nutrition)
+
+outer_circle_positions <- data.frame(
+  name = outer_circle_nodes,
+  x = 1 * cos(seq(0, 2*pi, length.out = length(outer_circle_nodes) + 1)[-length(outer_circle_nodes)-1]),
+  y = 1 * sin(seq(0, 2*pi, length.out = length(outer_circle_nodes) + 1)[-length(outer_circle_nodes)-1])
+)
+
+layout_positions <- rbind(inner_circle_positions, outer_circle_positions)
+```
+
+
+```{r fig.height=4, fig.width=6}
+# Function to plot graph with fixed layout
+library(scales)
+palette_colors <- brewer_pal(palette = "RdBu")(11)
+red_color <- palette_colors[10]
+blue_color <- palette_colors[2]
+
+plot_graph <- function(graph, layout_positions) {
+  graph <- graph %>%
+    activate(nodes) %>%
+    mutate(x = layout_positions$x[match(name, layout_positions$name)],
+           y = layout_positions$y[match(name, layout_positions$name)],
+           angle = atan2(y, x) * 180 / pi,
+           hjust = ifelse(angle < -90 | angle > 90, 1, 0),
+           angle = ifelse(angle < -90 | angle > 90, angle + 180, angle)) # Flip text
+  
+  ggraph(graph, layout = 'manual', x = x, y = y) +
+    geom_edge_diagonal(aes(edge_alpha = abs_correlation, edge_color = edge_color, edge_width = abs_correlation), show.legend = FALSE) +
+    geom_node_point(aes(shape = shape, color = color), size = 5) +
+    geom_node_text(aes(label = name, angle = angle, hjust = hjust), size = 3) +
+    scale_shape_manual(values = c(circle = 16, square = 15, diamond = 18), labels = c("Species", "Nutrition", "Food")) +  # Mapping shapes to actual ggplot2 shapes
+    scale_color_manual(values = c("Species" = "#F89FA8", "Nutrition" = "#68B69F", "Food" = "#F08E59"), labels = c("Species", "Nutrition", "Food")) +
+    scale_edge_color_manual(values = c(red_color, blue_color)) +
+    #theme_void() +  # Remove background elements
+    theme_graph() +
+    theme(legend.position = "right") +
+    coord_fixed(ratio = 1) +  # Ensure aspect ratio is fixed
+    expand_limits(x = c(-1.7, 1.7), y = c(-1.7, 1.7))
+}
+
+# Create graph objects from edge lists and nodes
+graph_c <- tbl_graph(edges = cor_data_c, nodes = nodes_df, directed = FALSE)
+graph_i <- tbl_graph(edges = cor_data_i, nodes = nodes_df, directed = FALSE)
+graph_m <- tbl_graph(edges = cor_data_m, nodes = nodes_df, directed = FALSE)
+
+# Plot each graph using the same layout positions
+plot_c <- plot_graph(graph_c, layout_positions)
+plot_i <- plot_graph(graph_i, layout_positions)
+plot_m <- plot_graph(graph_m, layout_positions)
+
+# Print plots
+print(plot_c)
+print(plot_i)
+print(plot_m)
+
+```
+
+```{r}
+png("figure/network_c_circle.png", width = 1600, height = 1400, res = 120)
+plot_c
+dev.off()
+png("figure/network_i_circle.png", width = 1600, height = 1400, res = 120)
+plot_i
+dev.off()
+png("figure/network_m_circle.png", width = 1600, height = 1400, res = 120)
+plot_m
+dev.off()
+```
+
 
 
 # find out the nodes we need
@@ -562,7 +663,11 @@ plot_m_fixed
 dev.off()
 ```
 
-## try bubble
+
+
+
+
+## component
 ```{r}
 library(igraph)
 library(ggraph)
@@ -737,108 +842,7 @@ combined_plot
 
 ```
 
-## circular plot
-```{r}
-total_graph <-
-  tidygraph::tbl_graph(nodes = node_data,
-                       edges = edge_data,
-                       directed = TRUE) %>%
-  dplyr::mutate(Degree = centrality_degree(mode = 'all'))
 
-pal <-
-  wesanderson::wes_palette(name = "Zissou1", n = 100, type = "continuous")
-
-library(igraph)
-
-g <- total_graph
-
-V(g)$type <- bipartite_mapping(g)$type
-
-coords <- 
-  create_layout(g, layout = "bipartite") %>%
-  dplyr::select(x, y) 
-
-# coords$index <- 1:nrow(coords)
-# coords <-
-#   coords %>% 
-#   dplyr::arrange(x)
-# 
-# coords$x[coords$y == 0] <- 
-#   seq(0, 332, length.out = sum(coords$y == 0))
-# 
-# coords$x[coords$y == 1] <- 
-#   seq(0, 332, length.out = sum(coords$y == 1))
-
-coords$y[coords$y == 0] <- 0.3
-
-coords <- 
-coords %>% 
-  dplyr::select(x,y) %>% 
-  dplyr::mutate(theta = x / (max(x) + 1) * 2 * pi,
-         r = y + 1, 
-         x = r * cos(theta), 
-         y = r * sin(theta))
-
-my_graph <-
-  create_layout(graph = g,
-                layout = "manual", 
-                x = coords$x,
-                y = coords$y
-                # node.position = coords
-                )
-
-plot <-
-  ggraph(my_graph,
-         layout = 'bipartite') +
-  geom_edge_link(aes(color = Correlation),
-                 show.legend = TRUE) +
-  geom_node_point(
-    aes(fill = Class,
-        size = Degree,
-        alpha = Class),
-    shape = 21,
-    # alpha = 0.6,
-    show.legend = TRUE
-  ) +
-  scale_fill_manual(values = value) +
-  scale_color_manual(values = value) +
-  scale_alpha_manual(values = alpha_value) +
-  geom_node_text(
-    aes(
-      x = x * 1.03,
-      y = y * 1.03,
-      label = ifelse(Class == "Gut microbiome", true_name, true_name),
-      hjust = ifelse(Class == "Gut microbiome", "inward",'outward'),
-      angle = -((-node_angle(x, y) + 90) %% 180) + 90,
-      size = ifelse(Class == "Gut microbiome", 2, 4),
-      # size = 1,
-      colour = Class
-    ),repel = FALSE,
-    # size = 3,
-    alpha = 1,
-    show.legend = FALSE
-  ) +
-  guides(
-    edge_width = guide_legend(title = "-log10(FDR adjusted P value)",
-                              override.aes = list(shape = NA)),
-    edge_color = ggraph::guide_edge_colorbar(title = "Spearman correlation"),
-    fill = guide_legend(
-      title = "Class",
-      override.aes = list(size = 7, linetype = "blank")
-    ),
-    size = guide_legend(title = "Degree", override.aes = list(linetype = 0))
-  ) +
-  ggraph::scale_edge_color_gradientn(colours = pal) +
-  ggraph::scale_edge_width(range = c(0.2, 2)) +
-  scale_size_continuous(range = c(0.5, 5)) +
-  theme_void() +
-  theme(
-    plot.background = element_rect(fill = "transparent", color = NA),
-    panel.background = element_rect(fill = "transparent", color = NA)
-  )
-
-plot
-```
 
 
 
