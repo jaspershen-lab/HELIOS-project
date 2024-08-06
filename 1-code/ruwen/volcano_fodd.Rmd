@@ -229,6 +229,20 @@ plot_volcano(results_IvsM, "Volcano Plot: I vs M")
 ```
 
 ```{r}
+png("figure/volcano_food_CI.png", width = 1400, height = 1000, res = 120)
+plot_volcano(results_CvsI, "Volcano Plot: C vs I")
+dev.off()
+png("figure/volcano_food_CM.png", width = 1400, height = 1000, res = 120)
+plot_volcano(results_CvsM, "Volcano Plot: C vs M")
+dev.off()
+png("figure/volcano_food_IM.png", width = 1400, height = 1000, res = 120)
+plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+dev.off()
+```
+
+
+
+```{r}
 significant_food <- function(results, title) {
 
   sig_threshold <- 0.05
@@ -250,7 +264,44 @@ significant_food(results_CvsM)
 significant_food(results_IvsM)
 ```
 
+```{r}
+sig_threshold <- 0.05
+lfc_threshold <- 1
 
+results_CvsiI$significance <- "Not Significant"
+results_CvsI$significance[results_CvsI$p_value < sig_threshold & results_CvsI$logFC > lfc_threshold] <- "Rich in Indian"
+results_CvsI$significance[results_CvsI$p_value < sig_threshold & results_CvsI$logFC < -lfc_threshold] <- "Rich in Chinese"
+labeled_results_CI <- results_CvsI %>%filter(significance != "Not Significant")
+  
+labeled_results_CI = labeled_results_CI[order(labeled_results_CI$significance),]
+labeled_results_CI
+```
+```{r}
+results_CvsM$significance <- "Not Significant"
+results_CvsM$significance[results_CvsM$p_value < sig_threshold & results_CvsM$logFC > lfc_threshold] <- "Rich in Malay"
+results_CvsM$significance[results_CvsM$p_value < sig_threshold & results_CvsM$logFC < -lfc_threshold] <- "Rich in Chinese"
+labeled_results_CM <- results_CvsM %>%filter(significance != "Not Significant")
+  
+labeled_results_CM = labeled_results_CM[order(labeled_results_CM$significance),]
+labeled_results_CM
+```
+```{r}
+results_IvsM$significance <- "Not Significant"
+results_IvsM$significance[results_IvsM$p_value < sig_threshold & results_IvsM$logFC > lfc_threshold] <- "Rich in Malay"
+results_IvsM$significance[results_IvsM$p_value < sig_threshold & results_IvsM$logFC < -lfc_threshold] <- "Rich in Indian"
+labeled_results_IM <- results_IvsM %>%filter(significance != "Not Significant")
+  
+labeled_results_IM = labeled_results_IM[order(labeled_results_IM$significance),]
+labeled_results_IM
+```
+
+```{r}
+library("writexl")
+
+write_xlsx(labeled_results_CI, "figure/volcano_table_CI.xlsx")
+write_xlsx(labeled_results_CM, "figure/volcano_table_CM.xlsx")
+write_xlsx(labeled_results_IM, "figure/volcano_table_IM.xlsx")
+```
 
 
 
