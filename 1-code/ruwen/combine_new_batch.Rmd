@@ -1,0 +1,42 @@
+---
+title: "combine_new_batch"
+author: "Ruwen Zhou"
+date: "8/12/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r}
+helios_core_old = read_excel("data/HELIOS_Core_redacted.xlsx")
+helios_core_new = read.csv("data/HELIOS2_Core_redacted_300.csv")
+helios_core_new$FREG5_Ethnic_Group <- ifelse(helios_core_new$FREG5_Race == "CHINESE", "C",
+                                             ifelse(helios_core_new$FREG5_Race == "INDIAN", "I",
+                                             ifelse(helios_core_new$FREG5_Race == "MALAY", "M",
+                                             ifelse(helios_core_new$FREG5_Race == "Other", "O", NA))))
+
+
+helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")]
+helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")]
+
+```
+```{r}
+library(writexl)
+helios800 = rbind(helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")], helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")])
+helios800
+write_xlsx(helios800, "data/helios800.xlsx")
+```
+

@@ -105,7 +105,6 @@ This column shows the importance of each variable based on the Gini impurity cri
 
 
 
-
 ```{s'dr}
 library(dplyr)
 library(ggplot2)

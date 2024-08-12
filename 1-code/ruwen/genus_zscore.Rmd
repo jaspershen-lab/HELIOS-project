@@ -24,7 +24,7 @@ library(RColorBrewer)
 
 #demographic
 ```{r}
-helios_core = read_excel("data/HELIOS_Core_redacted.xlsx")
+helios_core = read_excel("data/helios800.xlsx")
 metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
 sample_list = metadata_micro$`Original Sample name`
 helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
@@ -51,41 +51,44 @@ species_new
 ```{r}
 new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
 #new_merge
-species_meta = merge(x = helios_new[,c("FREG1_Barcode", "DLAB27_Hba1C_Percent", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours","FBP16_Caffeine")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
-species_meta = species_meta %>% drop_na(DLAB27_Hba1C_Percent)
+species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+species_meta = species_meta %>% drop_na(FREG5_Ethnic_Group)
 species_meta
 ```
 
 ```{r}
-metadata = species_meta[, c("FREG1_Barcode", "DLAB27_Hba1C_Percent","DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")]
+metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group")]
+metadata = metadata[!duplicated(metadata$FREG1_Barcode),]
 metadata
-drop = c("DLAB27_Hba1C_Percent", "Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
+
+drop = c("Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
 species_data = species_meta[,!(names(species_meta) %in% drop)]
+species_data  = species_data [!duplicated(species_data$FREG1_Barcode),]
 species_data
 ```
 
 #diabetes
 ```{r}
-metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
-                                   ifelse(metadata$DLAB27_Hba1C_Percent >= 5.7 & metadata$DLAB27_Hba1C_Percent <= 6.4, "pre-diabetes",
-                                          ifelse(metadata$DLAB27_Hba1C_Percent < 5.7, "normal", NA)))
-
-#metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
-                                   #ifelse(metadata$DLAB27_Hba1C_Percent <= 6.4, "non-diabetes", NA))
-
-
-
-metadata$glucose <- ifelse(metadata$DLAB25_Gluf_Mmol_L > 7, "diabetes",
-                                   ifelse(metadata$DLAB25_Gluf_Mmol_L >= 5.6 & metadata$DLAB25_Gluf_Mmol_L <= 7, "pre-diabetes",
-                                          ifelse(metadata$DLAB25_Gluf_Mmol_L >= 3.9 & metadata$DLAB25_Gluf_Mmol_L <= 5.6, "normal",
-                                                 ifelse(metadata$DLAB25_Gluf_Mmol_L < 3.9, "hypoglycemia", NA))))
-
-                                         
-
-metadata = metadata[!duplicated(metadata$FREG1_Barcode), ]
-metadata
-species_data = species_data[!duplicated(species_data$FREG1_Barcode), ]
-species_data
+# metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
+#                                    ifelse(metadata$DLAB27_Hba1C_Percent >= 5.7 & metadata$DLAB27_Hba1C_Percent <= 6.4, "pre-diabetes",
+#                                           ifelse(metadata$DLAB27_Hba1C_Percent < 5.7, "normal", NA)))
+# 
+# #metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
+#                                    #ifelse(metadata$DLAB27_Hba1C_Percent <= 6.4, "non-diabetes", NA))
+# 
+# 
+# 
+# metadata$glucose <- ifelse(metadata$DLAB25_Gluf_Mmol_L > 7, "diabetes",
+#                                    ifelse(metadata$DLAB25_Gluf_Mmol_L >= 5.6 & metadata$DLAB25_Gluf_Mmol_L <= 7, "pre-diabetes",
+#                                           ifelse(metadata$DLAB25_Gluf_Mmol_L >= 3.9 & metadata$DLAB25_Gluf_Mmol_L <= 5.6, "normal",
+#                                                  ifelse(metadata$DLAB25_Gluf_Mmol_L < 3.9, "hypoglycemia", NA))))
+# 
+#                                          
+# 
+# metadata = metadata[!duplicated(metadata$FREG1_Barcode), ]
+# metadata
+# species_data = species_data[!duplicated(species_data$FREG1_Barcode), ]
+# species_data
 
 ```
 
@@ -111,18 +114,18 @@ phylo = filter_taxa(phylo, function(x) sum(x > 2) > (0.11 * length(x)), TRUE)
 ## Drop species that are present in less than 5% of the samples
 ## Drop species with a total abundance less than 0.01% of the total reads
 ```{r}
-prevalence_threshold <- 0.05
-otu_table_filtered <- filter_taxa(phylo, 
+prevalence_threshold <- 0.1
+phyloseq_filtered <- filter_taxa(phylo, 
                                   function(x) sum(x > 0) > (prevalence_threshold * nsamples(otu_table(phylo))),
                                   prune=TRUE)
-otu_table_filtered
-
-abundance_threshold <- 0.0001
-phyloseq_filtered <- filter_taxa(otu_table_filtered, 
-                                  function(x) sum(x) > (abundance_threshold * sum(otu_table(phylo))),
-                                  prune=TRUE)
-
 phyloseq_filtered
+
+# abundance_threshold <- 0.0001
+# phyloseq_filtered <- filter_taxa(otu_table_filtered, 
+#                                   function(x) sum(x) > (abundance_threshold * sum(otu_table(phylo))),
+#                                   prune=TRUE)
+# 
+# phyloseq_filtered
 
 ```
 
@@ -131,247 +134,247 @@ phyloseq_filtered
 #sample_data(phyloseq_filtered)$diabetes_status <- factor(sample_data(phyloseq_filtered)$diabetes_status,
                                                          #levels = c("non-diabetes", "diabetes"))
 
-plot_richness(phyloseq_filtered, x = "diabetes_status", color = "diabetes_status", measures = c("Shannon", "Simpson", "Chao1", "Fisher")) + geom_boxplot() + theme_bw()
+#plot_richness(phyloseq_filtered, x = "diabetes_status", color = "diabetes_status", measures = c("Shannon", "Simpson", "Chao1", "Fisher")) + geom_boxplot() + theme_bw()
 ```
 ## Beta analysis
 ```{r}
-dist = phyloseq::distance(phyloseq_filtered, method="bray")
-phylo.beta = ordinate(phyloseq_filtered, method="PCoA", distance=dist)
-
-plot_ordination(phyloseq_filtered, phylo.beta, type = "samples", color = "diabetes_status") + theme_bw() + stat_ellipse(aes(group=diabetes_status))
+# dist = phyloseq::distance(phyloseq_filtered, method="bray")
+# phylo.beta = ordinate(phyloseq_filtered, method="PCoA", distance=dist)
+# 
+# plot_ordination(phyloseq_filtered, phylo.beta, type = "samples", color = "diabetes_status") + theme_bw() + stat_ellipse(aes(group=diabetes_status))
 ```
 ```{r}
-# Convert glucose levels to a factor
-sample_data(phyloseq_filtered)$diabetes_status <- factor(sample_data(phyloseq_filtered)$diabetes_status)
-
-phyloseq_filtered <- subset_samples(phyloseq_filtered, !is.na(sample_data(phyloseq_filtered)$diabetes_status))
-
-# Calculate the distance matrix using the ape package
-dist <- phyloseq::distance(phyloseq_filtered, method = "bray")
-dist_matrix <- as.matrix(dist)
-
-# Perform PERMANOVA using adonis2
-permanova <- adonis2(dist_matrix ~ sample_data(phyloseq_filtered)$diabetes_status)
-
-# Print the PERMANOVA results
-print(permanova)
+# # Convert glucose levels to a factor
+# sample_data(phyloseq_filtered)$diabetes_status <- factor(sample_data(phyloseq_filtered)$diabetes_status)
+# 
+# phyloseq_filtered <- subset_samples(phyloseq_filtered, !is.na(sample_data(phyloseq_filtered)$diabetes_status))
+# 
+# # Calculate the distance matrix using the ape package
+# dist <- phyloseq::distance(phyloseq_filtered, method = "bray")
+# dist_matrix <- as.matrix(dist)
+# 
+# # Perform PERMANOVA using adonis2
+# permanova <- adonis2(dist_matrix ~ sample_data(phyloseq_filtered)$diabetes_status)
+# 
+# # Print the PERMANOVA results
+# print(permanova)
 ```
 
 ## DA
 
 
 ```{r}
-deseq_data <- phyloseq_to_deseq2(phyloseq_filtered, ~ diabetes_status)
-deseq_data <- DESeq(deseq_data)
-sample_data(phyloseq_filtered)
-res <- results(deseq_data, contrast = c("diabetes_status", "diabetes", "normal"))
-res <- res[order(res$padj, na.last=NA), ]
-alpha <- 0.05
-res <- res[which(res$padj < alpha), ]
-res
+# deseq_data <- phyloseq_to_deseq2(phyloseq_filtered, ~ diabetes_status)
+# deseq_data <- DESeq(deseq_data)
+# sample_data(phyloseq_filtered)
+# res <- results(deseq_data, contrast = c("diabetes_status", "diabetes", "normal"))
+# res <- res[order(res$padj, na.last=NA), ]
+# alpha <- 0.05
+# res <- res[which(res$padj < alpha), ]
+# res
 ```
 
 ```{r}
-sig_taxa <- rownames(res)
-sig_taxa <- sig_taxa[! sig_taxa %in% c('unclassified')]
-phyloseq_filtered_subset = subset_samples(phyloseq_filtered, diabetes_status %in% c("normal", "diabetes"))
-
-sig_otu_table <- otu_table(phyloseq_filtered_subset)[,sig_taxa]
-
-sig_otu_table_df <- as.data.frame(sig_otu_table)
-
-# Transpose the data frame to have taxa as rows and samples as columns
-
-
-sig_otu_table_log <- log10(sig_otu_table_df + 1)
-
-sig_otu_table_log_t <- t(sig_otu_table_log)
-sig_otu_table_log_matrix <- as.matrix(sig_otu_table_log_t)
-sig_otu_table_log_matrix
-#pheatmap(sig_otu_table_log_matrix)
-
-grouping_df = sample_data(phyloseq_filtered_subset)
-grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
-annotation_data <- as.data.frame(grouping_df$diabetes_status)
-rownames(annotation_data) <- grouping_df$FREG1_Barcode
-colnames(annotation_data) <- c('Group')
-
-group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
-names(group_colors) <- levels(grouping_df$diabetes_status)
+# sig_taxa <- rownames(res)
+# sig_taxa <- sig_taxa[! sig_taxa %in% c('unclassified')]
+# phyloseq_filtered_subset = subset_samples(phyloseq_filtered, diabetes_status %in% c("normal", "diabetes"))
+# 
+# sig_otu_table <- otu_table(phyloseq_filtered_subset)[,sig_taxa]
+# 
+# sig_otu_table_df <- as.data.frame(sig_otu_table)
+# 
+# # Transpose the data frame to have taxa as rows and samples as columns
+# 
+# 
+# sig_otu_table_log <- log10(sig_otu_table_df + 1)
+# 
+# sig_otu_table_log_t <- t(sig_otu_table_log)
+# sig_otu_table_log_matrix <- as.matrix(sig_otu_table_log_t)
+# sig_otu_table_log_matrix
+# #pheatmap(sig_otu_table_log_matrix)
+# 
+# grouping_df = sample_data(phyloseq_filtered_subset)
+# grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
+# annotation_data <- as.data.frame(grouping_df$diabetes_status)
+# rownames(annotation_data) <- grouping_df$FREG1_Barcode
+# colnames(annotation_data) <- c('Group')
+# 
+# group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
+# names(group_colors) <- levels(grouping_df$diabetes_status)
 
 ```
 
 ```{r fig.width=16, fig.height=12}
-grouping_df
-
-grouping_df <- grouping_df[order(grouping_df$diabetes_status),]
-#sig_otu_table_log_matrix
-new = as.character(grouping_df$FREG1_Barcode)
-# Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
-order_matrix <- sig_otu_table_log_matrix[,new]
-
-#order_matrix
-# Reorder the matrix columns according to the order_vector
-#sig_otu_table_log_matrix_ordered <- sig_otu_table_log_matrix[, order_vector]
-#sig_otu_table_log_matrix_ordered
-# Now you can create the heatmap with the ordered matrix
-
-pheatmap(order_matrix, 
-         annotation_col = annotation_data,
-         cluster_cols = FALSE,
-         cluster_rows = T,
-         annotation_colors = list(Group = group_colors))
-
-pheatmap(order_matrix, 
-         annotation_col = annotation_data,
-         cluster_cols = T,
-         cluster_rows = T,
-         annotation_colors = list(Group = group_colors))
+# grouping_df
+# 
+# grouping_df <- grouping_df[order(grouping_df$diabetes_status),]
+# #sig_otu_table_log_matrix
+# new = as.character(grouping_df$FREG1_Barcode)
+# # Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
+# order_matrix <- sig_otu_table_log_matrix[,new]
+# 
+# #order_matrix
+# # Reorder the matrix columns according to the order_vector
+# #sig_otu_table_log_matrix_ordered <- sig_otu_table_log_matrix[, order_vector]
+# #sig_otu_table_log_matrix_ordered
+# # Now you can create the heatmap with the ordered matrix
+# 
+# pheatmap(order_matrix, 
+#          annotation_col = annotation_data,
+#          cluster_cols = FALSE,
+#          cluster_rows = T,
+#          annotation_colors = list(Group = group_colors))
+# 
+# pheatmap(order_matrix, 
+#          annotation_col = annotation_data,
+#          cluster_cols = T,
+#          cluster_rows = T,
+#          annotation_colors = list(Group = group_colors))
 
 ```
 
 
 ```{r}
-
-# Assuming phyloseq_filtered is already defined and contains the necessary data
-phyloseq_filtered_subset = subset_samples(phyloseq_filtered, diabetes_status %in% c("normal", "diabetes"))
-
-sig_otu_table <- otu_table(phyloseq_filtered_subset)[, sig_taxa]
-sig_otu_table_df <- as.data.frame(sig_otu_table)
-sample_data <- data.frame(sample_data(phyloseq_filtered_subset))
-sample_data$SampleID <- rownames(sample_data)
-combined_df = merge(x = sig_otu_table_df, y = sample_data, by.x = "row.names", by.y = "SampleID")
-rownames(combined_df) <- combined_df$Row.names
-combined_df$Row.names <- NULL
-combined_df
-
-
-metadata_columns <- c("FREG1_Barcode", "DLAB27_Hba1C_Percent", "DLAB25_Gluf_Mmol_L", "FREG10_Fasting_Hours", "FREG5_Ethnic_Group", "FBP16_Caffeine", "glucose")
-
-# Ensure you're working with a data frame that excludes these metadata columns for calculations
-abundance_data <- combined_df[, !(names(combined_df) %in% metadata_columns)]
-
-# Filter to include only normal samples and calculate the mean abundances
-normal_data <- abundance_data[abundance_data$diabetes_status == "normal", sapply(abundance_data, is.numeric)]
-
-# Calculate the mean abundances for these filtered columns
-normal_means <- rowMeans(normal_data, na.rm = TRUE)
-numeric_columns <- sapply(abundance_data, is.numeric)
-
-# Calculate log2 fold changes, ensuring to use only numeric columns
-log2fc <- sweep(abundance_data[, numeric_columns], 1, normal_means, FUN = function(x, y) log2((x + 1)/(y + 1)))
-log2fc_t = t(log2fc)
-# Prepare matrix for heatmap (ensure this only contains the log2fc data)
-log2fc_matrix <- as.matrix(log2fc_t)
-log2fc_matrix
+# 
+# # Assuming phyloseq_filtered is already defined and contains the necessary data
+# phyloseq_filtered_subset = subset_samples(phyloseq_filtered, diabetes_status %in% c("normal", "diabetes"))
+# 
+# sig_otu_table <- otu_table(phyloseq_filtered_subset)[, sig_taxa]
+# sig_otu_table_df <- as.data.frame(sig_otu_table)
+# sample_data <- data.frame(sample_data(phyloseq_filtered_subset))
+# sample_data$SampleID <- rownames(sample_data)
+# combined_df = merge(x = sig_otu_table_df, y = sample_data, by.x = "row.names", by.y = "SampleID")
+# rownames(combined_df) <- combined_df$Row.names
+# combined_df$Row.names <- NULL
+# combined_df
+# 
+# 
+# metadata_columns <- c("FREG1_Barcode", "DLAB27_Hba1C_Percent", "DLAB25_Gluf_Mmol_L", "FREG10_Fasting_Hours", "FREG5_Ethnic_Group", "FBP16_Caffeine", "glucose")
+# 
+# # Ensure you're working with a data frame that excludes these metadata columns for calculations
+# abundance_data <- combined_df[, !(names(combined_df) %in% metadata_columns)]
+# 
+# # Filter to include only normal samples and calculate the mean abundances
+# normal_data <- abundance_data[abundance_data$diabetes_status == "normal", sapply(abundance_data, is.numeric)]
+# 
+# # Calculate the mean abundances for these filtered columns
+# normal_means <- rowMeans(normal_data, na.rm = TRUE)
+# numeric_columns <- sapply(abundance_data, is.numeric)
+# 
+# # Calculate log2 fold changes, ensuring to use only numeric columns
+# log2fc <- sweep(abundance_data[, numeric_columns], 1, normal_means, FUN = function(x, y) log2((x + 1)/(y + 1)))
+# log2fc_t = t(log2fc)
+# # Prepare matrix for heatmap (ensure this only contains the log2fc data)
+# log2fc_matrix <- as.matrix(log2fc_t)
+# log2fc_matrix
 
 ```
 
 ```{r}
-grouping_df = sample_data(phyloseq_filtered_subset)
-grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
-annotation_data <- as.data.frame(grouping_df$diabetes_status)
-rownames(annotation_data) <- grouping_df$FREG1_Barcode
-colnames(annotation_data) <- c('Group')
-
-group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
-names(group_colors) <- levels(grouping_df$diabetes_status)
-
-
-grouping_df <- grouping_df[order(grouping_df$diabetes_status),]
-#sig_otu_table_log_matrix
-new = as.character(grouping_df$FREG1_Barcode)
-# Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
-ordered_log2fc_matrix <- log2fc_matrix[,new]
-ordered_log2fc_matrix
+# grouping_df = sample_data(phyloseq_filtered_subset)
+# grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
+# annotation_data <- as.data.frame(grouping_df$diabetes_status)
+# rownames(annotation_data) <- grouping_df$FREG1_Barcode
+# colnames(annotation_data) <- c('Group')
+# 
+# group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
+# names(group_colors) <- levels(grouping_df$diabetes_status)
+# 
+# 
+# grouping_df <- grouping_df[order(grouping_df$diabetes_status),]
+# #sig_otu_table_log_matrix
+# new = as.character(grouping_df$FREG1_Barcode)
+# # Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
+# ordered_log2fc_matrix <- log2fc_matrix[,new]
+# ordered_log2fc_matrix
 ```
 
 
 ```{r fig.width=16, fig.height=12}
-# Generate the heatmap with annotations
-extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
-pheatmap(ordered_log2fc_matrix, 
-         cluster_rows = TRUE, 
-         cluster_cols = FALSE, # Set to FALSE to maintain the custom order
-         scale = "none",
-         annotation_col = annotation_data,
-         color = rev(extended_palette), 
-         breaks = seq(-6, 6, length.out = 101),
-         show_rownames = TRUE,
-         show_colnames = FALSE)
-
-pheatmap(ordered_log2fc_matrix, 
-         cluster_rows = TRUE, 
-         cluster_cols = TRUE, # Set to FALSE to maintain the custom order
-         scale = "none",
-         annotation_col = annotation_data,
-         color = rev(extended_palette), 
-         breaks = seq(-6, 6, length.out = 101),
-         show_rownames = TRUE,
-         show_colnames = FALSE)
+# # Generate the heatmap with annotations
+# extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+# pheatmap(ordered_log2fc_matrix, 
+#          cluster_rows = TRUE, 
+#          cluster_cols = FALSE, # Set to FALSE to maintain the custom order
+#          scale = "none",
+#          annotation_col = annotation_data,
+#          color = rev(extended_palette), 
+#          breaks = seq(-6, 6, length.out = 101),
+#          show_rownames = TRUE,
+#          show_colnames = FALSE)
+# 
+# pheatmap(ordered_log2fc_matrix, 
+#          cluster_rows = TRUE, 
+#          cluster_cols = TRUE, # Set to FALSE to maintain the custom order
+#          scale = "none",
+#          annotation_col = annotation_data,
+#          color = rev(extended_palette), 
+#          breaks = seq(-6, 6, length.out = 101),
+#          show_rownames = TRUE,
+#          show_colnames = FALSE)
 
 ```
 
 ##z score
 mean of all samples 
 ```{r}
-sig_taxa <- sig_taxa[! sig_taxa %in% c('unclassified', "Wujia", "Muribaculum")]
-otu_table <- otu_table(phyloseq_filtered_subset)[, sig_taxa]
-
-sample_ids <- rownames(otu_table)
-otu_table
-# Apply Z-score normalization across columns
-
-z_score_matrix <- apply(otu_table, 2, scale)
-
-# Reapply the row names to the scaled matrix
-rownames(z_score_matrix) <- sample_ids
-#z_score_matrix
-
-grouping_df = sample_data(phyloseq_filtered_subset)
-grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
-annotation_data <- as.data.frame(grouping_df$diabetes_status)
-rownames(annotation_data) <- grouping_df$FREG1_Barcode
-colnames(annotation_data) <- c('Group')
-
-group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
-names(group_colors) <- levels(grouping_df$diabetes_status)
-
-
-grouping_df <- grouping_df[order(grouping_df$diabetes_status),]
-
-new = as.character(grouping_df$FREG1_Barcode)
-# Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
-z_score_matrix_t = t(z_score_matrix)
-
-z_score_matrix_new <- z_score_matrix_t[,new]
+# sig_taxa <- sig_taxa[! sig_taxa %in% c('unclassified', "Wujia", "Muribaculum")]
+# otu_table <- otu_table(phyloseq_filtered_subset)[, sig_taxa]
+# 
+# sample_ids <- rownames(otu_table)
+# otu_table
+# # Apply Z-score normalization across columns
+# 
+# z_score_matrix <- apply(otu_table, 2, scale)
+# 
+# # Reapply the row names to the scaled matrix
+# rownames(z_score_matrix) <- sample_ids
+# #z_score_matrix
+# 
+# grouping_df = sample_data(phyloseq_filtered_subset)
+# grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
+# annotation_data <- as.data.frame(grouping_df$diabetes_status)
+# rownames(annotation_data) <- grouping_df$FREG1_Barcode
+# colnames(annotation_data) <- c('Group')
+# 
+# group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
+# names(group_colors) <- levels(grouping_df$diabetes_status)
+# 
+# 
+# grouping_df <- grouping_df[order(grouping_df$diabetes_status),]
+# 
+# new = as.character(grouping_df$FREG1_Barcode)
+# # Create an ordering vector that matches the order of the sample IDs in the grouped dataframe
+# z_score_matrix_t = t(z_score_matrix)
+# 
+# z_score_matrix_new <- z_score_matrix_t[,new]
 
 
 ```
 
 ```{r fig.width=8, fig.height=5}
-extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
-pheatmap(z_score_matrix_new, 
-         cluster_rows = TRUE, 
-         cluster_cols = FALSE, # Set to FALSE to maintain the custom order
-         scale = "none",
-         annotation_col = annotation_data,
-         color = rev(extended_palette), 
-         breaks = seq(-1, 1, length.out = 101),
-         show_rownames = TRUE,
-         show_colnames = FALSE,
-         fontsize_row = 14)
-
-pheatmap(z_score_matrix_new, 
-         cluster_rows = TRUE, 
-         cluster_cols = TRUE, # Set to FALSE to maintain the custom order
-         scale = "none",
-         annotation_col = annotation_data,
-         color = rev(extended_palette), 
-         breaks = seq(-1, 1, length.out = 101),
-         show_rownames = TRUE,
-         show_colnames = FALSE,
-         fontsize_row = 14)
+# extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+# pheatmap(z_score_matrix_new, 
+#          cluster_rows = TRUE, 
+#          cluster_cols = FALSE, # Set to FALSE to maintain the custom order
+#          scale = "none",
+#          annotation_col = annotation_data,
+#          color = rev(extended_palette), 
+#          breaks = seq(-1, 1, length.out = 101),
+#          show_rownames = TRUE,
+#          show_colnames = FALSE,
+#          fontsize_row = 14)
+# 
+# pheatmap(z_score_matrix_new, 
+#          cluster_rows = TRUE, 
+#          cluster_cols = TRUE, # Set to FALSE to maintain the custom order
+#          scale = "none",
+#          annotation_col = annotation_data,
+#          color = rev(extended_palette), 
+#          breaks = seq(-1, 1, length.out = 101),
+#          show_rownames = TRUE,
+#          show_colnames = FALSE,
+#          fontsize_row = 14)
 ```
 
 
@@ -410,7 +413,7 @@ phyloseq_filtered_race = subset_samples(phyloseq_relative, FREG5_Ethnic_Group %i
 otu_table1 <- otu_table(phyloseq_filtered_race)[, sig_taxa1]
 
 sample_ids <- rownames(otu_table1)
-
+sample_ids
 # Apply Z-score normalization across columns
 
 z_score_matrix1 <- apply(otu_table1, 2, scale)
@@ -441,7 +444,7 @@ z_score_matrix_new1 <- z_score_matrix1_t[,new]
 
 ```
 
-```{r}
+```{r fig.width=15, fig.height=10}
 # Ensure the rownames of annotation_data match the order of columns in z_score_matrix_new1
 annotation_data_ordered <- annotation_data[match(colnames(z_score_matrix_new1), rownames(annotation_data)), , drop = FALSE]
 
@@ -499,7 +502,7 @@ final_matrix <- do.call(cbind, list_of_matrices)
 
 # Ensure annotation data is ordered correctly
 final_annotation_data <- annotation_data[match(colnames(final_matrix), rownames(annotation_data)), , drop = FALSE]
-
+#png("figure/ethinity_genus_zscore800.png", width = 1400, height = 1000, res = 120)
 # Create heatmap
 pheatmap(final_matrix, 
          cluster_rows = TRUE, 
@@ -513,7 +516,7 @@ pheatmap(final_matrix,
          show_colnames = FALSE,
          fontsize_row = 10,
          annotation_colors = col_annotation)
-
+#dev.off()
 
 ```
 ```{r fig.width=15, fig.height=10}
