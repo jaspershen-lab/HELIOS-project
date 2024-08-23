@@ -24,52 +24,61 @@ library(RColorBrewer)
 
 #demographic
 ```{r}
-helios_core = read_excel("data/HELIOS_Core_redacted.xlsx")
-metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
-sample_list = metadata_micro$`Original Sample name`
-helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
+# helios_core = read_excel("data/HELIOS_Core_redacted.xlsx")
+# metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
+# sample_list = metadata_micro$`Original Sample name`
+# helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
 ```
 #food nutrition
 ```{r}
-FFQ_food = read_xlsx("data/HELIOS_FFQA.xlsx")
-FFQ_nutrition = read_xlsx("data/HELIOS_FFQB.xlsx")
-pid_list = helios_new$FREG0_PID
-food_new = filter(FFQ_food, FREG0_PID %in% pid_list)
-nutrition_new = filter(FFQ_nutrition, FREG0_PID %in% pid_list)
+# FFQ_food = read_xlsx("data/HELIOS_FFQA.xlsx")
+# FFQ_nutrition = read_xlsx("data/HELIOS_FFQB.xlsx")
+# pid_list = helios_new$FREG0_PID
+# food_new = filter(FFQ_food, FREG0_PID %in% pid_list)
+# nutrition_new = filter(FFQ_nutrition, FREG0_PID %in% pid_list)
 ```
 #species
 ```{r}
-species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv")
-#species$`SAM id`
-helios_new_list = helios_new$FREG1_Barcode
-#sample_list = metadata_micro$`Original Sample name`
-micro_list <- filter(metadata_micro, metadata_micro$`Original Sample name` %in% helios_new_list)
-species_new = filter(species, species$`SAM id` %in% micro_list$`Library ID`)
-species_new
+# species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv")
+# #species$`SAM id`
+# helios_new_list = helios_new$FREG1_Barcode
+# #sample_list = metadata_micro$`Original Sample name`
+# micro_list <- filter(metadata_micro, metadata_micro$`Original Sample name` %in% helios_new_list)
+# species_new = filter(species, species$`SAM id` %in% micro_list$`Library ID`)
+# species_new
 ```
 
 ```{r}
-new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
-#new_merge
-species_meta = merge(x = helios_new[,c("FREG1_Barcode", "DLAB27_Hba1C_Percent", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours","FBP16_Caffeine")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
-species_meta = species_meta %>% drop_na(DLAB27_Hba1C_Percent)
-species_meta
+# new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
+# #new_merge
+# species_meta = merge(x = helios_new[,c("FREG1_Barcode", "DLAB27_Hba1C_Percent", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours","FBP16_Caffeine")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+# species_meta = species_meta %>% drop_na(DLAB27_Hba1C_Percent)
+# species_meta
 ```
 
 ```{r}
-metadata = species_meta[, c("FREG1_Barcode", "DLAB27_Hba1C_Percent","DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")]
-metadata
-drop = c("DLAB27_Hba1C_Percent", "Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
-species_data = species_meta[,!(names(species_meta) %in% drop)]
-species_data
+# metadata = species_meta[, c("FREG1_Barcode", "DLAB27_Hba1C_Percent","DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")]
+# metadata
+# drop = c("DLAB27_Hba1C_Percent", "Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
+# species_data = species_meta[,!(names(species_meta) %in% drop)]
+# species_data
 ```
 
 ```{r}
-metadata = metadata[!duplicated(metadata$FREG1_Barcode), ]
-species_data = species_data[!duplicated(species_data$FREG1_Barcode), ]
-species_data
-metadata
+# metadata = metadata[!duplicated(metadata$FREG1_Barcode), ]
+# species_data = species_data[!duplicated(species_data$FREG1_Barcode), ]
+# species_data
+# metadata
 ```
+# import 800 data species
+```{r}
+species_data_800 = read_excel("data/species_866.xlsx")
+ethnicity_800 = read_excel("data/ethnicity_866.xlsx")
+species_data_800
+ethnicity_800
+```
+
+
 
 ```{r}
 
@@ -90,8 +99,8 @@ drop_rare_species <- function(df, threshold = 0.1) {
 }
 
 # Apply the function to your dataframe
-species_data <- drop_rare_species(species_data)
-species_data
+species_data_800 <- drop_rare_species(species_data_800)
+species_data_800
 ```
 
 ```{r}
@@ -103,7 +112,7 @@ species_data
 ```
 
 ```{r}
-merged_data <- merge(metadata[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], species_data, by.x = "FREG1_Barcode", by.y = "FREG1_Barcode",  all = FALSE)
+merged_data <- merge(ethnicity_800[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], species_data_800, by.x = "FREG1_Barcode", by.y = "FREG1_Barcode",  all = FALSE)
 merged_data = subset(merged_data, FREG5_Ethnic_Group != "O")
 merged_data
 ```
@@ -119,6 +128,9 @@ data_C[data_C == 0] <- 1e-6
 data_I[data_I == 0] <- 1e-6
 data_M[data_M == 0] <- 1e-6
 
+data_IM <- rbind(data_I, data_M)
+data_CM <- rbind(data_C, data_M)
+data_CI <- rbind(data_C, data_I)
 
 calculate_stats <- function(data1, data2) {
   logFC <- numeric(ncol(data1))
@@ -149,9 +161,9 @@ calculate_stats <- function(data1, data2) {
 
 
 # Calculate stats for each pairwise comparison
-results_CvsI <- calculate_stats(data_C, data_I)
-results_CvsM <- calculate_stats(data_C, data_M)
-results_IvsM <- calculate_stats(data_I, data_M)
+results_CvsIM <- calculate_stats(data_C, data_IM)
+results_IvsCM <- calculate_stats(data_I, data_CM)
+results_MvsCI <- calculate_stats(data_M, data_CI)
 
 # Function to plot volcano plot
 plot_volcano <- function(results, title) {
@@ -166,9 +178,9 @@ plot_volcano <- function(results, title) {
 }
 
 # Plot the volcano plots
-plot_volcano(results_CvsI, "Volcano Plot: C vs I")
-plot_volcano(results_CvsM, "Volcano Plot: C vs M")
-plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
+plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
+plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
 
 ```
 ```{r}
@@ -194,9 +206,9 @@ plot_volcano <- function(results, title) {
 }
 
 # Plot the volcano plots with colored significant points
-plot_volcano(results_CvsI, "Volcano Plot: C vs I")
-plot_volcano(results_CvsM, "Volcano Plot: C vs M")
-plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
+plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
+plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
 
 ```
 
@@ -227,37 +239,32 @@ plot_volcano <- function(results, title) {
     geom_hline(yintercept = -log10(sig_threshold), linetype = "dashed", color = "red") +
     geom_vline(xintercept = c(-lfc_threshold, lfc_threshold), linetype = "dashed", color = "red") +
     #geom_text(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
-    geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+    geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3, max.overlaps = 20)
 }
 
-plot_volcano(results_CvsI, "Volcano Plot: C vs I")
-plot_volcano(results_CvsM, "Volcano Plot: C vs M")
-plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
+plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
+plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
 
 ```
-change color?
-species 跟diet的联系
 
 
 
 
 
 ```{r}
-png("figure/volcano_species_CI.png", width = 1400, height = 1000, res = 120)
-plot_volcano(results_CvsI, "Volcano Plot: C vs I")
+png("figure/volcano_species800_C.png", width = 1400, height = 1000, res = 120)
+plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
 dev.off()
-png("figure/volcano_species_CM.png", width = 1400, height = 1000, res = 120)
-plot_volcano(results_CvsM, "Volcano Plot: C vs M")
+png("figure/volcano_species800_M.png", width = 1400, height = 1000, res = 120)
+plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
 dev.off()
-png("figure/volcano_species_IM.png", width = 1400, height = 1000, res = 120)
-plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+png("figure/volcano_species800_I.png", width = 1400, height = 1000, res = 120)
+plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
 dev.off()
 ```
 
-## link with food?
-```{r}
--log10(0.05)
-```
+
 
 
 

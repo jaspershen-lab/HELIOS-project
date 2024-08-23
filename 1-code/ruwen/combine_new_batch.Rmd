@@ -18,6 +18,7 @@ library(vegan)
 library(DESeq2)
 library(pheatmap)
 library(RColorBrewer)
+library(writexl)
 ```
 
 ```{r}
@@ -37,6 +38,58 @@ helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")]
 library(writexl)
 helios800 = rbind(helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")], helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")])
 helios800
-write_xlsx(helios800, "data/helios800.xlsx")
+#write_xlsx(helios800, "data/helios800.xlsx")
 ```
+
+
+```{r}
+helios_core = read_excel("data/helios800.xlsx")
+metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
+sample_list = metadata_micro$`Original Sample name`
+helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
+```
+#food nutrition
+```{r}
+# FFQ_food = read_xlsx("data/HELIOS_FFQA.xlsx")
+# FFQ_nutrition = read_xlsx("data/HELIOS_FFQB.xlsx")
+# pid_list = helios_new$FREG0_PID
+# food_new = filter(FFQ_food, FREG0_PID %in% pid_list)
+# nutrition_new = filter(FFQ_nutrition, FREG0_PID %in% pid_list)
+```
+#species
+```{r}
+species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv")
+#species$`SAM id`
+helios_new_list = helios_new$FREG1_Barcode
+#sample_list = metadata_micro$`Original Sample name`
+micro_list <- filter(metadata_micro, metadata_micro$`Original Sample name` %in% helios_new_list)
+species_new = filter(species, species$`SAM id` %in% micro_list$`Library ID`)
+species_new
+```
+
+```{r}
+new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
+#new_merge
+species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+species_meta = species_meta %>% drop_na(FREG5_Ethnic_Group)
+species_meta
+```
+
+```{r}
+metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group")]
+metadata = metadata[!duplicated(metadata$FREG1_Barcode),]
+metadata
+
+drop = c("Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
+species_data = species_meta[,!(names(species_meta) %in% drop)]
+species_data  = species_data [!duplicated(species_data$FREG1_Barcode),]
+species_data
+```
+
+```{r}
+write_xlsx(species_data, "data/species_866.xlsx")
+write_xlsx(metadata, "data/ethnicity_866.xlsx")
+```
+
+
 
