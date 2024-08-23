@@ -404,7 +404,7 @@ rownames(res1)
 
 ```{r}
 sig_taxa1 <- rownames(res1)
-sig_taxa1 <- sig_taxa1[! sig_taxa1 %in% c('unclassified')]
+sig_taxa1 <- sig_taxa1[! sig_taxa1 %in% c('unclassified', 'others')]
 ```
 
 ##z score
@@ -413,7 +413,7 @@ phyloseq_filtered_race = subset_samples(phyloseq_relative, FREG5_Ethnic_Group %i
 otu_table1 <- otu_table(phyloseq_filtered_race)[, sig_taxa1]
 
 sample_ids <- rownames(otu_table1)
-sample_ids
+
 # Apply Z-score normalization across columns
 
 z_score_matrix1 <- apply(otu_table1, 2, scale)
@@ -477,7 +477,6 @@ extended_palette <- coolwarm <- colorRampPalette(c("#3C4EC2", "#FFFFFF", "#CE4C3
 
 
 
-# Convert numeric IDs to character if they aren't already
 grouping_df$FREG1_Barcode <- as.character(grouping_df$FREG1_Barcode)
 
 # Split the matrix according to the groups, cluster within each group, and then combine
@@ -497,13 +496,12 @@ for(group in groups) {
 }
 
 
-# Combine matrices in the order of the groups
 final_matrix <- do.call(cbind, list_of_matrices)
 
-# Ensure annotation data is ordered correctly
 final_annotation_data <- annotation_data[match(colnames(final_matrix), rownames(annotation_data)), , drop = FALSE]
+
 #png("figure/ethinity_genus_zscore800.png", width = 1400, height = 1000, res = 120)
-# Create heatmap
+
 pheatmap(final_matrix, 
          cluster_rows = TRUE, 
          cluster_cols = FALSE, # Clustering was manually done
@@ -517,6 +515,7 @@ pheatmap(final_matrix,
          fontsize_row = 10,
          annotation_colors = col_annotation)
 #dev.off()
+
 
 ```
 ```{r fig.width=15, fig.height=10}
