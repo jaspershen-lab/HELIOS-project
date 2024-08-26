@@ -28,15 +28,18 @@ helios_core_new$FREG5_Ethnic_Group <- ifelse(helios_core_new$FREG5_Race == "CHIN
                                              ifelse(helios_core_new$FREG5_Race == "INDIAN", "I",
                                              ifelse(helios_core_new$FREG5_Race == "MALAY", "M",
                                              ifelse(helios_core_new$FREG5_Race == "Other", "O", NA))))
+helios_core_new$FREG7_Gender <- ifelse(helios_core_new$FREG7_Gender == "male", "M",
+                                       ifelse(helios_core_new$FREG7_Gender == "female", "F",NA))
+                                             
 
 
-helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")]
-helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")]
+helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")]
+helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")]
 
 ```
 ```{r}
 library(writexl)
-helios800 = rbind(helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")], helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group")])
+helios800 = rbind(helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")], helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")])
 helios800
 #write_xlsx(helios800, "data/helios800.xlsx")
 ```
@@ -70,26 +73,122 @@ species_new
 ```{r}
 new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
 #new_merge
-species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
 species_meta = species_meta %>% drop_na(FREG5_Ethnic_Group)
 species_meta
 ```
 
 ```{r}
-metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group")]
+metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")]
 metadata = metadata[!duplicated(metadata$FREG1_Barcode),]
 metadata
 
-drop = c("Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
+drop = c("Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine", "FREG7_Gender", "FREG8_Age")
 species_data = species_meta[,!(names(species_meta) %in% drop)]
 species_data  = species_data [!duplicated(species_data$FREG1_Barcode),]
 species_data
 ```
 
 ```{r}
-write_xlsx(species_data, "data/species_866.xlsx")
-write_xlsx(metadata, "data/ethnicity_866.xlsx")
+# write_xlsx(species_data, "data/species_866.xlsx")
+# write_xlsx(metadata, "data/ethnicity_866.xlsx")
 ```
+
+# merge 300 and 500 food
+```{r}
+food500 = read_csv("data/food_535.csv")
+food300 = read_csv("data/HELIOS2_FFQA2024-06-29_redacted.csv")
+colnames(food300)[1] ="Participant_ID"
+food500
+food300
+```
+```{r}
+names(food500) <- tolower(names(food500))
+names(food300) <- tolower(names(food300))
+
+
+clean_colnames <- function(colnames) {
+  # Remove the prefix "dffqa" followed by digits and an optional character and underscore
+  colnames <- gsub("^dffqa\\d+(_\\d+|[a-zA-Z])?_?", "", colnames)
+  # Remove the suffix "_serv_day" and "_g_per_day"
+  colnames <- gsub("(_serv_day|_g_per_day)$", "", colnames)
+  return(colnames)
+}
+
+# Apply the function to both data frames
+colnames(food500) <- clean_colnames(colnames(food500))
+colnames(food300) <- clean_colnames(colnames(food300))
+
+names(food500)
+names(food300)
+
+```
+```{r}
+library(dplyr)
+new_colnames <- c(
+  "fried_rice_serv_day_adj" = "fried_rice_without_veg",
+  "pasta_not_wholemeal" = "pasta_type_not_wholemeal",
+
+  "pork_fresh_serv_day_fat" = "pork_fresh_fat",
+  "pork_fresh_serv_day_lean" = "pork_fresh_lean",
+  "beef_fresh_serv_day_fat" = "beef_fresh_fat",
+  "beef_fresh_serv_day_lean" = "beef_fresh_lean",
+  "mutton_serv_day_fat" = "mutton_fat",
+  "mutton_serv_day_lean" = "mutton_lean",
+  "not_100_fruit_juice" = "not_fruit_juice",
+  "desserts_kueh_serv_day_coconut" = "desserts_kueh_coconut",
+  "desserts_kueh_serv_day_nococonut" = "desserts_kueh_no_coconut",
+  "desserts_in_soup_serv_day_coconut" = "desserts_in_soup_coconut",
+  "desserts_in_soup_serv_day_nococonut" = "desserts_in_soup_no_coconut",
+  "yoghurt" = "yoghurt_regular_fat",
+  "cheese" = "cheese_regular_fat" 
+)
+
+food500_new <- food500 %>% rename_with(~ new_colnames[.x], .cols = names(new_colnames))
+
+```
+
+
+```{r}
+common_columns <- intersect(names(food500_new), names(food300))
+
+# Subset dataframes to include only common columns
+df1_common <- food500_new[, common_columns, drop = FALSE]
+df2_common <- food300[, common_columns, drop = FALSE]
+
+# Bind the dataframes by rows
+food800 <- rbind(df1_common, df2_common)
+
+food800
+
+```
+```{r}
+unique_to_df1 <- setdiff(names(food500_new), names(food300))
+
+# Column names that are in df2 but not in df1
+unique_to_df2 <- setdiff(names(food300), names(food500_new))
+
+# Print the results
+cat("Columns in df1 but not in df2:\n")
+print(unique_to_df1)
+
+cat("Columns in df2 but not in df1:\n")
+print(unique_to_df2)
+```
+
+
+
+```{r}
+write_xlsx(food800, "data/all_food_863.xlsx")
+```
+
+
+
+
+
+
+
+
 
 
 

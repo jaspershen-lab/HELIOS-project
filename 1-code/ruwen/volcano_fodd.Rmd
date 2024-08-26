@@ -21,35 +21,41 @@ library(RColorBrewer)
 ```
 
 ```{r}
-helios_core = read_excel("data/HELIOS_Core_redacted.xlsx")
+#helios_core = read_excel("data/HELIOS_Core_redacted.xlsx")
 #metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
 #sample_list = metadata_micro$`Original Sample name`
 #helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
-food_data535 <- read.csv("data/food_535.csv")
+ethnicity_800 = read_excel("data/ethnicity_866.xlsx")
+food_data800 <- read_excel("data/all_food_863.xlsx")
 food_data_all = read_excel("data/HELIOS_FFQA.xlsx")
-helios_core
-food_data535
+#helios_core
+ethnicity_800
+food_data800
 food_data_all
 ```
 
 ```{r}
-merge_535 = merge(helios_core[,c("FREG0_PID", "FREG5_Ethnic_Group")], food_data535[ -c(1, 3, 4) ], by.x = "FREG0_PID", by.y = "FREG0_PID", all = FALSE)
-merge_all = merge(helios_core[,c("FREG0_PID", "FREG5_Ethnic_Group")], food_data_all[ -c(2) ], by.x = "FREG0_PID", by.y = "FREG0_PID", all = FALSE)
-merge_535 = subset(merge_535, FREG5_Ethnic_Group != "O")
-merge_all = subset(merge_all, FREG5_Ethnic_Group != "O")
-merge_535
-merge_all
+merge_800 = merge(ethnicity_800[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], food_data800[ -c(2) ], by.x = "FREG1_Barcode", by.y = "participant_id", all = FALSE)
+#merge_all = merge(helios_core[,c("FREG0_PID", "FREG5_Ethnic_Group")], food_data_all[ -c(2) ], by.x = "FREG0_PID", by.y = "FREG0_PID", all = FALSE)
+merge_800 = subset(merge_800, FREG5_Ethnic_Group != "O")
+#merge_all = subset(merge_all, FREG5_Ethnic_Group != "O")
+merge_800
+#merge_all
 ```
 
 ```{r}
-data_C <- merge_535[merge_535$FREG5_Ethnic_Group == "C", -(1:2)]
-data_I <- merge_535[merge_535$FREG5_Ethnic_Group == "I", -(1:2)]
-data_M <- merge_535[merge_535$FREG5_Ethnic_Group == "M", -(1:2)]
+data_C <- merge_800[merge_800$FREG5_Ethnic_Group == "C", -(1:2)]
+data_I <- merge_800[merge_800$FREG5_Ethnic_Group == "I", -(1:2)]
+data_M <- merge_800[merge_800$FREG5_Ethnic_Group == "M", -(1:2)]
 
 # Adding a small constant to avoid log2(0) issues
 data_C[data_C == 0] <- 1e-6
 data_I[data_I == 0] <- 1e-6
 data_M[data_M == 0] <- 1e-6
+
+data_IM <- rbind(data_I, data_M)
+data_CM <- rbind(data_C, data_M)
+data_CI <- rbind(data_C, data_I)
 
 
 calculate_stats <- function(data1, data2) {
@@ -81,10 +87,9 @@ calculate_stats <- function(data1, data2) {
 
 
 # Calculate stats for each pairwise comparison
-results_CvsI <- calculate_stats(data_C, data_I)
-results_CvsM <- calculate_stats(data_C, data_M)
-results_IvsM <- calculate_stats(data_I, data_M)
-
+results_CvsIM <- calculate_stats(data_C, data_IM)
+results_IvsCM <- calculate_stats(data_I, data_CM)
+results_MvsCI <- calculate_stats(data_M, data_CI)
 ```
 
 
@@ -115,12 +120,15 @@ plot_volcano <- function(results, title) {
     geom_hline(yintercept = -log10(sig_threshold), linetype = "dashed", color = "red") +
     geom_vline(xintercept = c(-lfc_threshold, lfc_threshold), linetype = "dashed", color = "red") +
     #geom_text(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
-    geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3)
+    geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3, max.overlaps = 20)
 }
 
-volcano_535_CI = plot_volcano(results_CvsI, "Volcano Plot: C vs I")
-volcano_535_CM = plot_volcano(results_CvsM, "Volcano Plot: C vs M")
-volcano_535_IM = plot_volcano(results_IvsM, "Volcano Plot: I vs M")
+volcano_800_C = plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
+volcano_800_I = plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
+volcano_800_M = plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
+volcano_800_C
+volcano_800_I
+volcano_800_M
 ```
 
 ```{r}
@@ -140,20 +148,20 @@ significant_food <- function(results, title) {
   return(labeled_results)
 }
 
-significant_food(results_CvsI)
-significant_food(results_CvsM)
-significant_food(results_IvsM)
+significant_food(results_CvsIM)
+significant_food(results_IvsCM)
+significant_food(results_MvsCI)
 ```
 
 ```{r}
-png("figure/volcano_food_CI_535.png", width = 1400, height = 1000, res = 120)
-volcano_535_CI
+png("figure/volcano_food_C_800.png", width = 1400, height = 1000, res = 120)
+volcano_800_C
 dev.off()
-png("figure/volcano_food_CM_535.png", width = 1400, height = 1000, res = 120)
-volcano_535_CM
+png("figure/volcano_food_I_800.png", width = 1400, height = 1000, res = 120)
+volcano_800_I
 dev.off()
-png("figure/volcano_food_IM_535.png", width = 1400, height = 1000, res = 120)
-volcano_535_IM
+png("figure/volcano_food_M_800.png", width = 1400, height = 1000, res = 120)
+volcano_800_M
 dev.off()
 ```
 

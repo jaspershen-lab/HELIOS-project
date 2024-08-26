@@ -380,6 +380,64 @@ mean of all samples
 
 ## ethinity
 
+## Alpha and beta
+```{r}
+phyloseq_filtered
+```
+```{r}
+library(ggpubr)
+
+phyloseq_filtered_no_O <- subset_samples(phyloseq_filtered, FREG5_Ethnic_Group != "O")
+
+ethnicity_colors = c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
+```
+
+
+```{r}
+comparisons <- list(c("C", "I"), c("C", "M"), c("I", "M"))
+
+
+p <- plot_richness(phyloseq_filtered_no_O, x = "FREG5_Ethnic_Group", color = "FREG5_Ethnic_Group",
+                  measures = c("Shannon", "Simpson", "Chao1", "Fisher")) +
+    geom_boxplot() +
+    theme_bw() +
+    scale_color_manual(values = ethnicity_colors) +
+                         
+    scale_fill_manual(values = ethnicity_colors) +
+                        
+    stat_compare_means(comparisons = comparisons, method = "t.test", label = "p.signif", symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), symbols = c("***", "**", "*", "ns")))
+print(p)
+#p + theme(text = element_text(family = "serif"))
+```
+## Beta analysis
+```{r}
+dist = phyloseq::distance(phyloseq_filtered_no_O, method="bray")
+phylo.beta = ordinate(phyloseq_filtered_no_O, method="PCoA", distance=dist)
+sample_data(phyloseq_filtered_no_O)$FREG5_Ethnic_Group <- factor(sample_data(phyloseq_filtered_no_O)$FREG5_Ethnic_Group,
+                                                                 levels = c("C", "I", "M"))
+
+p <- plot_ordination(phyloseq_filtered_no_O, phylo.beta, type = "samples", color = "FREG5_Ethnic_Group") +
+  theme_bw() +
+  stat_ellipse(aes(group = FREG5_Ethnic_Group)) +
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors)
+
+# Extract the data from the plot
+plot_data <- p$data
+# Add the points in the desired order using geom_point()
+#c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
+p +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "C"), color = "#9FDDCA") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "#9EA3F1") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "#E17887")
+  #theme(text = element_text(family = "serif"))
+
+```
+```{r}
+permanova_result = adonis2(dist ~ FREG5_Ethnic_Group, data = as(sample_data(phyloseq_filtered_no_O), "data.frame"))
+print(permanova_result)
+```
+
 ### turn into relative count
 ```{r}
 
@@ -404,7 +462,8 @@ rownames(res1)
 
 ```{r}
 sig_taxa1 <- rownames(res1)
-sig_taxa1 <- sig_taxa1[! sig_taxa1 %in% c('unclassified', 'others')]
+sig_taxa1 <- sig_taxa1[!grepl("unclassified|virus|others", sig_taxa1)]
+sig_taxa1
 ```
 
 ##z score
@@ -512,7 +571,7 @@ pheatmap(final_matrix,
          labels_row = as.expression(gene_names_italics),
          show_rownames = TRUE,
          show_colnames = FALSE,
-         fontsize_row = 10,
+         fontsize_row = 8,
          annotation_colors = col_annotation)
 #dev.off()
 
