@@ -28,31 +28,39 @@ library(Hmisc)
 
 #demographic
 ```{r}
-food_data = read_csv("data/Summarized_Food_Categories_Only.csv")
-nutrition_data = read_csv("data/nutrition_535.csv")
-species = read_xlsx("data/species_535.xlsx")
-metadata = read_csv("data/demo_535.csv")
-metadata
+food_data = read_xlsx("data/FFQA862.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
+food_data
 nutrition_data
 species
-#metadata[,c("Participant_ID","FREG5_Ethnic_Group")]
+metadata
 ```
 
 ```{r}
-threshold <- nrow(species) * 0.1
+colnames(species)[1] = "Participant_ID"
+colnames(metadata)[1] = "Participant_ID"
+threshold <- nrow(species) * 0.4
 
-species_filtered <- species %>% select_if(function(x) sum(x > 0) > threshold)
+species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
 
-abundance_threshold <- 0.0001
-species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
-
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
 species_filtered2
+
 ```
 
 
+
 ```{r}
-species_filtered2 = subset(species_filtered2, select = -c(unclassified, others))
-full_data <- merge(food_data, species_filtered2, by="Participant_ID")
+#species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "FREG7_Gender", "FREG8_Age")]
+#species_filtered2
+food_data[is.na(food_data)] <- 0
+food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
+nutrition_data[is.na(nutrition_data)] <- 0
+nutrition_data <- data.frame(lapply(nutrition_data, function(x) as.numeric(as.character(x))))
+full_data <- merge(food_data, species_filtered2, by = "Participant_ID")
 full_data <- merge(full_data, nutrition_data, by="Participant_ID")
 full_data
 ```
@@ -64,7 +72,7 @@ food_columns <- names(food_data)[-1]
 
 ```
 
-
+# all ethnicity (no need for now)
 ```{r}
 food_species_data <- full_data[, c(food_columns, species_columns)]
 nutrition_species_data <- full_data[, c(nutrition_columns, species_columns)]
@@ -176,7 +184,7 @@ dev.off()
 # seperate ethnic groups
 
 ```{r}
-new_full <- merge(metadata[,c("Participant_ID","FREG5_Ethnic_Group","FREG7_Gender", "FREG8_Age", "BMI", "BMI_groups")],full_data, by="Participant_ID")
+new_full <- merge(metadata[,c("Participant_ID","FREG5_Ethnic_Group", "FREG8_Age", "FREG7_Gender")],full_data, by="Participant_ID")
 df_cm <- new_full %>% filter(FREG5_Ethnic_Group == "C" | FREG5_Ethnic_Group == "M")
 df_im <- new_full %>% filter(FREG5_Ethnic_Group == "I" | FREG5_Ethnic_Group == "M")
 # data_c <- new_full %>% filter(FREG5_Ethnic_Group == "C")
@@ -195,21 +203,21 @@ df_im$groupM_I <- ifelse(df_im$FREG5_Ethnic_Group == "M", 1,
 library(MatchIt)
 #library(tableone)
 
-m.out_C <- matchit(groupM_C ~ FREG7_Gender + FREG8_Age + BMI_groups,
+m.out_C <- matchit(groupM_C ~ FREG7_Gender + FREG8_Age,
                    data = df_cm, method = "nearest", ratio = 1,
-                   #exact = c("FREG7_Gender", "BMI_groups"),
-                   caliper = 0.1)
+                   exact = c("FREG7_Gender"),
+                   caliper = 0.3)
 summary(m.out_C)
 matched_data_C <- match.data(m.out_C)
-matched_data_C
+#matched_data_C
 ```
 
 
 ```{r}
-m.out_I <- matchit(groupM_I ~ FREG7_Gender + FREG8_Age + BMI_groups,
+m.out_I <- matchit(groupM_I ~ FREG7_Gender + FREG8_Age,
                    data = df_im, method = "nearest", ratio = 1,
-                   #exact = c("FREG7_Gender"),
-                   caliper = 0.4)
+                   exact = c("FREG7_Gender"),
+                   caliper = 0.3)
 summary(m.out_I)
 matched_data_I <- match.data(m.out_I)
 #matched_data_I
@@ -222,6 +230,13 @@ data_m <- matched_data_C %>% filter(FREG5_Ethnic_Group == "M")
 ```
 
 ```{r}
+# data_c[is.na(data_c)] <- 0
+# data_i[is.na(data_i)] <- 0
+# data_m[is.na(data_m)] <- 0
+# data_c <- data.frame(lapply(data_c, function(x) as.numeric(as.character(x))))
+# data_i <- data.frame(lapply(data_i, function(x) as.numeric(as.character(x))))
+# data_m <- data.frame(lapply(data_m, function(x) as.numeric(as.character(x))))
+
 data_c
 data_i
 data_m
@@ -233,7 +248,7 @@ data_m
 calculate_significant_correlations <- function(data, food_or_nutrition_columns, species_columns) {
   cor_results <- rcorr(as.matrix(data), type = "spearman")
   adjusted_p_values <- matrix(p.adjust(cor_results$P, method = "BH"), nrow = nrow(cor_results$P))
-  significant_indices <- which(adjusted_p_values < 0.05, arr.ind = TRUE)
+  significant_indices <- which(adjusted_p_values < 0.01, arr.ind = TRUE)
 
   significant_correlations <- data.frame(
     from = colnames(data)[significant_indices[, "row"]],
@@ -318,8 +333,10 @@ calculate_significant_correlations <- function(data, food_or_nutrition_columns, 
 ```
 
 
+
 ```{r}
 food_species_c <- data_c[, c(food_columns, species_columns)]
+
 nutrition_species_c <- data_c[, c(nutrition_columns, species_columns)]
 
 food_species_correlations_c <- calculate_significant_correlations(food_species_c, food_columns, species_columns)
@@ -472,6 +489,7 @@ layout_positions <- rbind(inner_circle_positions, outer_circle_positions)
 ```{r fig.height=4, fig.width=6}
 # Function to plot graph with fixed layout
 library(scales)
+library(tidygraph)
 palette_colors <- brewer_pal(palette = "RdBu")(11)
 red_color <- palette_colors[10]
 blue_color <- palette_colors[2]
@@ -487,8 +505,8 @@ plot_graph <- function(graph, layout_positions) {
   
   ggraph(graph, layout = 'manual', x = x, y = y) +
     geom_edge_diagonal(aes(edge_alpha = abs_correlation, edge_color = edge_color, edge_width = abs_correlation), show.legend = FALSE) +
-    geom_node_point(aes(shape = shape, color = color), size = 5) +
-    geom_node_text(aes(label = name, angle = angle, hjust = hjust), size = 3) +
+    geom_node_point(aes(shape = shape, color = color), size = 2) +
+    geom_node_text(aes(label = name, angle = angle, hjust = hjust), size = 2) +
     scale_shape_manual(values = c(circle = 16, square = 15, diamond = 18), labels = c("Species", "Nutrition", "Food")) +  # Mapping shapes to actual ggplot2 shapes
     scale_color_manual(values = c("Species" = "#F89FA8", "Nutrition" = "#68B69F", "Food" = "#F08E59"), labels = c("Species", "Nutrition", "Food")) +
     scale_edge_color_manual(values = c(red_color, blue_color)) +
@@ -517,13 +535,13 @@ print(plot_m)
 ```
 
 ```{r}
-png("figure/network_c_circle.png", width = 1600, height = 1400, res = 120)
+png("figure/network_c_circle800.png", width = 1600, height = 1400, res = 120)
 plot_c
 dev.off()
-png("figure/network_i_circle.png", width = 1600, height = 1400, res = 120)
+png("figure/network_i_circle800.png", width = 1600, height = 1400, res = 120)
 plot_i
 dev.off()
-png("figure/network_m_circle.png", width = 1600, height = 1400, res = 120)
+png("figure/network_m_circle800.png", width = 1600, height = 1400, res = 120)
 plot_m
 dev.off()
 ```
