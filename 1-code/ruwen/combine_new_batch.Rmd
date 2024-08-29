@@ -179,7 +179,7 @@ print(unique_to_df2)
 
 
 ```{r}
-write_xlsx(food800, "data/all_food_863.xlsx")
+#write_xlsx(food800, "data/all_food_863.xlsx")
 ```
 
 ```{r}
@@ -217,6 +217,41 @@ print(permanova_result)
 
 ```
 
+```{r}
+nutri800 = read_xlsx("data/FFQB800.xlsx")
+nutri800
+# Load necessary library
+library(vegan)
+new = nutri800[,c(2:20)]
+new[is.na(new)] <- 0 
+#new <- na.omit(new)
+
+distance_matrix <- dist(new, method = "euclidean")
+
+# Perform PCoA
+pcoa <- cmdscale(distance_matrix, eig = TRUE, k = 2)
+ # k = 2 for 2 dimensions
+
+# Combine the PCoA results with group information
+pcoa_df <- as.data.frame(pcoa$points)
+
+pcoa_df$Group <- factor(c(rep("First 535", 534), rep("Remaining 328", 321)))
+
+# Plot the PCoA results
+library(ggplot2)
+ggplot(pcoa_df, aes(x = V1, y = V2, color = Group)) +
+  geom_point() +
+  labs(title = "Old 535 Samples vs. new 328 Samples",
+       x = "PCoA1",
+       y = "PCoA2") +
+  theme_minimal()
+
+# Perform PERMANOVA to test for differences between groups
+permanova_result <- adonis(distance_matrix ~ Group, data = pcoa_df)
+
+# Display the PERMANOVA results
+print(permanova_result)
+```
 
 
 
