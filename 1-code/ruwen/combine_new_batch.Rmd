@@ -33,13 +33,23 @@ helios_core_new$FREG7_Gender <- ifelse(helios_core_new$FREG7_Gender == "male", "
                                              
 
 
-helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")]
-helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")]
+helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")]
+helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")]
+# helios_core_old
+# helios_core_new
 
 ```
 ```{r}
 library(writexl)
-helios800 = rbind(helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")], helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")])
+helios800 = rbind(helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")], helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")])
+helios800
+#write_xlsx(helios800, "data/helios800.xlsx")
+```
+```{r}
+helios800$BMI = helios800$DBI14_Weight/(helios800$DBI13_Height*0.01)^2
+helios800$BMI_groups <- cut(helios800$BMI, breaks = c(0,18.5,23,25,Inf),
+                  labels = c("Underweight", "Normal", "Overweight", "Obese"),
+                  include.lowest = TRUE, right = FALSE)
 helios800
 #write_xlsx(helios800, "data/helios800.xlsx")
 ```
@@ -73,17 +83,17 @@ species_new
 ```{r}
 new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
 #new_merge
-species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "BMI", "BMI_groups")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
 species_meta = species_meta %>% drop_na(FREG5_Ethnic_Group)
 species_meta
 ```
 
 ```{r}
-metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age")]
+metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "BMI", "BMI_groups")]
 metadata = metadata[!duplicated(metadata$FREG1_Barcode),]
 metadata
 
-drop = c("Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine", "FREG7_Gender", "FREG8_Age")
+drop = c("Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine", "FREG7_Gender", "FREG8_Age", "BMI", "BMI_groups")
 species_data = species_meta[,!(names(species_meta) %in% drop)]
 species_data  = species_data [!duplicated(species_data$FREG1_Barcode),]
 species_data

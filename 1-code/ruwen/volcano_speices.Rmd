@@ -148,22 +148,26 @@ calculate_stats <- function(data1, data2) {
     }
   }
   
+  # Adjust p-values using the Benjamini-Hochberg method (FDR)
+  adj_p_values <- p.adjust(p_values, method = "BH")
+  
   results <- data.frame(
     species = colnames(data1),
     logFC = logFC,
-    p_value = p_values
+    p_value = adj_p_values
   )
   
   results$logP = -log10(results$p_value)
+  
   results <- results[results$logP > 0, ]  # Filter out rows with logP = 0
   return(results)
 }
 
 
 # Calculate stats for each pairwise comparison
-results_CvsIM <- calculate_stats(data_C, data_IM)
-results_IvsCM <- calculate_stats(data_I, data_CM)
-results_MvsCI <- calculate_stats(data_M, data_CI)
+results_CvsIM <- calculate_stats(data_IM, data_C)
+results_IvsCM <- calculate_stats(data_CM, data_I)
+results_MvsCI <- calculate_stats(data_CI, data_M)
 
 # Function to plot volcano plot
 plot_volcano <- function(results, title) {
@@ -178,9 +182,9 @@ plot_volcano <- function(results, title) {
 }
 
 # Plot the volcano plots
-plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
-plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
-plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
+plot_volcano(results_CvsIM, "Volcano Plot: Non-Chinese vs Chinese")
+plot_volcano(results_IvsCM, "Volcano Plot: Non-Indian vs Indian")
+plot_volcano(results_MvsCI, "Volcano Plot: Non-Malay vs Malay")
 
 ```
 ```{r}
@@ -206,9 +210,9 @@ plot_volcano <- function(results, title) {
 }
 
 # Plot the volcano plots with colored significant points
-plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
-plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
-plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
+plot_volcano(results_CvsIM, "Volcano Plot: Non-Chinese vs Chinese")
+plot_volcano(results_IvsCM, "Volcano Plot: Non-Indian vs Indian")
+plot_volcano(results_MvsCI, "Volcano Plot: Non-Malay vs Malay")
 
 ```
 
@@ -242,9 +246,9 @@ plot_volcano <- function(results, title) {
     geom_text_repel(data = labeled_results, aes(label = species), size = 3, box.padding = 0.3, max.overlaps = 20)
 }
 
-plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
-plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
-plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
+plot_volcano(results_CvsIM, "Volcano Plot: Non-Chinese vs Chinese")
+plot_volcano(results_IvsCM, "Volcano Plot: Non-Indian vs Indian")
+plot_volcano(results_MvsCI, "Volcano Plot: Non-Malay vs Malay")
 
 ```
 
