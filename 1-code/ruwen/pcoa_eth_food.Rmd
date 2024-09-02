@@ -356,3 +356,190 @@ p +
 permanova_result = adonis2(dist ~ FREG5_Ethnic_Group, data = as(sample_data(filtered_phylo_sig), "data.frame"))
 print(permanova_result)
 ```
+
+
+# pcoa within ethnic group
+```{r}
+prevalence_threshold <- 0.2
+phylo_no_ofiltered <- filter_taxa(phylo_no_o, 
+                                  function(x) sum(x > 0) > (prevalence_threshold * nsamples(otu_table(phylo))),
+                                  prune=TRUE)
+phylo_no_ofiltered
+```
+
+```{r}
+output_dir <- "figure/"  # Replace with your desired directory
+
+for (group in ethnic_groups) {
+  phylo_subset <- subset_samples(phylo, FREG5_Ethnic_Group == group)
+  otu_data <- as(otu_table(phylo_subset), "matrix")
+  if (taxa_are_rows(phylo_subset)) {
+    otu_data <- t(otu_data)
+  }
+  bray_curtis_dist <- vegdist(otu_data, method = "bray")
+  
+  hc <- hclust(bray_curtis_dist, method = "ward.D2")
+  file_name <- paste(output_dir, paste("Hierarchical_Clustering_Group_", group, ".png", sep = ""), sep = "/")
+  png(file_name, width = 800, height = 600)  # Adjust the dimensions as needed
+  plot(hc, main = paste("Hierarchical Clustering - Ethnic Group", group), 
+       xlab = "", sub = "", cex = 0.01)  # Adjust 'cex' to make the text smaller
+  
+  rect.hclust(hc, k = 3, border = "red")  # Adjust 'k' as needed to cut the tree into clusters
+  dev.off()
+}
+
+```
+
+```{r}
+  phylo_subset <- subset_samples(phylo, FREG5_Ethnic_Group == "C")
+  otu_data <- as(otu_table(phylo_subset), "matrix")
+  if (taxa_are_rows(phylo_subset)) {
+    otu_data <- t(otu_data)
+  }
+  bray_curtis_dist <- vegdist(otu_data, method = "bray")
+  
+  hc <- hclust(bray_curtis_dist, method = "ward.D2")
+  file_name <- paste(output_dir, paste("Hierarchical_Clustering_Group_C.png"), sep = "/")
+  #png(file_name, width = 800, height = 600)  # Adjust the dimensions as needed
+  plot(hc, main = paste("Hierarchical Clustering - Ethnic Group C"), 
+       xlab = "", sub = "", cex = 0.001)  # Adjust 'cex' to make the text smaller
+  
+  rect.hclust(hc, k = 3, border = "red")  # Adjust 'k' as needed to cut the tree into clusters
+  #dev.off()
+```
+
+
+```{r}
+ethnic_groups <- unique(sample_data(phylo)$FREG5_Ethnic_Group)
+
+# Create an empty list to store clustering results
+clustering_results <- list()
+
+# Set the number of clusters (adjust as needed)
+k <- 3
+
+# Loop through each ethnic group
+for (group in ethnic_groups) {
+  # Subset the phyloseq object to the current ethnic group
+  phylo_subset <- subset_samples(phylo, FREG5_Ethnic_Group == group)
+  
+  # Extract OTU table and convert to matrix
+  otu_data <- as(otu_table(phylo_subset), "matrix")
+  
+  # Ensure samples are rows and taxa are columns
+  if (taxa_are_rows(phylo_subset)) {
+    otu_data <- t(otu_data)
+  }
+  
+  # Calculate Bray-Curtis distance between samples
+  bray_curtis_dist <- vegdist(otu_data, method = "bray")
+  
+  # Perform k-means clustering on the samples
+  km <- kmeans(otu_data, centers = k)
+  
+  # Add the clustering results to the sample data
+  sample_data(phylo_subset)$Cluster <- factor(km$cluster)
+  
+  # Store the k-means clustering results
+  clustering_results[[group]] <- km
+  
+  # Visualize the clustering using PCoA
+  pcoa <- cmdscale(bray_curtis_dist, eig = TRUE, k = 2)
+  
+  # Create a data frame for plotting
+  pcoa_df <- data.frame(PC1 = pcoa$points[, 1], PC2 = pcoa$points[, 2], 
+                        Cluster = factor(km$cluster), SampleID = rownames(otu_data))
+  
+  # Plot the PCoA with clusters
+  p <- ggplot(pcoa_df, aes(x = PC1, y = PC2, color = Cluster, label = SampleID)) +
+    geom_point(size = 3) +
+    geom_text(hjust = 0, nudge_x = 0.05, size = 3) +
+    ggtitle(paste("PCoA with K-Means Clusters - Ethnic Group", group)) +
+    theme_minimal()
+  
+  # Print the plot
+  print(p)
+}
+
+```
+#silhouette score
+```{r}
+library(cluster)
+
+# Loop through each ethnic group
+for (group in ethnic_groups) {
+  # Subset the phyloseq object to the current ethnic group
+  phylo_subset <- subset_samples(phylo, FREG5_Ethnic_Group == group)
+  
+  # Extract OTU table and convert to matrix
+  otu_data <- as(otu_table(phylo_subset), "matrix")
+  
+  # Ensure samples are rows and taxa are columns
+  if (taxa_are_rows(phylo_subset)) {
+    otu_data <- t(otu_data)
+  }
+  
+  # Perform k-means clustering on the samples
+  km <- kmeans(otu_data, centers = 2)
+  
+  # Calculate silhouette scores
+  silhouette_scores <- silhouette(km$cluster, dist(otu_data))
+  
+  # Plot silhouette analysis
+  plot(silhouette_scores, main = paste("Silhouette Plot - Ethnic Group", group))
+  
+  # Print average silhouette width
+  avg_silhouette <- mean(silhouette_scores[, "sil_width"])
+  cat(paste("Average Silhouette Width for group", group, ":", avg_silhouette, "\n"))
+}
+
+```
+An average silhouette width close to 1 indicates that the clusters are well-separated, while a score close to 0 suggests overlapping clusters. Negative values suggest that some samples may have been assigned to the wrong cluster.
+#elbow analysis
+```{r}
+# Loop through each ethnic group
+for (group in ethnic_groups) {
+  phylo_subset <- subset_samples(phylo, FREG5_Ethnic_Group == group)
+  otu_data <- as(otu_table(phylo_subset), "matrix")
+  
+  if (taxa_are_rows(phylo_subset)) {
+    otu_data <- t(otu_data)
+  }
+  
+  wcss <- numeric()
+  
+  for (i in 1:10) {
+    km <- kmeans(otu_data, centers = i)
+    wcss[i] <- km$tot.withinss
+  }
+  
+  plot(1:10, wcss, type = "b", pch = 19, frame = FALSE,
+       xlab = "Number of Clusters", ylab = "Total Within-Cluster Sum of Squares",
+       main = paste("Elbow Method for Ethnic Group", group))
+}
+
+```
+#gap statistic
+```{r}
+library(cluster)
+library(factoextra)
+
+# Loop through each ethnic group
+for (group in ethnic_groups) {
+  phylo_subset <- subset_samples(phylo, FREG5_Ethnic_Group == group)
+  otu_data <- as(otu_table(phylo_subset), "matrix")
+  
+  if (taxa_are_rows(phylo_subset)) {
+    otu_data <- t(otu_data)
+  }
+  
+  gap_stat <- clusGap(otu_data, FUN = kmeans, nstart = 25, K.max = 10, B = 50)
+  
+  fviz_gap_stat(gap_stat) +
+    ggtitle(paste("Gap Statistic for Ethnic Group", group))
+}
+
+```
+
+
+
