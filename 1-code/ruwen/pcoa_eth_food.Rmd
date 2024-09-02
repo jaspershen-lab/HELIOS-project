@@ -1,0 +1,208 @@
+---
+title: "pcoa_eth_food"
+author: "Ruwen Zhou"
+date: "9/2/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r}
+food_data = read_xlsx("data/FFQA862.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
+
+food_data
+nutrition_data
+species
+metadata
+```
+
+#species
+```{r}
+species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv")
+#species$`SAM id`
+helios_new_list = metadata$FREG1_Barcode
+#sample_list = metadata_micro$`Original Sample name`
+metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
+
+micro_list <- filter(metadata_micro, metadata_micro$`Original Sample name` %in% helios_new_list)
+species_new = filter(species, species$`SAM id` %in% micro_list$`Library ID`)
+species_new
+```
+
+```{r}
+new_merge_spe = merge(metadata_micro[,c("Library ID", "Original Sample name")], species_new, by.x = "Library ID", by.y = "SAM id")
+new_merge_spe
+# species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+# species_meta = species_meta %>% drop_na(FREG5_Ethnic_Group)
+# species_meta
+```
+# pcoa of food by ethnicity
+```{r}
+food_fil = filter(food_data, food_data$Participant_ID %in% helios_new_list)
+food_df = as.data.frame(food_fil)
+meta_fil = filter(metadata, metadata$FREG1_Barcode %in% food_fil$Participant_ID)
+meta_df = as.data.frame(meta_fil)
+
+rownames(food_df) = food_df[,1]
+# food_df[1] = NULL
+food_df[] <- lapply(food_df, function(x) as.double(as.character(x)))
+food_df
+rownames(meta_df) = meta_df[,1]
+meta_df
+```
+#pcoa
+```{r}
+# Filter out group "O"
+meta_df_filtered <- meta_df[meta_df$FREG5_Ethnic_Group != "O", ]
+food_df_filtered <- food_df[rownames(meta_df_filtered), ]
+library(vegan)
+food_df_filtered[is.na(food_df_filtered)] <- 0
+# Calculate Bray-Curtis distance matrix
+food_dist <- vegdist(food_df_filtered, method = "bray")
+# Identify rows with all zeroes
+zero_rows <- rowSums(food_df_filtered) == 0
+
+# Remove those rows
+food_df_filtered <- food_df_filtered[!zero_rows, ]
+
+remaining_sample_ids <- rownames(food_df_filtered)
+
+# Filter meta_df_filtered to only include the remaining sample IDs
+meta_df_filtered <- meta_df_filtered[remaining_sample_ids, ]
+
+# Recalculate the distance matrix
+food_dist <- vegdist(food_df_filtered, method = "bray")
+
+# Perform PCoA
+pcoa_result <- cmdscale(food_dist, eig = TRUE, k = 2)
+# Extract the coordinates
+pcoa_coords <- as.data.frame(pcoa_result$points)
+
+colnames(pcoa_coords) <- c("PCoA1", "PCoA2")
+pcoa_coords$Ethnic_Group <- meta_df_filtered$FREG5_Ethnic_Group
+
+# Plot the PCoA
+library(ggplot2)
+ethnicity_colors = c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
+ggplot(pcoa_coords, aes(x = PCoA1, y = PCoA2, color = Ethnic_Group)) +
+  geom_point(size = 2, alpha = 0.7) +  # Adjust 'size' for dot size and 'alpha' for transparency
+  stat_ellipse(aes(group = Ethnic_Group), type = "norm", linetype = "solid", size = 1) +
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors) +
+  theme_minimal() +
+  labs(
+    title = "PCoA Plot Food Grouped by Ethnic Group",
+    x = "PCoA1",
+    y = "PCoA2",
+    color = "Ethnic Group"
+  ) +
+  theme(
+    text = element_text(size = 14),
+    legend.position = "right"
+  )
+
+
+```
+```{r}
+# Perform PERMANOVA to test for differences between groups
+permanova_result <- adonis2(food_dist ~ FREG5_Ethnic_Group, data = meta_df_filtered)
+
+# Extract the p-value
+p_value <- permanova_result$`Pr(>F)`[1]
+ggplot(pcoa_coords, aes(x = PCoA1, y = PCoA2, color = Ethnic_Group)) +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(aes(group = Ethnic_Group), type = "norm", linetype = "solid", size = 1) +
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors) +
+  theme_minimal() +
+  labs(
+    title = "PCoA Plot Grouped by Ethnic Group",
+    x = "PCoA1",
+    y = "PCoA2",
+    color = "Ethnic Group"
+  ) +
+  annotate("text", 
+           x = Inf, y = Inf, 
+           label = paste("PERMANOVA p-value:", signif(p_value, 3)), 
+           hjust = 1.1, vjust = 1.5, 
+           size = 3, 
+           color = "black") +
+  theme(
+    text = element_text(size = 14),
+    legend.position = "right"
+  )
+
+```
+# NMDS
+```{r}
+# Perform NMDS using the Bray-Curtis distance matrix
+nmds_result <- metaMDS(food_df_filtered, distance = "bray", k = 2, trymax = 100)
+
+
+nmds_coords <- as.data.frame(scores(nmds_result, display = "sites"))
+nmds_coords$Ethnic_Group <- meta_df_filtered$FREG5_Ethnic_Group
+
+# Plot NMDS
+ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = Ethnic_Group)) +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(aes(group = Ethnic_Group), type = "norm", linetype = "solid", size = 1) +
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors) +
+  theme_minimal() +
+  labs(
+    title = "NMDS Plot Food Grouped by Ethnic Group",
+    x = "NMDS1",
+    y = "NMDS2",
+    color = "Ethnic Group"
+  ) +
+  theme(
+    text = element_text(size = 14),
+    legend.position = "right"
+  )
+
+
+```
+
+```{r}
+
+nmds_permanova_result <- adonis2(food_dist ~ FREG5_Ethnic_Group, data = meta_df_filtered)
+
+# Display the PERMANOVA result
+nmds_permanova_result
+
+# Extract the p-value
+nmds_p_value <- nmds_permanova_result$`Pr(>F)`[1]
+nmds_p_value
+
+```
+
+
+
+# pcoa of species by ethnicity (only the significant species)
+```{r}
+metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group")]
+metadata = metadata[!duplicated(metadata$FREG1_Barcode),]
+metadata
+
+drop = c("Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
+species_data = species_meta[,!(names(species_meta) %in% drop)]
+species_data  = species_data [!duplicated(species_data$FREG1_Barcode),]
+species_data
+```
+
