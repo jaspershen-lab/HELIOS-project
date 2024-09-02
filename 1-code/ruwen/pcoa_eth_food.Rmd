@@ -18,10 +18,11 @@ library(vegan)
 library(DESeq2)
 library(pheatmap)
 library(RColorBrewer)
+library(ggpubr)
 ```
 
 ```{r}
-food_data = read_xlsx("data/FFQA862.xlsx")
+food_data = read_xlsx("data/all_food_863.xlsx")
 nutrition_data = read_xlsx("data/FFQB800.xlsx")
 species = read_xlsx("data/species_866.xlsx")
 metadata = read_xlsx("data/ethnicity_866.xlsx")
@@ -54,14 +55,14 @@ new_merge_spe
 ```
 # pcoa of food by ethnicity
 ```{r}
-food_fil = filter(food_data, food_data$Participant_ID %in% helios_new_list)
+food_fil = filter(food_data, food_data$participant_id %in% helios_new_list)
 food_df = as.data.frame(food_fil)
-meta_fil = filter(metadata, metadata$FREG1_Barcode %in% food_fil$Participant_ID)
+meta_fil = filter(metadata, metadata$FREG1_Barcode %in% food_fil$participant_id)
 meta_df = as.data.frame(meta_fil)
 
 rownames(food_df) = food_df[,1]
-# food_df[1] = NULL
 food_df[] <- lapply(food_df, function(x) as.double(as.character(x)))
+food_df[1] = NULL
 food_df
 rownames(meta_df) = meta_df[,1]
 meta_df
@@ -132,7 +133,7 @@ ggplot(pcoa_coords, aes(x = PCoA1, y = PCoA2, color = Ethnic_Group)) +
   scale_fill_manual(values = ethnicity_colors) +
   theme_minimal() +
   labs(
-    title = "PCoA Plot Grouped by Ethnic Group",
+    title = "PCoA Plot FoodGrouped by Ethnic Group",
     x = "PCoA1",
     y = "PCoA2",
     color = "Ethnic Group"
@@ -196,13 +197,162 @@ nmds_p_value
 
 # pcoa of species by ethnicity (only the significant species)
 ```{r}
-metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group")]
+new_merge_spe = new_merge_spe[!duplicated(new_merge_spe$`Original Sample name`),]
 metadata = metadata[!duplicated(metadata$FREG1_Barcode),]
-metadata
+species_df = filter(new_merge_spe, new_merge_spe$`Original Sample name` %in% metadata$FREG1_Barcode)
+species_df = as.data.frame(species_df)
+meta_spe_df = filter(metadata, metadata$FREG1_Barcode %in% species_df$`Original Sample name`)
+meta_spe_df = as.data.frame(meta_spe_df)
 
-drop = c("Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
-species_data = species_meta[,!(names(species_meta) %in% drop)]
-species_data  = species_data [!duplicated(species_data$FREG1_Barcode),]
-species_data
+rownames(species_df) = species_df[,2]
+species_df[1] = NULL
+species_df[1] = NULL
+species_df
+
+rownames(meta_spe_df) = meta_spe_df[,1]
+meta_spe_df
 ```
 
+```{r}
+OTU = otu_table(as.matrix(species_df), taxa_are_rows = FALSE)              
+SAM = sample_data(meta_spe_df, errorIfNULL = TRUE)
+
+phylo <- phyloseq(OTU, SAM)
+phylo_no_o <- subset_samples(phylo, FREG5_Ethnic_Group != "O")
+phylo_no_o
+sample_data(phylo_no_o)$FREG5_Ethnic_Grou
+```
+```{r}
+is_prevalent <- function(x, group) {
+  present <- (x > 0)
+  tapply(present, group, function(y) mean(y) >= 0.5)
+}
+
+# Now, let's apply this function to filter the taxa
+filtered_phylo <- phyloseq::filter_taxa(phylo_no_o, function(x) {
+  group <- phyloseq::sample_data(phylo_no_o)$FREG5_Ethnic_Group
+  any(is_prevalent(x, group))
+}, prune = TRUE)
+
+# Print the dimensions of the filtered phyloseq object
+print(filtered_phylo)
+otu_table(filtered_phylo)
+```
+
+```{r}
+comparisons <- list(c("C", "I"), c("C", "M"), c("I", "M"))
+
+
+p <- plot_richness(filtered_phylo, x = "FREG5_Ethnic_Group", color = "FREG5_Ethnic_Group",
+                  measures = c("Shannon", "Simpson", "Chao1", "Fisher")) +
+    geom_boxplot() +
+    theme_bw() +
+    scale_color_manual(values = ethnicity_colors) +
+                         
+    scale_fill_manual(values = ethnicity_colors) +
+                        
+    stat_compare_means(comparisons = comparisons, method = "t.test", label = "p.signif", symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), symbols = c("***", "**", "*", "ns")))
+print(p)
+#p + theme(text = element_text(family = "serif"))
+```
+## Beta analysis
+```{r}
+dist = phyloseq::distance(filtered_phylo, method="bray")
+phylo.beta = ordinate(filtered_phylo, method="PCoA", distance=dist)
+sample_data(filtered_phylo)$FREG5_Ethnic_Group <- factor(sample_data(filtered_phylo)$FREG5_Ethnic_Group,
+                                                                 levels = c("C", "I", "M"))
+
+p <- plot_ordination(filtered_phylo, phylo.beta, type = "samples", color = "FREG5_Ethnic_Group") +
+  theme_bw() +
+  stat_ellipse(aes(group = FREG5_Ethnic_Group)) +
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors)
+
+# Extract the data from the plot
+plot_data <- p$data
+# Add the points in the desired order using geom_point()
+#c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
+p +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "C"), color = "#9FDDCA") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "#9EA3F1") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "#E17887")
+  #theme(text = element_text(family = "serif"))
+
+```
+```{r}
+permanova_result = adonis2(dist ~ FREG5_Ethnic_Group, data = as(sample_data(filtered_phylo), "data.frame"))
+print(permanova_result)
+```
+
+# only the significant species
+```{r}
+library(DESeq2)
+
+# Assuming filtered_phylo is your phyloseq object from previous steps
+
+# Convert phyloseq object to DESeq2 format
+dds <- phyloseq_to_deseq2(filtered_phylo, ~ FREG5_Ethnic_Group)
+
+# Run DESeq2 analysis
+dds <- DESeq(dds)
+
+# Get results
+res <- results(dds)
+
+# Filter for significantly different species (adjust p-value threshold as needed)
+sig_species <- rownames(res)[which(res$padj < 0.05)]
+sig_species 
+# Create a new phyloseq object with only significant species
+filtered_phylo_sig <- prune_taxa(sig_species, filtered_phylo)
+
+# Print the number of significant species
+print(paste("Number of significantly different species:", ntaxa(filtered_phylo_sig)))
+
+# Print the dimensions of the new phyloseq object
+print(filtered_phylo_sig)
+```
+
+```{r}
+comparisons <- list(c("C", "I"), c("C", "M"), c("I", "M"))
+
+
+p <- plot_richness(filtered_phylo_sig, x = "FREG5_Ethnic_Group", color = "FREG5_Ethnic_Group",
+                  measures = c("Shannon", "Simpson", "Chao1", "Fisher")) +
+    geom_boxplot() +
+    theme_bw() +
+    scale_color_manual(values = ethnicity_colors) +
+                         
+    scale_fill_manual(values = ethnicity_colors) +
+                        
+    stat_compare_means(comparisons = comparisons, method = "t.test", label = "p.signif", symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), symbols = c("***", "**", "*", "ns")))
+print(p)
+#p + theme(text = element_text(family = "serif"))
+```
+
+```{r}
+dist = phyloseq::distance(filtered_phylo_sig, method="bray")
+phylo.beta = ordinate(filtered_phylo_sig, method="PCoA", distance=dist)
+sample_data(filtered_phylo_sig)$FREG5_Ethnic_Group <- factor(sample_data(filtered_phylo_sig)$FREG5_Ethnic_Group,
+                                                                 levels = c("C", "I", "M"))
+
+p <- plot_ordination(filtered_phylo_sig, phylo.beta, type = "samples", color = "FREG5_Ethnic_Group") +
+  theme_bw() +
+  stat_ellipse(aes(group = FREG5_Ethnic_Group)) +
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors)
+
+# Extract the data from the plot
+plot_data <- p$data
+# Add the points in the desired order using geom_point()
+#c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
+p +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "C"), color = "#9FDDCA") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "#9EA3F1") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "#E17887")
+  #theme(text = element_text(family = "serif"))
+
+```
+```{r}
+permanova_result = adonis2(dist ~ FREG5_Ethnic_Group, data = as(sample_data(filtered_phylo_sig), "data.frame"))
+print(permanova_result)
+```

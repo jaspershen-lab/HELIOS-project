@@ -1,0 +1,157 @@
+---
+title: "density_food"
+author: "Ruwen Zhou"
+date: "9/2/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggpubr)
+```
+
+```{r}
+food_data = read_xlsx("data/FFQA862.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
+
+food_data[] <- lapply(food_data, function(x) as.double(as.character(x)))
+food_data <- food_data %>%
+  mutate(Participant_ID = as.character(Participant_ID))
+food_data
+nutrition_data
+metadata
+```
+
+```{r}
+ethnicity_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887", "O" = "#80796BFF")
+
+merged_data <- food_data %>%
+  inner_join(metadata[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], by = c("Participant_ID" = "FREG1_Barcode"))
+
+# Filter out the 'O' ethnic group and select relevant columns
+plot_data <- merged_data %>%
+  filter(FREG5_Ethnic_Group != "O") %>%
+  select(FREG5_Ethnic_Group, everything(), -Participant_ID)
+
+# Get the names of all food columns
+food_columns <- names(plot_data)[names(plot_data) != "FREG5_Ethnic_Group"]
+
+# Create a directory to store the plots
+dir.create("food_density_plots", showWarnings = FALSE)
+
+# Loop through each food group and create individual density plots
+for (food in food_columns) {
+  p <- ggplot(plot_data, aes(x = .data[[food]], fill = FREG5_Ethnic_Group)) +
+    geom_density(alpha = 0.7) +
+    scale_fill_manual(values = ethnicity_colors) +
+    labs(title = paste(food),
+         x = "Consumption",
+         y = "Density",
+         fill = "Ethnic Group") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          axis.title = element_text(size = 12),
+          axis.text = element_text(size = 10),
+          legend.title = element_text(size = 12),
+          legend.text = element_text(size = 10))
+  
+  # Save the plot
+  ggsave(paste0("figure/food_density_plots/", food, "_density_plot.png"), 
+         plot = p, width = 10, height = 6, dpi = 300)
+  
+  # Print progress
+  cat("Saved plot for", food, "\n")
+}
+
+cat("All plots have been saved in the 'food_density_plots' directory.\n")
+```
+
+```{r}
+library(rstatix)
+stat_results <- data.frame(Food = character(),
+                           KW_statistic = numeric(),
+                           KW_p_value = numeric(),
+                           KW_p_adjusted = numeric(),
+                           Significant_pairs = character(),
+                           stringsAsFactors = FALSE)
+
+# Loop through each food group
+for (food in food_columns) {
+  # Kruskal-Wallis test
+  kw_test <- plot_data %>%
+    kruskal_test(as.formula(paste(food, "~ FREG5_Ethnic_Group")))
+  
+  # Store results (without adjusted p-value for now)
+  stat_results <- stat_results %>%
+    add_row(Food = food,
+            KW_statistic = kw_test$statistic,
+            KW_p_value = kw_test$p,
+            KW_p_adjusted = NA,
+            Significant_pairs = "")
+  
+  # Print progress
+  cat("Processed", food, "\n")
+}
+
+# Adjust p-values using Benjamini-Hochberg method
+stat_results$KW_p_adjusted <- p.adjust(stat_results$KW_p_value, method = "BH")
+
+# Perform Dunn's test for foods with significant adjusted p-values
+for (i in 1:nrow(stat_results)) {
+  if (stat_results$KW_p_adjusted[i] < 0.05) {
+    food <- stat_results$Food[i]
+    dunn_test <- plot_data %>%
+      dunn_test(as.formula(paste(food, "~ FREG5_Ethnic_Group")), p.adjust.method = "bonferroni")
+    
+    # Get significant pairs
+    sig_pairs <- dunn_test %>%
+      filter(p.adj < 0.05) %>%
+      mutate(pair = paste(group1, group2, sep="-")) %>%
+      pull(pair) %>%
+      paste(collapse = ", ")
+    
+    stat_results$Significant_pairs[i] <- ifelse(sig_pairs == "", "None", sig_pairs)
+  } else {
+    stat_results$Significant_pairs[i] <- "None"
+  }
+}
+
+# Save statistical results
+write.csv(stat_results, "figure/food_statistical_results.csv", row.names = FALSE)
+
+cat("Statistical results have been saved in 'food_statistical_results.csv'.\n")
+
+# Print summary of significant differences
+cat("\nSummary of significant differences (after FDR correction):\n")
+stat_results %>%
+  filter(KW_p_adjusted < 0.05) %>%
+  select(Food, KW_p_adjusted, Significant_pairs) %>%
+  arrange(KW_p_adjusted) %>%
+  print(n = Inf)
+
+# Print foods with no significant differences
+cat("\nFoods with no significant differences among ethnic groups (after FDR correction):\n")
+stat_results %>%
+  filter(KW_p_adjusted >= 0.05) %>%
+  pull(Food) %>%
+  cat(sep = ", ")
+```
+
+
+
+
+
+
