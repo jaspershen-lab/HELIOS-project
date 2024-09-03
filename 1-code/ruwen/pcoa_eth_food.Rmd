@@ -99,24 +99,24 @@ colnames(pcoa_coords) <- c("PCoA1", "PCoA2")
 pcoa_coords$Ethnic_Group <- meta_df_filtered$FREG5_Ethnic_Group
 
 # Plot the PCoA
-library(ggplot2)
-ethnicity_colors = c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
-ggplot(pcoa_coords, aes(x = PCoA1, y = PCoA2, color = Ethnic_Group)) +
-  geom_point(size = 2, alpha = 0.7) +  # Adjust 'size' for dot size and 'alpha' for transparency
-  stat_ellipse(aes(group = Ethnic_Group), type = "norm", linetype = "solid", size = 1) +
-  scale_color_manual(values = ethnicity_colors) +
-  scale_fill_manual(values = ethnicity_colors) +
-  theme_minimal() +
-  labs(
-    title = "PCoA Plot Food Grouped by Ethnic Group",
-    x = "PCoA1",
-    y = "PCoA2",
-    color = "Ethnic Group"
-  ) +
-  theme(
-    text = element_text(size = 14),
-    legend.position = "right"
-  )
+# library(ggplot2)
+# ethnicity_colors = c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
+# ggplot(pcoa_coords, aes(x = PCoA1, y = PCoA2, color = Ethnic_Group)) +
+#   geom_point(size = 2, alpha = 0.7) +  # Adjust 'size' for dot size and 'alpha' for transparency
+#   stat_ellipse(aes(group = Ethnic_Group), type = "norm", linetype = "solid", size = 1) +
+#   scale_color_manual(values = ethnicity_colors) +
+#   scale_fill_manual(values = ethnicity_colors) +
+#   theme_minimal() +
+#   labs(
+#     title = "PCoA Plot Food Grouped by Ethnic Group",
+#     x = "PCoA1",
+#     y = "PCoA2",
+#     color = "Ethnic Group"
+#   ) +
+#   theme(
+#     text = element_text(size = 14),
+#     legend.position = "right"
+#   )
 
 
 ```
@@ -124,16 +124,15 @@ ggplot(pcoa_coords, aes(x = PCoA1, y = PCoA2, color = Ethnic_Group)) +
 # Perform PERMANOVA to test for differences between groups
 permanova_result <- adonis2(food_dist ~ FREG5_Ethnic_Group, data = meta_df_filtered)
 
-# Extract the p-value
 p_value <- permanova_result$`Pr(>F)`[1]
-ggplot(pcoa_coords, aes(x = PCoA1, y = PCoA2, color = Ethnic_Group)) +
+p = ggplot(pcoa_coords, aes(x = PCoA1, y = PCoA2, color = Ethnic_Group)) +
   geom_point(size = 2, alpha = 0.7) +
   stat_ellipse(aes(group = Ethnic_Group), type = "norm", linetype = "solid", size = 1) +
   scale_color_manual(values = ethnicity_colors) +
   scale_fill_manual(values = ethnicity_colors) +
   theme_minimal() +
   labs(
-    title = "PCoA Plot FoodGrouped by Ethnic Group",
+    title = "PCoA Plot Food Grouped by Ethnic Group",
     x = "PCoA1",
     y = "PCoA2",
     color = "Ethnic Group"
@@ -148,6 +147,11 @@ ggplot(pcoa_coords, aes(x = PCoA1, y = PCoA2, color = Ethnic_Group)) +
     text = element_text(size = 14),
     legend.position = "right"
   )
+plot_data <- p$data
+p +
+  geom_point(data = subset(plot_data, Ethnic_Group == "C"), color = "#9FDDCA") +
+  geom_point(data = subset(plot_data, Ethnic_Group == "I"), color = "#9EA3F1") +
+  geom_point(data = subset(plot_data, Ethnic_Group == "M"), color = "#E17887")
 
 ```
 # NMDS
@@ -160,7 +164,7 @@ nmds_coords <- as.data.frame(scores(nmds_result, display = "sites"))
 nmds_coords$Ethnic_Group <- meta_df_filtered$FREG5_Ethnic_Group
 
 # Plot NMDS
-ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = Ethnic_Group)) +
+p = ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = Ethnic_Group)) +
   geom_point(size = 2, alpha = 0.7) +
   stat_ellipse(aes(group = Ethnic_Group), type = "norm", linetype = "solid", size = 1) +
   scale_color_manual(values = ethnicity_colors) +
@@ -176,7 +180,12 @@ ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = Ethnic_Group)) +
     text = element_text(size = 14),
     legend.position = "right"
   )
-
+plot_data <- p$data
+p +
+  geom_point(data = subset(plot_data, Ethnic_Group == "C"), color = "#9FDDCA") +
+  geom_point(data = subset(plot_data, Ethnic_Group == "I"), color = "#9EA3F1") +
+  geom_point(data = subset(plot_data, Ethnic_Group == "M"), color = "#E17887")
+  #theme(text = element_text(family = "serif"))
 
 ```
 
@@ -451,9 +460,10 @@ for (group in ethnic_groups) {
                         Cluster = factor(km$cluster), SampleID = rownames(otu_data))
   
   # Plot the PCoA with clusters
-  p <- ggplot(pcoa_df, aes(x = PC1, y = PC2, color = Cluster, label = SampleID)) +
-    geom_point(size = 3) +
-    geom_text(hjust = 0, nudge_x = 0.05, size = 3) +
+  p <- ggplot(pcoa_df, aes(x = PC1, y = PC2, color = Cluster)) +   #label = SampleID
+    geom_point(size = 3, alpha = 0.7) +
+    #geom_text(hjust = 0, nudge_x = 0.05, size = 3) +
+    stat_ellipse(type = "norm", level = 0.95, linetype = 1, size = 1) +
     ggtitle(paste("PCoA with K-Means Clusters - Ethnic Group", group)) +
     theme_minimal()
   

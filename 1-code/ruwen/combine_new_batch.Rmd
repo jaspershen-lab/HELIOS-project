@@ -195,7 +195,17 @@ print(unique_to_df2)
 ```{r}
 # Load necessary library
 library(vegan)
-new = food800[,c(3:249)]
+food800 = read_xlsx("data/all_food_863.xlsx")
+# eth = read_xlsx("data/helios800.xlsx")
+# eth
+# food800
+# merge_food_eth = merge(eth[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], food800, by.x = "FREG1_Barcode", by.y = "participant_id")
+# merge_food_eth
+```
+
+
+```{r}
+new = food800[,c(4:249)]
 new[is.na(new)] <- 0 
 #new <- na.omit(new)
 
@@ -209,7 +219,8 @@ pcoa <- cmdscale(distance_matrix, eig = TRUE, k = 2)
 pcoa_df <- as.data.frame(pcoa$points)
 
 pcoa_df$Group <- factor(c(rep("First 535", 535), rep("Remaining 328", 328)))
-
+#pcoa_df$Group <-  merge_food_eth$FREG5_Ethnic_Group
+merge_food_eth
 # Plot the PCoA results
 library(ggplot2)
 ggplot(pcoa_df, aes(x = V1, y = V2, color = Group)) +
