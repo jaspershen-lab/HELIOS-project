@@ -23,6 +23,7 @@ library(RColorBrewer)
 library(ggraph)
 library(igraph)
 library(Hmisc)
+library(writexl)
 ```
 
 
@@ -41,7 +42,7 @@ metadata
 ```{r}
 colnames(species)[1] = "Participant_ID"
 colnames(metadata)[1] = "Participant_ID"
-threshold <- nrow(species) * 0.4
+threshold <- nrow(species) * 0.5
 
 species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
 
@@ -69,7 +70,9 @@ full_data
 nutrition_columns <- names(nutrition_data)[-1]  
 species_columns <- names(species_filtered2)[-1] 
 food_columns <- names(food_data)[-1]
-
+nutrition_columns
+species_columns
+food_columns
 ```
 
 # all ethnicity (no need for now)
@@ -184,7 +187,7 @@ dev.off()
 # seperate ethnic groups
 
 ```{r}
-new_full <- merge(metadata[,c("Participant_ID","FREG5_Ethnic_Group", "FREG8_Age", "FREG7_Gender")],full_data, by="Participant_ID")
+new_full <- merge(metadata[,c("Participant_ID","FREG5_Ethnic_Group", "FREG8_Age", "FREG7_Gender", "BMI", "BMI_groups")],full_data, by="Participant_ID")
 df_cm <- new_full %>% filter(FREG5_Ethnic_Group == "C" | FREG5_Ethnic_Group == "M")
 df_im <- new_full %>% filter(FREG5_Ethnic_Group == "I" | FREG5_Ethnic_Group == "M")
 # data_c <- new_full %>% filter(FREG5_Ethnic_Group == "C")
@@ -203,10 +206,10 @@ df_im$groupM_I <- ifelse(df_im$FREG5_Ethnic_Group == "M", 1,
 library(MatchIt)
 #library(tableone)
 
-m.out_C <- matchit(groupM_C ~ FREG7_Gender + FREG8_Age,
+m.out_C <- matchit(groupM_C ~ FREG7_Gender + FREG8_Age + BMI,
                    data = df_cm, method = "nearest", ratio = 1,
-                   exact = c("FREG7_Gender"),
-                   caliper = 0.3)
+                   exact = c("FREG7_Gender", "BMI_groups"),
+                   caliper = 0.1)
 summary(m.out_C)
 matched_data_C <- match.data(m.out_C)
 #matched_data_C
@@ -214,13 +217,13 @@ matched_data_C <- match.data(m.out_C)
 
 
 ```{r}
-m.out_I <- matchit(groupM_I ~ FREG7_Gender + FREG8_Age,
+m.out_I <- matchit(groupM_I ~ FREG7_Gender + FREG8_Age + BMI,
                    data = df_im, method = "nearest", ratio = 1,
-                   exact = c("FREG7_Gender"),
+                   exact = c("FREG7_Gender", "BMI_groups"),
                    caliper = 0.3)
 summary(m.out_I)
 matched_data_I <- match.data(m.out_I)
-#matched_data_I
+matched_data_I
 ```
 
 ```{r}
@@ -248,7 +251,7 @@ data_m
 calculate_significant_correlations <- function(data, food_or_nutrition_columns, species_columns) {
   cor_results <- rcorr(as.matrix(data), type = "spearman")
   adjusted_p_values <- matrix(p.adjust(cor_results$P, method = "BH"), nrow = nrow(cor_results$P))
-  significant_indices <- which(adjusted_p_values < 0.01, arr.ind = TRUE)
+  significant_indices <- which(adjusted_p_values < 0.02, arr.ind = TRUE)
 
   significant_correlations <- data.frame(
     from = colnames(data)[significant_indices[, "row"]],
@@ -361,6 +364,7 @@ cor_data_c <- combine_c  %>%
 
 
 cor_data_c
+#write_xlsx(cor_data_c, "figure/network_table_c.xlsx")
 ```
 
 # indian
@@ -402,6 +406,7 @@ cor_data_i <- combine_i  %>%
 
 
 cor_data_i
+#write_xlsx(cor_data_i, "figure/network_table_i.xlsx")
 ```
 
 # malays
@@ -433,6 +438,7 @@ cor_data_m <- combine_m  %>%
 
 
 cor_data_m
+#write_xlsx(cor_data_m, "figure/network_table_m.xlsx")
 ```
 
 ## power analysis
@@ -534,19 +540,226 @@ print(plot_m)
 
 ```
 
+
 ```{r}
-png("figure/network_c_circle800.png", width = 1600, height = 1400, res = 120)
+png("figure/network_c_circle800_2.png", width = 1600, height = 1400, res = 120)
 plot_c
 dev.off()
-png("figure/network_i_circle800.png", width = 1600, height = 1400, res = 120)
+png("figure/network_i_circle800_2.png", width = 1600, height = 1400, res = 120)
 plot_i
 dev.off()
-png("figure/network_m_circle800.png", width = 1600, height = 1400, res = 120)
+png("figure/network_m_circle800_2.png", width = 1600, height = 1400, res = 120)
 plot_m
 dev.off()
 ```
 
+# only have common food AND nutrient network
+# chinese
+```{r}
+#food_columns
+#nutrition_columns
+common_food = c("Fish","Dairy", "Fruits", "Idli_Thosai", "Deep_fried","Tea")
+common_nutrition = c("Energy", "Protein", "Total_fat", "Saturated_fatty_acid", "MUFA", "PUFA", "fibre", "Iron", "Thiamin", "Riboflavin", "Potassium",  "Zinc")
+```
 
+
+
+```{r}
+food_species_c <- data_c[, c(common_food, species_columns)]
+
+nutrition_species_c <- data_c[, c(common_nutrition, species_columns)]
+
+food_species_correlations_c <- calculate_significant_correlations(food_species_c, common_food, species_columns)
+nutrition_species_correlations_c <- calculate_significant_correlations(nutrition_species_c, common_nutrition, species_columns)
+```
+```{r}
+combine_c = rbind(food_species_correlations_c, nutrition_species_correlations_c)
+
+combine_c  <- combine_c  %>%
+  mutate(
+    node1 = pmin(from, to),
+    node2 = pmax(from, to)
+  ) %>%
+  distinct(node1, node2, .keep_all = TRUE)  # keep one of each unique pair
+combine_c
+```
+```{r}
+cor_data_c <- combine_c  %>%
+  mutate(edge_color = ifelse(correlation > 0, "red", "blue"),
+         abs_correlation = abs(correlation),
+         log_p = -log10(adjusted_p_value))
+
+
+cor_data_c
+#write_xlsx(cor_data_c, "figure/network_table_c.xlsx")
+```
+
+# indian
+
+
+```{r}
+food_species_i <- data_i[, c(common_food, species_columns)]
+nutrition_species_i <- data_i[, c(common_nutrition, species_columns)]
+
+
+food_species_correlations_i <- calculate_significant_correlations(food_species_i, common_food, species_columns)
+nutrition_species_correlations_i <- calculate_significant_correlations(nutrition_species_i, common_nutrition, species_columns)
+```
+```{r}
+combine_i = rbind(food_species_correlations_i, nutrition_species_correlations_i)
+
+combine_i  <- combine_i  %>%
+  mutate(
+    node1 = pmin(from, to),
+    node2 = pmax(from, to)
+  ) %>%
+  distinct(node1, node2, .keep_all = TRUE)  # keep one of each unique pair
+combine_i
+```
+```{r}
+cor_data_i <- combine_i  %>%
+  mutate(edge_color = ifelse(correlation > 0, "red", "blue"),
+         abs_correlation = abs(correlation),
+         log_p = -log10(adjusted_p_value))
+
+
+cor_data_i
+#write_xlsx(cor_data_i, "figure/network_table_i.xlsx")
+```
+
+# malays
+```{r}
+food_species_m <- data_m[, c(common_food, species_columns)]
+nutrition_species_m <- data_m[, c(common_nutrition, species_columns)]
+
+
+food_species_correlations_m <- calculate_significant_correlations(food_species_m, common_food, species_columns)
+nutrition_species_correlations_m <- calculate_significant_correlations(nutrition_species_m, common_nutrition, species_columns)
+```
+
+```{r}
+combine_m = rbind(food_species_correlations_m, nutrition_species_correlations_m)
+
+combine_m  <- combine_m  %>%
+  mutate(
+    node1 = pmin(from, to),
+    node2 = pmax(from, to)
+  ) %>%
+  distinct(node1, node2, .keep_all = TRUE)  # keep one of each unique pair
+combine_m
+```
+```{r}
+cor_data_m <- combine_m  %>%
+  mutate(edge_color = ifelse(correlation > 0, "red", "blue"),
+         abs_correlation = abs(correlation),
+         log_p = -log10(adjusted_p_value))
+
+
+cor_data_m
+#write_xlsx(cor_data_m, "figure/network_table_m.xlsx")
+```
+
+
+## try circuler layout
+```{r}
+# Assuming cor_data_c, cor_data_i, cor_data_m are data frames with columns: from, to, edge_color, abs_correlation
+
+all_nodes <- unique(c(cor_data_c$from, cor_data_c$to, cor_data_i$from, cor_data_i$to, cor_data_m$from, cor_data_m$to))
+
+# Create a nodes data frame
+nodes_df <- data.frame(name = unique(all_nodes))
+nodes_df$shape <- ifelse(nodes_df$name %in% species_columns, "circle", 
+                         ifelse(nodes_df$name %in% food_columns, "square", "diamond"))
+nodes_df$color <- ifelse(nodes_df$name %in% species_columns, "Species", 
+                         ifelse(nodes_df$name %in% food_columns, "Food", "Nutrition"))
+
+# Create a layout with food/nutrition in the inner circle and species in the outer circle
+food_nodes <- nodes_df$name[nodes_df$name %in% food_columns]
+nutrition_nodes <- nodes_df$name[nodes_df$name %in% nutrition_columns]
+outer_circle_nodes <- nodes_df$name[nodes_df$name %in% species_columns]
+
+inner_circle_positions_food <- data.frame(
+  name = food_nodes,
+  x = 0.5 * cos(seq(0, pi, length.out = length(food_nodes) + 1)[-length(food_nodes)-1]),
+  y = 0.5 * sin(seq(0, pi, length.out = length(food_nodes) + 1)[-length(food_nodes)-1])
+)
+
+inner_circle_positions_nutrition <- data.frame(
+  name = nutrition_nodes,
+  x = 0.5 * cos(seq(pi, 2*pi, length.out = length(nutrition_nodes) + 1)[-length(nutrition_nodes)-1]),
+  y = 0.5 * sin(seq(pi, 2*pi, length.out = length(nutrition_nodes) + 1)[-length(nutrition_nodes)-1])
+)
+
+inner_circle_positions <- rbind(inner_circle_positions_food, inner_circle_positions_nutrition)
+
+outer_circle_positions <- data.frame(
+  name = outer_circle_nodes,
+  x = 1 * cos(seq(0, 2*pi, length.out = length(outer_circle_nodes) + 1)[-length(outer_circle_nodes)-1]),
+  y = 1 * sin(seq(0, 2*pi, length.out = length(outer_circle_nodes) + 1)[-length(outer_circle_nodes)-1])
+)
+
+layout_positions <- rbind(inner_circle_positions, outer_circle_positions)
+```
+
+
+```{r fig.height=4, fig.width=6}
+# Function to plot graph with fixed layout
+library(scales)
+library(tidygraph)
+palette_colors <- brewer_pal(palette = "RdBu")(11)
+red_color <- palette_colors[10]
+blue_color <- palette_colors[2]
+
+plot_graph <- function(graph, layout_positions) {
+  graph <- graph %>%
+    activate(nodes) %>%
+    mutate(x = layout_positions$x[match(name, layout_positions$name)],
+           y = layout_positions$y[match(name, layout_positions$name)],
+           angle = atan2(y, x) * 180 / pi,
+           hjust = ifelse(angle < -90 | angle > 90, 1, 0),
+           angle = ifelse(angle < -90 | angle > 90, angle + 180, angle)) # Flip text
+  
+  ggraph(graph, layout = 'manual', x = x, y = y) +
+    geom_edge_diagonal(aes(edge_alpha = abs_correlation, edge_color = edge_color, edge_width = abs_correlation), show.legend = FALSE) +
+    geom_node_point(aes(shape = shape, color = color), size = 2) +
+    geom_node_text(aes(label = name, angle = angle, hjust = hjust), size = 2) +
+    scale_shape_manual(values = c(circle = 16, square = 15, diamond = 18), labels = c("Species", "Nutrition", "Food")) +  # Mapping shapes to actual ggplot2 shapes
+    scale_color_manual(values = c("Species" = "#F89FA8", "Nutrition" = "#68B69F", "Food" = "#F08E59"), labels = c("Species", "Nutrition", "Food")) +
+    scale_edge_color_manual(values = c(red_color, blue_color)) +
+    #theme_void() +  # Remove background elements
+    theme_graph() +
+    theme(legend.position = "right") +
+    coord_fixed(ratio = 1) +  # Ensure aspect ratio is fixed
+    expand_limits(x = c(-1.7, 1.7), y = c(-1.7, 1.7))
+}
+
+# Create graph objects from edge lists and nodes
+graph_c <- tbl_graph(edges = cor_data_c, nodes = nodes_df, directed = FALSE)
+graph_i <- tbl_graph(edges = cor_data_i, nodes = nodes_df, directed = FALSE)
+graph_m <- tbl_graph(edges = cor_data_m, nodes = nodes_df, directed = FALSE)
+
+# Plot each graph using the same layout positions
+plot_c <- plot_graph(graph_c, layout_positions)
+plot_i <- plot_graph(graph_i, layout_positions)
+plot_m <- plot_graph(graph_m, layout_positions)
+
+# Print plots
+print(plot_c)
+print(plot_i)
+print(plot_m)
+
+```
+```{r}
+png("figure/common_network_c_circle800.png", width = 1600, height = 1400, res = 120)
+plot_c
+dev.off()
+png("figure/common_network_i_circle800.png", width = 1600, height = 1400, res = 120)
+plot_i
+dev.off()
+png("figure/common_network_m_circle800.png", width = 1600, height = 1400, res = 120)
+plot_m
+dev.off()
+```
 
 # find out the nodes we need
 
