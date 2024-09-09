@@ -149,9 +149,127 @@ stat_results %>%
   pull(Food) %>%
   cat(sep = ", ")
 ```
+## boxplot
+```{r}
+library(reshape2)
 
 
+merged_data <- merge(food_data, metadata[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], by.x = "Participant_ID", by.y = "FREG1_Barcode")
 
+# Filter the ethnic groups C, I, M only
+filtered_data <- merged_data %>% filter(FREG5_Ethnic_Group %in% c("C", "I", "M"))
+
+# Reshape the data into long format for ggplot
+long_data <- melt(filtered_data, id.vars = c("Participant_ID", "FREG5_Ethnic_Group"), 
+                  variable.name = "Food_Group", value.name = "Intake")
+
+
+f = ggplot(long_data, aes(x = FREG5_Ethnic_Group, y = Intake, fill = FREG5_Ethnic_Group)) +
+  geom_boxplot() +
+  facet_wrap(~Food_Group, scales = "free_y") +  # facet_wrap to create separate plots, free_y for different y-axis ranges
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(title = "Box Plots of Food Intake by Ethnic Group for Each Food Group",
+       x = "Ethnic Group", y = "Intake") +
+  scale_fill_manual(values = ethnicity_colors)
+#ggsave("figure/boxplot_raw.png", plot = f, width = 10, height = 6, dpi = 300)
+f
+```
+
+```{r}
+
+remove_top_bottom_1_percent <- function(df) {
+  df %>%
+    group_by(Food_Group) %>%
+    filter(Intake >= quantile(Intake, 0.05) & Intake <= quantile(Intake, 0.95))
+}
+
+# Apply the function to remove the top and bottom 1%
+long_data_filtered <- remove_top_bottom_1_percent(long_data)
+
+# Create separate boxplots for each food group without top 1% and bottom 1%
+t = ggplot(long_data_filtered, aes(x = FREG5_Ethnic_Group, y = Intake, fill = FREG5_Ethnic_Group)) +
+  geom_boxplot() +
+  facet_wrap(~Food_Group, scales = "free_y") +  # facet_wrap to create separate plots, free_y for different y-axis ranges
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(title = "Box Plots of Food Intake by Ethnic Group for Each Food Group (remove outlier)",
+       x = "Ethnic Group", y = "Intake") +
+  scale_fill_manual(values = ethnicity_colors)
+
+#ggsave("figure/boxplot_raw_no_outlier.png", plot = t, width = 10, height = 6, dpi = 300)
+t
+```
+
+```{r}
+significant_pairs_list <- list(
+  "Fish" = list(c("C", "I"), c("I", "M")),
+  "Crustacean" = list(c("C", "I"), c("I", "M")),
+  "Mollusk" = list(c("C", "M"), c("I", "M")),
+  "Poultry" = list(c("C", "I"), c("I", "M")),
+  "Red_meat" = list(c("C", "I"), c("C", "M"), c("I", "M")),
+  "Processed_meat" = list(c("C", "I"), c("C", "M"), c("I", "M")),
+  "Dairy" = list(c("C", "I")),
+  "Cruciferous_veg" = list(c("C", "I"), c("C", "M")),
+  "Legumes" = list(c("C", "I"), c("I", "M")),
+  "Mushrooms" = list(c("C", "I"), c("C", "M")),
+  "Fruits" = NULL,
+  "Papaya" = NULL,
+  "Orange" = NULL,
+  "Wholegrain" = NULL,
+  "Chapati" = list(c("C", "I"), c("I", "M")),
+  "Idli_Thosai" = list(c("C", "I"), c("C", "M"), c("I", "M")),
+  "Noodle_dishes" = list(c("C", "I"), c("I", "M")),
+  "Deep_fried" = list(c("C", "M"), c("I", "M")),
+  "Coffee" = NULL,
+  "Tea" = NULL
+)
+
+```
+
+```{r  fig.height=6, fig.width=6}
+p <- ggplot(long_data_filtered, aes(x = FREG5_Ethnic_Group, y = Intake, fill = FREG5_Ethnic_Group)) +
+  geom_boxplot(width = 0.5, outlier.size = 0.5) +
+  facet_wrap(~Food_Group, scales = "free_y", ncol = 4) +
+  theme_bw(base_size = 8) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 6),
+    axis.title.x = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    strip.text = element_text(size = 8),
+    plot.title = element_text(size = 10, face = "bold")
+  ) + 
+  labs(title = "Box Plots of Food Intake by Ethnic Group with Significance",
+       y = "Intake") +
+  scale_fill_manual(values = ethnicity_colors)
+
+# Add significance annotations
+p <- p + stat_compare_means(
+  aes(label = ..p.signif..), 
+  method = "kruskal.test", 
+  label.y = function(x) max(x) + 0.1 * diff(range(x)),
+  hide.ns = TRUE,
+  size = 3
+)
+
+# Add pairwise comparisons
+for (food_group in names(significant_pairs_list)) {
+  if (!is.null(significant_pairs_list[[food_group]])) {
+    p <- p + geom_signif(
+      data = long_data_filtered %>% filter(Food_Group == food_group),
+      comparisons = significant_pairs_list[[food_group]],
+      step_increase = 0.1,
+      map_signif_level = TRUE,
+      test = "wilcox.test",
+      textsize = 2,
+      tip_length = 0.01
+    )
+  }
+}
+
+# Print the plot
+print(p)
+ggsave("figure/boxplot_no_outlier_sig.png", plot = p, width = 10, height = 10, dpi = 300)
+```
 
 
 

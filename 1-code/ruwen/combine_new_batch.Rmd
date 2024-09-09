@@ -160,6 +160,7 @@ food500_new <- food500 %>% rename_with(~ new_colnames[.x], .cols = names(new_col
 
 
 ```{r}
+#food500_new
 common_columns <- intersect(names(food500_new), names(food300))
 
 # Subset dataframes to include only common columns
@@ -173,17 +174,18 @@ food800
 
 ```
 ```{r}
-unique_to_df1 <- setdiff(names(food500_new), names(food300))
 
-# Column names that are in df2 but not in df1
-unique_to_df2 <- setdiff(names(food300), names(food500_new))
-
-# Print the results
-cat("Columns in df1 but not in df2:\n")
-print(unique_to_df1)
-
-cat("Columns in df2 but not in df1:\n")
-print(unique_to_df2)
+# unique_to_df1 <- setdiff(names(food500), names(food300))
+# 
+# # Column names that are in df2 but not in df1
+# unique_to_df2 <- setdiff(names(food300), names(food500))
+# 
+# # Print the results
+# cat("Columns in df1 but not in df2:\n")
+# print(unique_to_df1)
+# 
+# cat("Columns in df2 but not in df1:\n")
+# print(unique_to_df2)
 ```
 
 
