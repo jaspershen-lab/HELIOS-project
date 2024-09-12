@@ -60,7 +60,7 @@ species
 species[is.na(species)] <- 0
 full_merge <- merge(food_data_all, species, by = "Participant_ID")
 #food_data_all <- merge(food_data_all, metadata, by = "Participant_ID")
-rcorr(full_merge$yoghurt_drink, full_merge$`Streptococcus thermophilus`)
+cor(full_merge$yoghurt_drink, full_merge$`Streptococcus thermophilus`)
 ```
 
 

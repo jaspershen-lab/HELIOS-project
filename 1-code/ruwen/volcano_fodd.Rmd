@@ -106,8 +106,8 @@ library(ggrepel)
 
 plot_volcano <- function(results, title) {
 
-  sig_threshold <- 0.05
-  lfc_threshold <- 1
+  sig_threshold <- 0.02
+  lfc_threshold <- 1.5
   
   results$significance <- "Not Significant"
   results$significance[results$adj_p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
@@ -161,13 +161,13 @@ significant_food(results_MvsCI)
 ```
 
 ```{r}
-png("figure/volcano_food_C_800.png", width = 1400, height = 1000, res = 120)
+png("figure/volcano_food_C_strict.png", width = 1400, height = 1000, res = 120)
 volcano_800_C
 dev.off()
-png("figure/volcano_food_I_800.png", width = 1400, height = 1000, res = 120)
+png("figure/volcano_food_I_strict.png", width = 1400, height = 1000, res = 120)
 volcano_800_I
 dev.off()
-png("figure/volcano_food_M_800.png", width = 1400, height = 1000, res = 120)
+png("figure/volcano_food_M_strict.png", width = 1400, height = 1000, res = 120)
 volcano_800_M
 dev.off()
 ```

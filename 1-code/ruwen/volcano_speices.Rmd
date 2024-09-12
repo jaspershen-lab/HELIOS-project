@@ -222,8 +222,8 @@ library(ggrepel)
 
 plot_volcano <- function(results, title) {
 
-  sig_threshold <- 0.05
-  lfc_threshold <- 1
+  sig_threshold <- 0.03
+  lfc_threshold <- 1.2
   
   results$significance <- "Not Significant"
   results$significance[results$p_value < sig_threshold & results$logFC > lfc_threshold] <- "Up"
@@ -257,13 +257,13 @@ plot_volcano(results_MvsCI, "Volcano Plot: Non-Malay vs Malay")
 
 
 ```{r}
-png("figure/volcano_species800_C.png", width = 1400, height = 1000, res = 120)
+png("figure/volcano_species_strict_C.png", width = 1400, height = 1000, res = 120)
 plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
 dev.off()
-png("figure/volcano_species800_M.png", width = 1400, height = 1000, res = 120)
+png("figure/volcano_species_strict_M.png", width = 1400, height = 1000, res = 120)
 plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
 dev.off()
-png("figure/volcano_species800_I.png", width = 1400, height = 1000, res = 120)
+png("figure/volcano_species_strict_I.png", width = 1400, height = 1000, res = 120)
 plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
 dev.off()
 ```
