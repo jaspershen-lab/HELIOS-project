@@ -1,0 +1,75 @@
+---
+title: "predict_paper_simi"
+author: "Ruwen Zhou"
+date: "9/11/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggraph)
+library(igraph)
+library(Hmisc)
+library(writexl)
+```
+
+
+#demographic
+```{r}
+food_data_all = read_xlsx("data/all_food_863.xlsx")
+#nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
+food_data_all
+#select(species,contains("Streptococcus"))
+#streptococcus thermophilus
+metadata
+species
+
+```
+
+```{r}
+colnames(species)[1] = "Participant_ID"
+colnames(metadata)[1] = "Participant_ID"
+colnames(food_data_all)[1] = "Participant_ID"
+#threshold <- nrow(species) * 0.1
+
+#species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+#species_filtered2
+
+```
+
+```{r}
+food_data_all
+species
+species[is.na(species)] <- 0
+full_merge <- merge(food_data_all, species, by = "Participant_ID")
+#food_data_all <- merge(food_data_all, metadata, by = "Participant_ID")
+rcorr(full_merge$yoghurt_drink, full_merge$`Streptococcus thermophilus`)
+```
+
+
+```{r}
+full_merge[is.na(full_merge)] <- 0
+full_merge$`Streptococcus thermophilus`
+full_merge$yoghurt_drink
+```
+
+
+
+

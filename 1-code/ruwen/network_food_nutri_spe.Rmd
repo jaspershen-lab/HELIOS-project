@@ -33,6 +33,9 @@ food_data = read_xlsx("data/FFQA862.xlsx")
 nutrition_data = read_xlsx("data/FFQB800.xlsx")
 species = read_xlsx("data/species_866.xlsx")
 metadata = read_xlsx("data/ethnicity_866.xlsx")
+
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms", "Papaya", "Orange", "Chapati"), as.numeric))
 food_data
 nutrition_data
 species
@@ -55,14 +58,17 @@ species_filtered2
 
 
 ```{r}
-#species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "FREG7_Gender", "FREG8_Age")]
+species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "Homo sapiens")]
+#species_filtered2$`Homo sapiens`
 #species_filtered2
 food_data[is.na(food_data)] <- 0
-food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
+#food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
 nutrition_data[is.na(nutrition_data)] <- 0
-nutrition_data <- data.frame(lapply(nutrition_data, function(x) as.numeric(as.character(x))))
+#nutrition_data <- data.frame(lapply(nutrition_data, function(x) as.numeric(as.character(x))))
 full_data <- merge(food_data, species_filtered2, by = "Participant_ID")
 full_data <- merge(full_data, nutrition_data, by="Participant_ID")
+food_data
+nutrition_data
 full_data
 ```
 
@@ -200,6 +206,8 @@ df_im$groupM_I <- ifelse(df_im$FREG5_Ethnic_Group == "M", 1,
 # data_c <- new_full %>% filter(FREG5_Ethnic_Group == "C")
 # data_i <- new_full %>% filter(FREG5_Ethnic_Group == "I")
 # data_m <- new_full %>% filter(FREG5_Ethnic_Group == "M")
+new_full
+full_data
 ```
 
 ```{r}
@@ -333,6 +341,7 @@ calculate_significant_correlations <- function(data, food_or_nutrition_columns, 
 # # Subset the DataFrame to get the selected rows
 # data_c_49 <- data_c[selected_indices, ]
 # data_c_49
+data_c
 ```
 
 
@@ -553,24 +562,132 @@ plot_m
 dev.off()
 ```
 
+# permutaion test
+```{r}
+permutation_test_spearman <- function(data, x_cols, y_cols, n_perm = 999) {
+  # Calculate observed Spearman correlations
+  observed_cor <- cor(data[x_cols], data[y_cols], method = "spearman")
+  
+  # Perform permutation test
+  perm_result <- numeric(n_perm)
+  for (i in 1:n_perm) {
+    perm_data <- data
+    perm_data[y_cols] <- perm_data[sample(nrow(perm_data)), y_cols]
+    perm_cor <- cor(perm_data[x_cols], perm_data[y_cols], method = "spearman")
+    perm_result[i] <- max(abs(perm_cor))
+  }
+  
+  # Calculate p-values
+  p_values <- matrix(sapply(abs(observed_cor), function(x) mean(perm_result >= x)), 
+                     nrow = nrow(observed_cor), ncol = ncol(observed_cor))
+  
+  return(list(observed_cor = observed_cor, p_values = p_values))
+}
+
+# Function to format and filter results
+format_results <- function(test_result, x_cols, y_cols) {
+  significant_results <- data.frame(
+    X_Variable = rep(x_cols, each = length(y_cols)),
+    Y_Variable = rep(y_cols, times = length(x_cols)),
+    Spearman_Correlation = as.vector(test_result$observed_cor),
+    P_value = as.vector(test_result$p_values)
+  ) %>%
+    filter(P_value < 0.2) %>%
+    arrange(P_value)
+  
+  return(significant_results)
+}
+
+
+food_species_test <- permutation_test_spearman(new_full, food_columns, species_columns)
+nutrition_species_test <- permutation_test_spearman(new_full, nutrition_columns, species_columns)
+
+# Format and print results
+cat("Significant Food-Species Spearman Correlations (p < 0.05):\n")
+print(format_results(food_species_test, food_columns, species_columns))
+
+cat("\nSignificant Nutrition-Species Spearman Correlations (p < 0.05):\n")
+print(format_results(nutrition_species_test, nutrition_columns, species_columns))
+
+# Function to plot correlation distribution
+plot_correlation_distribution <- function(test_result, title) {
+  correlations <- as.vector(test_result$observed_cor)
+  hist(correlations, main = title, xlab = "Spearman Correlation Coefficient", 
+       breaks = 20, col = "lightblue", border = "black")
+  abline(v = 0, col = "red", lwd = 2, lty = 2)
+}
+
+# Plot correlation distributions
+par(mfrow = c(1, 2))
+plot_correlation_distribution(food_species_test, "Food-Species Correlations")
+plot_correlation_distribution(nutrition_species_test, "Nutrition-Species Correlations")
+```
+
+# only permutation test significance
+```{r}
+food_spe = format_results(food_species_test, food_columns, species_columns)$Y_Variable
+food_spe
+food_perm = format_results(food_species_test, food_columns, species_columns)$X_Variable
+food_perm
+nutri_spe = format_results(nutrition_species_test, nutrition_columns, species_columns)$Y_Variable
+nutri_spe
+nutri_perm = format_results(nutrition_species_test, nutrition_columns, species_columns)$X_Variable
+nutri_perm
+```
+
+
 # only have common food AND nutrient network
 # chinese
 ```{r}
+calculate_significant_correlations <- function(data, food_or_nutrition_columns, species_columns) {
+  cor_results <- rcorr(as.matrix(data), type = "spearman")
+  adjusted_p_values <- matrix(p.adjust(cor_results$P, method = "BH"), nrow = nrow(cor_results$P))
+  significant_indices <- which(adjusted_p_values < 0.05, arr.ind = TRUE)
+
+  significant_correlations <- data.frame(
+    from = colnames(data)[significant_indices[, "row"]],
+    to = colnames(data)[significant_indices[, "col"]],
+    correlation = cor_results$r[significant_indices],
+    adjusted_p_value = adjusted_p_values[significant_indices]
+  )
+
+  significant_correlations <- significant_correlations[
+    significant_correlations$from %in% food_or_nutrition_columns & significant_correlations$to %in% species_columns |
+    significant_correlations$from %in% species_columns & significant_correlations$to %in% food_or_nutrition_columns, ]
+
+  return(significant_correlations)}
+
+```
+
+```{r}
 #food_columns
 #nutrition_columns
-common_food = c("Fish","Dairy", "Fruits", "Idli_Thosai", "Deep_fried","Tea")
-common_nutrition = c("Energy", "Protein", "Total_fat", "Saturated_fatty_acid", "MUFA", "PUFA", "fibre", "Iron", "Thiamin", "Riboflavin", "Potassium",  "Zinc")
+# common_food = c("Fish","Dairy", "Fruits", "Idli_Thosai", "Deep_fried","Tea")
+# common_nutrition = c("Energy", "Protein", "Total_fat", "Saturated_fatty_acid", "MUFA", "PUFA", "fibre", "Iron", "Thiamin", "Riboflavin", "Potassium",  "Zinc")
+# common_spec = species_columns
+common_food = c("Dairy", "Cruciferous_veg", "Papaya", "Orange", "Tea", "Fish", "Legumes", "Fruits", "Wholegrain", "Deep_fried", "Poultry", 
+                "Red_meat", "Processed_meat", "Noodle_dishes","Coffee")
+common_nutrition = c("Protein","Total_fat", "MUFA","PUFA","CHO","starch","fibre","Calcium","Iron", "Thiamin","Riboflavin","Potassium", 
+                     "sugar","Zinc", "Energy","Saturated_fatty_acid","VitaminA","VitaminC" )
+common_spec = food_spe
 ```
 
 
 
+
 ```{r}
-food_species_c <- data_c[, c(common_food, species_columns)]
 
-nutrition_species_c <- data_c[, c(common_nutrition, species_columns)]
+# Reduce(intersect, list(cor_data_c$to, cor_data_i$to, cor_data_m$to))
+# Reduce(union, list(cor_data_c$to, cor_data_i$to, cor_data_m$to))
+```
 
-food_species_correlations_c <- calculate_significant_correlations(food_species_c, common_food, species_columns)
-nutrition_species_correlations_c <- calculate_significant_correlations(nutrition_species_c, common_nutrition, species_columns)
+```{r}
+food_species_c <- data_c[, c(common_food, common_spec)]
+
+nutrition_species_c <- data_c[, c(common_nutrition, common_spec)]
+
+food_species_correlations_c <- calculate_significant_correlations(food_species_c, common_food, common_spec)
+nutrition_species_correlations_c <- calculate_significant_correlations(nutrition_species_c, common_nutrition, common_spec)
 ```
 ```{r}
 combine_c = rbind(food_species_correlations_c, nutrition_species_correlations_c)
@@ -594,16 +711,17 @@ cor_data_c
 #write_xlsx(cor_data_c, "figure/network_table_c.xlsx")
 ```
 
+
 # indian
 
 
 ```{r}
-food_species_i <- data_i[, c(common_food, species_columns)]
-nutrition_species_i <- data_i[, c(common_nutrition, species_columns)]
+food_species_i <- data_i[, c(common_food, common_spec)]
+nutrition_species_i <- data_i[, c(common_nutrition, common_spec)]
 
 
-food_species_correlations_i <- calculate_significant_correlations(food_species_i, common_food, species_columns)
-nutrition_species_correlations_i <- calculate_significant_correlations(nutrition_species_i, common_nutrition, species_columns)
+food_species_correlations_i <- calculate_significant_correlations(food_species_i, common_food, common_spec)
+nutrition_species_correlations_i <- calculate_significant_correlations(nutrition_species_i, common_nutrition, common_spec)
 ```
 ```{r}
 combine_i = rbind(food_species_correlations_i, nutrition_species_correlations_i)
@@ -629,12 +747,12 @@ cor_data_i
 
 # malays
 ```{r}
-food_species_m <- data_m[, c(common_food, species_columns)]
-nutrition_species_m <- data_m[, c(common_nutrition, species_columns)]
+food_species_m <- data_m[, c(common_food, common_spec)]
+nutrition_species_m <- data_m[, c(common_nutrition, common_spec)]
 
 
-food_species_correlations_m <- calculate_significant_correlations(food_species_m, common_food, species_columns)
-nutrition_species_correlations_m <- calculate_significant_correlations(nutrition_species_m, common_nutrition, species_columns)
+food_species_correlations_m <- calculate_significant_correlations(food_species_m, common_food, common_spec)
+nutrition_species_correlations_m <- calculate_significant_correlations(nutrition_species_m, common_nutrition, common_spec)
 ```
 
 ```{r}
@@ -722,7 +840,7 @@ plot_graph <- function(graph, layout_positions) {
   ggraph(graph, layout = 'manual', x = x, y = y) +
     geom_edge_diagonal(aes(edge_alpha = abs_correlation, edge_color = edge_color, edge_width = abs_correlation), show.legend = FALSE) +
     geom_node_point(aes(shape = shape, color = color), size = 2) +
-    geom_node_text(aes(label = name, angle = angle, hjust = hjust), size = 2) +
+    geom_node_text(aes(label = name, angle = angle, hjust = hjust), size = 3) +
     scale_shape_manual(values = c(circle = 16, square = 15, diamond = 18), labels = c("Species", "Nutrition", "Food")) +  # Mapping shapes to actual ggplot2 shapes
     scale_color_manual(values = c("Species" = "#F89FA8", "Nutrition" = "#68B69F", "Food" = "#F08E59"), labels = c("Species", "Nutrition", "Food")) +
     scale_edge_color_manual(values = c(red_color, blue_color)) +
@@ -750,13 +868,13 @@ print(plot_m)
 
 ```
 ```{r}
-png("figure/common_network_c_circle800.png", width = 1600, height = 1400, res = 120)
+png("figure/permu_network_c_circle800.png", width = 1600, height = 1400, res = 120)
 plot_c
 dev.off()
-png("figure/common_network_i_circle800.png", width = 1600, height = 1400, res = 120)
+png("figure/permu_network_i_circle800.png", width = 1600, height = 1400, res = 120)
 plot_i
 dev.off()
-png("figure/common_network_m_circle800.png", width = 1600, height = 1400, res = 120)
+png("figure/permu_network_m_circle800.png", width = 1600, height = 1400, res = 120)
 plot_m
 dev.off()
 ```
