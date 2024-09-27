@@ -7,24 +7,124 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggraph)
+library(igraph)
+library(Hmisc)
+library(writexl)
 ```
 
-## R Markdown
+#linear regression lactobacillus acetotolerans=orange+ethnic
+```{r}
+food_data = read_xlsx("data/FFQA862.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms", "Papaya", "Orange", "Chapati"), as.numeric))
+food_data
+nutrition_data
+species
+metadata
+```
+Akkermansia muciniphila
+```{r}
+colnames(species)[1] = "Participant_ID"
+colnames(metadata)[1] = "Participant_ID"
+threshold <- nrow(species) * 0.1
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
 
-```{r cars}
-summary(cars)
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+species_filtered2
+food_data$Orange
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+food_columns <- names(food_data)[-1]
+food_columns
+reg_data <- merge(food_data, species_filtered2[,c("Participant_ID", "Akkermansia muciniphila")], by = "Participant_ID")
+reg_data <- merge(reg_data, metadata, by="Participant_ID")
+reg_data = subset(reg_data, FREG5_Ethnic_Group != "O")
+reg_data
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+one_hot_ethnic <- model.matrix(~ FREG5_Ethnic_Group - 1, data = reg_data)
+
+reg_data_one_hot <- cbind(reg_data, one_hot_ethnic)
+
+
+# Fit the regression model
+#model <- lm(`Akkermansia muciniphila` ~ Orange + FREG5_Ethnic_Group, data = reg_data)
+model_one_hot <- lm(`Akkermansia muciniphila` ~ Orange + FREG5_Ethnic_GroupC + FREG5_Ethnic_GroupI + FREG5_Ethnic_GroupM, 
+                    data = reg_data_one_hot)
+# View the summary of the model
+summary(model_one_hot)
+reg_data_one_hot
+```
+
+```{r}
+results_list <- list()
+# Loop over each food item in food_columns
+for (food in food_columns) {
+  # Construct the formula dynamically
+  formula_str <- paste("`Akkermansia muciniphila` ~", food, "+ FREG5_Ethnic_GroupC + FREG5_Ethnic_GroupI + FREG5_Ethnic_GroupM")
+  
+  # Fit the regression model
+  #model <- lm(as.formula(formula_str), data = reg_data)
+  glm_model <- glm(as.formula(formula_str), family = "poisson", data = reg_data_one_hot)
+  # Store the summary of the model in the results_list
+  results_list[[food]] <- summary(glm_model)
+  
+  # Print out the summary for each food item
+  cat("Results for food item:", food, "\n")
+  print(summary(glm_model))
+  cat("\n\n")
+}
+```
+
+# random forest
+```{r}
+library(randomForest)
+rf_model <- randomForest(`Akkermansia muciniphila` ~ Orange + FREG5_Ethnic_Group, data = reg_data)
+rf_model
+```
+#ridge
+```{r}
+
+library(glmnet)
+
+# Prepare the matrix for glmnet (requires a matrix for independent variables)
+X <- model.matrix(`Akkermansia muciniphila` ~ . - 1, data = reg_data[, c(food_columns, "FREG5_Ethnic_Group","Akkermansia muciniphila")])
+y <- reg_data$`Akkermansia muciniphila`
+
+# Fit the Ridge Regression (alpha = 0 for Ridge)
+ridge_model <- glmnet(X, y, alpha = 0)
+
+# Fit the Lasso Regression (alpha = 1 for Lasso)
+lasso_model <- glmnet(X, y, alpha = 1)
+
+# Print the model summaries
+print(ridge_model)
+print(lasso_model)
+
+```
+
+
+
+
