@@ -401,6 +401,8 @@ p <- plot_richness(phyloseq_filtered_no_O, x = "FREG5_Ethnic_Group", color = "FR
                   measures = c("Shannon", "Simpson", "Chao1", "Fisher")) +
     geom_boxplot() +
     theme_bw() +
+    theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
     scale_color_manual(values = ethnicity_colors) +
                          
     scale_fill_manual(values = ethnicity_colors) +
@@ -433,6 +435,53 @@ p +
   #theme(text = element_text(family = "serif"))
 
 ```
+## shaded
+```{r}
+p <- plot_ordination(phyloseq_filtered_no_O, phylo.beta, type = "samples", color = "FREG5_Ethnic_Group") +
+  theme_bw() +
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors)
+
+# Extract the data from the plot
+plot_data <- p$data
+
+# Add shaded ellipses and points
+p +
+  stat_ellipse(aes(fill = FREG5_Ethnic_Group), geom = "polygon", alpha = 0.2) +
+  geom_point(aes(color = FREG5_Ethnic_Group)) +
+  labs(color = "Ethnic Group", fill = "Ethnic Group")
+```
+
+
+## change line type
+```{r}
+ethnicity_colors_try <- c("C" = "#1b9e77", "I" = "#d95f02", "M" = "#7570b3")
+
+# Create the base plot
+p <- plot_ordination(phyloseq_filtered_no_O, phylo.beta, type = "samples", color = "FREG5_Ethnic_Group") +
+  theme_bw() +
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors)
+
+# Extract the data from the plot
+plot_data <- p$data
+
+# Add points and ellipses with improved visibility
+p +
+  geom_point(aes(color = FREG5_Ethnic_Group), size = 1, alpha = 0.5) +
+  stat_ellipse(aes(color = FREG5_Ethnic_Group, linetype = FREG5_Ethnic_Group), 
+               geom = "path", size = 1, show.legend = FALSE) +
+  scale_linetype_manual(values = c("solid", "dashed", "dotted")) +
+  labs(color = "Ethnic Group") +
+  theme(legend.position = "right",
+        legend.title = element_text(face = "bold"),
+        axis.title = element_text(face = "bold"),
+        panel.grid = element_line(color = "grey90")) +
+  guides(color = guide_legend(override.aes = list(size = 3)))
+```
+
+
+
 ```{r}
 permanova_result = adonis2(dist ~ FREG5_Ethnic_Group, data = as(sample_data(phyloseq_filtered_no_O), "data.frame"))
 print(permanova_result)

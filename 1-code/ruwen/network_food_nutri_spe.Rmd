@@ -24,6 +24,9 @@ library(ggraph)
 library(igraph)
 library(Hmisc)
 library(writexl)
+
+library(tidygraph)
+
 ```
 
 
@@ -47,23 +50,257 @@ colnames(species)[1] = "Participant_ID"
 colnames(metadata)[1] = "Participant_ID"
 threshold <- nrow(species) * 0.5
 
+species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+species_filtered1
 species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
 
 #abundance_threshold <- 0.0001
 #species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
-species_filtered2
-
-```
-
-
-
-```{r}
+#species_filtered2
 species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "Homo sapiens")]
 #species_filtered2$`Homo sapiens`
 #species_filtered2
 food_data[is.na(food_data)] <- 0
 #food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
 nutrition_data[is.na(nutrition_data)] <- 0
+```
+
+
+```{r}
+food_data
+nutrition_data
+species_filtered2
+species_filtered1
+metadata
+```
+
+
+## knowledge graph
+```{r}
+create_microbiome_knowledge_graph <- function(food_data, nutrition_data, 
+                                            species_data, metadata) {
+  # Ensure all datasets have the same participants and in the same order
+  common_participants <- Reduce(intersect, list(
+    food_data$Participant_ID,
+    nutrition_data$Participant_ID,
+    species_data$Participant_ID
+  ))
+  
+  # Filter and arrange all datasets
+  food_data <- food_data %>%
+    filter(Participant_ID %in% common_participants) %>%
+    arrange(Participant_ID)
+  
+  nutrition_data <- nutrition_data %>%
+    filter(Participant_ID %in% common_participants) %>%
+    arrange(Participant_ID)
+  
+  species_data <- species_data %>%
+    filter(Participant_ID %in% common_participants) %>%
+    arrange(Participant_ID)
+  
+  # Get categories
+  food_categories <- setdiff(colnames(food_data), "Participant_ID")
+  nutrition_categories <- setdiff(colnames(nutrition_data), "Participant_ID")
+  species_categories <- setdiff(colnames(species_data), "Participant_ID")
+  
+  # Calculate correlations with p-values using rcorr
+  calculate_correlations <- function(data1, categories1, data2, categories2) {
+    # Print dimensions for debugging
+    cat("Matrix 1 dimensions:", nrow(data1), "x", length(categories1), "\n")
+    cat("Matrix 2 dimensions:", nrow(data2), "x", length(categories2), "\n")
+    
+    # Prepare matrices
+    mat1 <- as.matrix(data1[, categories1])
+    mat2 <- as.matrix(data2[, categories2])
+    
+    # Verify dimensions
+    if(nrow(mat1) != nrow(mat2)) {
+      stop("Matrices must have same number of rows")
+    }
+    
+    # Handle NAs if present
+    complete_cases <- complete.cases(mat1, mat2)
+    if(!all(complete_cases)) {
+      cat("Removing", sum(!complete_cases), "rows with missing values\n")
+      mat1 <- mat1[complete_cases, ]
+      mat2 <- mat2[complete_cases, ]
+    }
+    
+    # Calculate correlations and p-values
+    rcorr_result <- rcorr(cbind(mat1, mat2), type = "pearson")
+    
+    # Extract relevant portions of the correlation and p-value matrices
+    n1 <- ncol(mat1)
+    n2 <- ncol(mat2)
+    cors <- rcorr_result$r[1:n1, (n1+1):(n1+n2)]
+    p_values <- rcorr_result$P[1:n1, (n1+1):(n1+n2)]
+    
+    # Set row and column names
+    rownames(cors) <- categories1
+    colnames(cors) <- categories2
+    rownames(p_values) <- categories1
+    colnames(p_values) <- categories2
+    
+    return(list(correlations = cors, p_values = p_values))
+  }
+  
+  cat("Calculating species-food correlations...\n")
+  species_food_results <- calculate_correlations(
+    species_data, species_categories,
+    food_data, food_categories
+  )
+  
+  cat("Calculating species-nutrition correlations...\n")
+  species_nutrition_results <- calculate_correlations(
+    species_data, species_categories,
+    nutrition_data, nutrition_categories
+  )
+  
+  # Create edges from correlations
+  create_correlation_edges <- function(cor_results, relationship_type) {
+    cors <- cor_results$correlations
+    p_values <- cor_results$p_values
+    edges <- which(p_values <= 0.05, arr.ind = TRUE)
+    
+    if(nrow(edges) > 0) {
+      tibble(
+        from = rownames(cors)[edges[,1]],
+        to = colnames(cors)[edges[,2]],
+        relationship = relationship_type,
+        weight = cors[cbind(edges[,1], edges[,2])],
+        p_value = p_values[cbind(edges[,1], edges[,2])]
+      )
+    } else {
+      tibble(from = character(), to = character(), 
+             relationship = character(), weight = numeric(),
+             p_value = numeric())
+    }
+  }
+  
+  # Get species that have significant connections
+  species_with_connections <- unique(c(
+    rownames(species_food_results$correlations)[rowSums(species_food_results$p_values <= 0.05) > 0],
+    rownames(species_nutrition_results$correlations)[rowSums(species_nutrition_results$p_values <= 0.05) > 0]
+  ))
+  
+  cat("\nFound", length(species_with_connections), 
+      "species with significant connections (p < 0.05)\n")
+  
+  # Create nodes
+  ethnicity_nodes <- tibble(
+    id = c("C", "I", "M"),
+    type = "ethnicity",
+    group = "ethnicity"
+  )
+  
+  food_nodes <- tibble(
+    id = food_categories,
+    type = "food",
+    group = "food"
+  )
+  
+  nutrition_nodes <- tibble(
+    id = nutrition_categories,
+    type = "nutrition",
+    group = "nutrition"
+  )
+  
+  species_nodes <- tibble(
+    id = species_with_connections,
+    type = "species",
+    group = "species"
+  )
+  
+  # Combine nodes
+  nodes <- bind_rows(
+    ethnicity_nodes,
+    food_nodes,
+    nutrition_nodes,
+    species_nodes
+  )
+  
+  # Create edges
+  cat("Creating edges...\n")
+  species_food_edges <- create_correlation_edges(species_food_results, "species_food")
+  species_nutrition_edges <- create_correlation_edges(species_nutrition_results, "species_nutrition")
+  
+  # Combine edges and add correlation direction column
+  edges <- bind_rows(
+    species_food_edges,
+    species_nutrition_edges
+  ) %>%
+    mutate(correlation_direction = ifelse(weight > 0, "positive", "negative"))
+  
+  # Create graph with absolute weights for layout
+  graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE) %>%
+    activate(edges) %>%
+    mutate(abs_weight = abs(weight))
+  
+  # Create visualization using absolute weights for layout but original weights for visualization
+  p <- ggraph(graph, layout = "fr", weights = abs_weight) +
+    geom_edge_link(aes(color = correlation_direction, 
+                      width = abs(weight),
+                      alpha = abs(weight))) +
+    geom_node_point(aes(color = group), size = 4) +
+    geom_node_text(aes(label = id), repel = TRUE, size = 2.5) +
+    scale_edge_width_continuous(range = c(0.2, 2)) +
+    scale_edge_color_manual(values = c("positive" = "blue", "negative" = "red")) +
+    scale_edge_alpha(range = c(0.2, 0.8)) +
+    theme_graph(base_family = "sans") +
+    scale_color_brewer(palette = "Set3") +
+    labs(title = "Microbiome Knowledge Graph",
+         subtitle = paste("Significant connections (p < 0.05) between\n",
+                         length(species_with_connections), 
+                         "species and food/nutrition variables\n",
+                         "Edge width represents correlation strength\n",
+                         "Blue = positive correlation, Red = negative correlation")) +
+    theme(
+      legend.position = "bottom",
+      legend.box = "vertical",
+      plot.margin = margin(20, 20, 20, 20)
+    )
+  
+  return(list(
+    graph = graph,
+    plot = p,
+    nodes = nodes,
+    edges = edges,
+    species_with_connections = species_with_connections,
+    results = list(
+      species_food = species_food_results,
+      species_nutrition = species_nutrition_results
+    )
+  ))
+}
+```
+
+
+```{r fig.width=14, fig.height=14}
+result <- create_microbiome_knowledge_graph(food_data, nutrition_data, 
+                                          species_filtered1, metadata)
+
+# View the plot
+print(result$plot)
+
+# Save the plot
+#ggsave("microbiome_graph.pdf", result$plot, width = 24, height = 20)
+
+# Check correlation summary
+cat("\nNumber of significant correlations:", nrow(result$edges))
+cat("\nCorrelation strength summary:\n")
+print(summary(abs(result$edges$weight)))
+```
+_filtered1
+```
+
+
+
+
+
+## put all together
+```{r}
+
 #nutrition_data <- data.frame(lapply(nutrition_data, function(x) as.numeric(as.character(x))))
 full_data <- merge(food_data, species_filtered2, by = "Participant_ID")
 full_data <- merge(full_data, nutrition_data, by="Participant_ID")
