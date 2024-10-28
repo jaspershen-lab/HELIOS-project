@@ -161,7 +161,7 @@ create_microbiome_knowledge_graph <- function(food_data, nutrition_data,
   create_correlation_edges <- function(cor_results, relationship_type) {
     cors <- cor_results$correlations
     p_values <- cor_results$p_values
-    edges <- which(p_values <= 0.05, arr.ind = TRUE)
+    edges <- which(p_values <= 0.01, arr.ind = TRUE)
     
     if(nrow(edges) > 0) {
       tibble(
@@ -180,12 +180,12 @@ create_microbiome_knowledge_graph <- function(food_data, nutrition_data,
   
   # Get species that have significant connections
   species_with_connections <- unique(c(
-    rownames(species_food_results$correlations)[rowSums(species_food_results$p_values <= 0.05) > 0],
-    rownames(species_nutrition_results$correlations)[rowSums(species_nutrition_results$p_values <= 0.05) > 0]
+    rownames(species_food_results$correlations)[rowSums(species_food_results$p_values <= 0.01) > 0],
+    rownames(species_nutrition_results$correlations)[rowSums(species_nutrition_results$p_values <= 0.01) > 0]
   ))
   
   cat("\nFound", length(species_with_connections), 
-      "species with significant connections (p < 0.05)\n")
+      "species with significant connections (p < 0.01)\n")
   
   # Create nodes
   ethnicity_nodes <- tibble(
@@ -284,15 +284,14 @@ result <- create_microbiome_knowledge_graph(food_data, nutrition_data,
 print(result$plot)
 
 # Save the plot
-#ggsave("microbiome_graph.pdf", result$plot, width = 24, height = 20)
+#ggsave("figure/microbiome_graph.pdf", result$plot, width = 24, height = 20)
 
 # Check correlation summary
 cat("\nNumber of significant correlations:", nrow(result$edges))
 cat("\nCorrelation strength summary:\n")
 print(summary(abs(result$edges$weight)))
 ```
-_filtered1
-```
+
 
 
 
