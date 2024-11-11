@@ -7,24 +7,510 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+#demographic
+```{r}
+helios_core = read_excel("data/helios800.xlsx")
+metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
+sample_list = metadata_micro$`Original Sample name`
+helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
+```
+#food nutrition
+```{r}
+FFQ_food = read_xlsx("data/HELIOS_FFQA.xlsx")
+FFQ_nutrition = read_xlsx("data/HELIOS_FFQB.xlsx")
+pid_list = helios_new$FREG0_PID
+food_new = filter(FFQ_food, FREG0_PID %in% pid_list)
+nutrition_new = filter(FFQ_nutrition, FREG0_PID %in% pid_list)
+```
+#species
+```{r}
+species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_G_unfiltered_reads_decont2.csv")
+#species$`SAM id`
+helios_new_list = helios_new$FREG1_Barcode
+#sample_list = metadata_micro$`Original Sample name`
+micro_list <- filter(metadata_micro, metadata_micro$`Original Sample name` %in% helios_new_list)
+species_new = filter(species, species$`SAM id` %in% micro_list$`Library ID`)
+species_new
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
+#new_merge
+species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+species_meta = species_meta %>% drop_na(FREG5_Ethnic_Group)
+species_meta
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group")]
+metadata = metadata[!duplicated(metadata$FREG1_Barcode),]
+metadata
+
+drop = c("Library ID", "SampleType", "seq_batch", "DLAB25_Gluf_Mmol_L", "FREG5_Ethnic_Group","FREG10_Fasting_Hours", "FBP16_Caffeine")
+species_data = species_meta[,!(names(species_meta) %in% drop)]
+species_data  = species_data [!duplicated(species_data$FREG1_Barcode),]
+species_data
+```
+
+#diabetes
+```{r}
+# metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
+#                                    ifelse(metadata$DLAB27_Hba1C_Percent >= 5.7 & metadata$DLAB27_Hba1C_Percent <= 6.4, "pre-diabetes",
+#                                           ifelse(metadata$DLAB27_Hba1C_Percent < 5.7, "normal", NA)))
+# 
+# #metadata$diabetes_status <- ifelse(metadata$DLAB27_Hba1C_Percent > 6.4, "diabetes",
+#                                    #ifelse(metadata$DLAB27_Hba1C_Percent <= 6.4, "non-diabetes", NA))
+# 
+# 
+# 
+# metadata$glucose <- ifelse(metadata$DLAB25_Gluf_Mmol_L > 7, "diabetes",
+#                                    ifelse(metadata$DLAB25_Gluf_Mmol_L >= 5.6 & metadata$DLAB25_Gluf_Mmol_L <= 7, "pre-diabetes",
+#                                           ifelse(metadata$DLAB25_Gluf_Mmol_L >= 3.9 & metadata$DLAB25_Gluf_Mmol_L <= 5.6, "normal",
+#                                                  ifelse(metadata$DLAB25_Gluf_Mmol_L < 3.9, "hypoglycemia", NA))))
+# 
+#                                          
+# 
+# metadata = metadata[!duplicated(metadata$FREG1_Barcode), ]
+# metadata
+# species_data = species_data[!duplicated(species_data$FREG1_Barcode), ]
+# species_data
+
+```
+
+```{r}
+rownames(species_data) = species_data[,1]
+species_data[1] = NULL
+rownames(metadata) = metadata[,1]
+species_data
+metadata
+```
+
+
+```{r}
+OTU = otu_table(as.matrix(species_data), taxa_are_rows = FALSE)              
+SAM = sample_data(metadata, errorIfNULL = TRUE)
+
+phylo <- phyloseq(OTU, SAM)
+phylo
+phylo = filter_taxa(phylo, function(x) sum(x > 2) > (0.11 * length(x)), TRUE)
+```
+
+
+## Drop species that are present in less than 5% of the samples
+## Drop species with a total abundance less than 0.01% of the total reads
+```{r}
+prevalence_threshold <- 0.1
+phyloseq_filtered <- filter_taxa(phylo, 
+                                  function(x) sum(x > 0) > (prevalence_threshold * nsamples(otu_table(phylo))),
+                                  prune=TRUE)
+phyloseq_filtered
+
+# abundance_threshold <- 0.0001
+# phyloseq_filtered <- filter_taxa(otu_table_filtered, 
+#                                   function(x) sum(x) > (abundance_threshold * sum(otu_table(phylo))),
+#                                   prune=TRUE)
+# 
+# phyloseq_filtered
+phyloseq_filtered <- subset_samples(phyloseq_filtered, FREG5_Ethnic_Group != "O")
+
+```
+
+```{r}
+# Define SCFA-producing genera (common patterns to look for in taxa names)
+scfa_patterns <- c(
+    "Faecalibacterium", "Roseburia", "Eubacterium", "Coprococcus",
+    "Anaerostipes", "Butyricicoccus", "Butyrivibrio", "Subdoligranulum",
+    "Blautia", "Ruminococcus", "Bacteroides", "Prevotella",
+    "Bifidobacterium", "Lactobacillus", "Akkermansia"
+)
+
+# Function to find differentially abundant taxa
+get_differential_taxa <- function(phyloseq_obj, variable, padj_cutoff = 0.05) {
+    # Convert to DESeq2 object
+    dds <- phyloseq_to_deseq2(phyloseq_obj, design = as.formula(paste("~", variable)))
+    
+    # Estimate size factors and dispersions
+    dds <- estimateSizeFactors(dds)
+    dds <- estimateDispersions(dds)
+    
+    # Perform Wald test
+    dds <- DESeq(dds)
+    
+    # Get results
+    res <- results(dds)
+    
+    # Order by adjusted p-value
+    res_ordered <- res[order(res$padj), ]
+    
+    # Filter significant taxa
+    significant_taxa <- rownames(res_ordered)[which(res_ordered$padj < padj_cutoff)]
+    
+    return(significant_taxa)
+}
+
+# Get differentially abundant taxa
+significant_taxa <- get_differential_taxa(phyloseq_filtered, "FREG5_Ethnic_Group")
+
+# If too many significant taxa, take top 30 (leaving room for SCFA producers)
+if(length(significant_taxa) > 30) {
+    significant_taxa <- significant_taxa[1:30]
+}
+
+# Get all taxa names
+all_taxa_names <- colnames(otu_table(phyloseq_filtered))
+
+# Find SCFA-producing taxa by searching for patterns in taxa names
+scfa_taxa <- all_taxa_names[sapply(all_taxa_names, function(x) {
+    any(sapply(scfa_patterns, function(pattern) grepl(pattern, x, ignore.case = TRUE)))
+})]
+
+# Combine significant taxa and SCFA producers, removing duplicates
+selected_taxa <- unique(c(significant_taxa, scfa_taxa))
+
+# Extract abundance matrix for selected taxa
+abundance_mat <- otu_table(phyloseq_filtered)
+abundance_mat <- as(abundance_mat, "matrix")  # Convert to matrix if needed
+abundance_mat <- abundance_mat[, selected_taxa]  # Select taxa (columns)
+
+# Transform to relative abundance
+abundance_mat <- sweep(abundance_mat, 1, rowSums(abundance_mat), '/') * 100
+
+# Get sample metadata
+sample_data <- data.frame(sample_data(phyloseq_filtered))
+
+# Create annotation dataframe for samples
+annotation_row <- data.frame(
+    Ethnicity = sample_data$FREG5_Ethnic_Group,
+    row.names = rownames(sample_data)
+)
+
+# Create annotation for taxa (marking SCFA producers)
+annotation_col <- data.frame(
+    Type = ifelse(selected_taxa %in% scfa_taxa, "SCFA Producer", "Differential"),
+    row.names = selected_taxa
+)
+
+# Create color schemes
+annotation_colors <- list(
+    Ethnicity = c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887"),
+    Type = c(`SCFA Producer` = "#FDB863", Differential = "#B2ABD2")
+)
+```
+
+
+```{r}
+# Create heatmap
+pheatmap(abundance_mat,
+         scale = "column",  # Changed from "col" to "column"
+         annotation_row = annotation_row,
+         annotation_col = annotation_col,
+         cluster_rows = FALSE,  # Don't cluster samples
+         cluster_cols = TRUE,   # Cluster taxa
+         show_rownames = FALSE, # Hide sample names for clarity
+         annotation_colors = annotation_colors,
+         main = "Species Abundance Across Ethnic Groups\n(Including SCFA Producers)",
+         fontsize_col = 8,
+         angle_col = 45)
+
+# Print summary of included taxa
+cat("\nNumber of differentially abundant taxa:", length(significant_taxa))
+cat("\nNumber of SCFA-producing taxa found:", length(intersect(selected_taxa, scfa_taxa)))
+cat("\nTotal number of taxa in heatmap:", length(selected_taxa))
+```
+
+```{r}
+# Load required libraries
+library(phyloseq)
+library(DESeq2)
+library(pheatmap)
+library(tidyverse)
+
+# Define SCFA-producing genera
+scfa_patterns <- c(
+    "Faecalibacterium", "Roseburia", "Eubacterium", "Coprococcus",
+    "Anaerostipes", "Butyricicoccus", "Butyrivibrio", "Subdoligranulum",
+    "Blautia", "Ruminococcus", "Bacteroides", "Prevotella",
+    "Bifidobacterium", "Lactobacillus", "Akkermansia"
+)
+
+# Function to find differentially abundant taxa
+get_differential_taxa <- function(phyloseq_obj, variable, padj_cutoff = 0.05) {
+    dds <- phyloseq_to_deseq2(phyloseq_obj, design = as.formula(paste("~", variable)))
+    dds <- estimateSizeFactors(dds)
+    dds <- estimateDispersions(dds)
+    dds <- DESeq(dds)
+    res <- results(dds)
+    res_ordered <- res[order(res$padj), ]
+    significant_taxa <- rownames(res_ordered)[which(res_ordered$padj < padj_cutoff)]
+    return(significant_taxa)
+}
+
+# Get differentially abundant taxa
+significant_taxa <- get_differential_taxa(phyloseq_filtered, "FREG5_Ethnic_Group")
+
+# If too many significant taxa, take top 30
+if(length(significant_taxa) > 30) {
+    significant_taxa <- significant_taxa[1:30]
+}
+
+# Get all taxa names and find SCFA producers
+all_taxa_names <- colnames(otu_table(phyloseq_filtered))
+# scfa_taxa <- all_taxa_names[sapply(all_taxa_names, function(x) {
+#     any(sapply(scfa_patterns, function(pattern) grepl(pattern, x, ignore.case = TRUE)))
+# })]
+scfa_taxa = scfa_patterns
+# Combine significant taxa and SCFA producers
+selected_taxa <- unique(c(significant_taxa, scfa_taxa))
+
+# Extract and process abundance matrix
+abundance_mat <- otu_table(phyloseq_filtered)
+abundance_mat <- as(abundance_mat, "matrix")
+abundance_mat <- abundance_mat[, selected_taxa]
+
+# Convert to relative abundance
+abundance_mat <- sweep(abundance_mat, 1, rowSums(abundance_mat), '/') * 100
+
+# Get sample metadata and order it
+sample_data <- data.frame(sample_data(phyloseq_filtered))
+sample_data$FREG5_Ethnic_Group <- factor(sample_data$FREG5_Ethnic_Group, 
+                                       levels = c("C", "I", "M"))
+
+# Order samples by ethnicity
+sample_order <- rownames(sample_data)[order(sample_data$FREG5_Ethnic_Group)]
+abundance_mat <- abundance_mat[sample_order, ]
+
+# Transpose the matrix
+abundance_mat <- t(abundance_mat)
+
+# Create annotation dataframe for columns (samples)
+annotation_col <- data.frame(
+    Ethnicity = sample_data$FREG5_Ethnic_Group[match(colnames(abundance_mat), rownames(sample_data))],
+    row.names = colnames(abundance_mat)
+)
+
+# Create annotation for rows (taxa)
+annotation_row <- data.frame(
+    Type = ifelse(rownames(abundance_mat) %in% scfa_taxa, "SCFA Producer", "Differential"),
+    row.names = rownames(abundance_mat)
+)
+
+# Create color schemes
+annotation_colors <- list(
+    Ethnicity = c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887"),
+    Type = c(`SCFA Producer` = "#FDB863", Differential = "#B2ABD2")
+)
+
+# Create custom color palette for the heatmap
+color_palette <- colorRampPalette(c("#2166AC", "white", "#B2182B"))(100)
+
+
+
+# Save the heatmap
+# pdf("figure/abundance_heatmap.pdf", width = 15, height = 10)
+# pheatmap(abundance_mat,
+#          scale = "row",  # Scale by row since we transposed
+#          color = color_palette,
+#          breaks = seq(-2, 2, length.out = 101),
+#          annotation_col = annotation_col,
+#          annotation_row = annotation_row,
+#          cluster_cols = FALSE,  # Don't cluster samples
+#          cluster_rows = TRUE,   # Cluster taxa
+#          show_colnames = FALSE, # Hide sample names
+#          annotation_colors = annotation_colors,
+#          main = "Species Abundance Across Ethnic Groups\n(Including SCFA Producers)",
+#          fontsize = 10,
+#          annotation_names_row = TRUE)
+# dev.off()
+```
+
+
+```{r}
+# Also save as PNG for easy viewing
+png("figure/abundance_heatmap.png", width = 2000, height = 1000, res = 150)
+pheatmap(abundance_mat,
+         scale = "row",  # Scale by row since we transposed
+         color = color_palette,
+         breaks = seq(-2, 2, length.out = 101),
+         annotation_col = annotation_col,
+         annotation_row = annotation_row,
+         cluster_cols = FALSE,  # Don't cluster samples
+         cluster_rows = TRUE,   # Cluster taxa
+         show_colnames = FALSE, # Hide sample names
+         annotation_colors = annotation_colors,
+         main = "Species Abundance Across Ethnic Groups\n(Including SCFA Producers)",
+         fontsize = 10,
+         annotation_names_row = TRUE)
+dev.off()
+
+# Print summary
+cat("\nNumber of differentially abundant taxa:", length(significant_taxa))
+cat("\nNumber of SCFA-producing taxa found:", length(intersect(selected_taxa, scfa_taxa)))
+cat("\nTotal number of taxa in heatmap:", length(selected_taxa))
+```
+
+```{r}
+# Combine significant taxa and SCFA producers
+scfa_taxa = scfa_patterns
+selected_taxa <- unique(c(significant_taxa, scfa_taxa))
+
+# Extract and process abundance matrix
+abundance_mat <- otu_table(phyloseq_filtered)
+abundance_mat <- as(abundance_mat, "matrix")
+abundance_mat <- abundance_mat[, selected_taxa]
+
+# Convert to relative abundance
+abundance_mat <- sweep(abundance_mat, 1, rowSums(abundance_mat), '/') * 100
+sample_data <- data.frame(sample_data(phyloseq_filtered))
+sample_data$FREG5_Ethnic_Group <- factor(sample_data$FREG5_Ethnic_Group, 
+                                       levels = c("C", "I", "M"))
+
+# Order samples by ethnicity
+sample_order <- rownames(sample_data)[order(sample_data$FREG5_Ethnic_Group)]
+abundance_mat <- abundance_mat[sample_order, ]
+
+# Transpose the matrix
+abundance_mat <- t(abundance_mat)
+
+# Calculate mean abundance for each taxa
+mean_abundance <- rowMeans(abundance_mat)
+
+# Create data frame with taxa info and mean abundance
+taxa_info <- data.frame(
+    Taxa = rownames(abundance_mat),
+    Type = ifelse(rownames(abundance_mat) %in% scfa_taxa, "SCFA Producer", "Differential"),
+    MeanAbundance = mean_abundance,
+    stringsAsFactors = FALSE
+)
+
+# Order taxa by type and mean abundance
+taxa_order <- taxa_info %>%
+    arrange(desc(Type), desc(MeanAbundance)) %>%
+    pull(Taxa)
+
+# Reorder the abundance matrix
+abundance_mat <- abundance_mat[taxa_order, ]
+
+# Create annotation dataframe for columns (samples)
+annotation_col <- data.frame(
+    Ethnicity = sample_data$FREG5_Ethnic_Group[match(colnames(abundance_mat), rownames(sample_data))],
+    row.names = colnames(abundance_mat)
+)
+
+# Create annotation for rows (taxa)
+annotation_row <- data.frame(
+    Type = ifelse(rownames(abundance_mat) %in% scfa_taxa, "SCFA Producer", "Differential"),
+    row.names = rownames(abundance_mat)
+)
+
+# Create color schemes
+annotation_colors <- list(
+    Ethnicity = c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887"),
+    Type = c(`SCFA Producer` = "#FDB863", Differential = "#B2ABD2")
+)
+```
+
+
+```{r}
+# Create custom color palette for the heatmap
+color_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+
+
+
+# Also save as PNG
+png("figure/abundance_heatmap3.png", width = 2200, height = 1000, res = 150)
+pheatmap(abundance_mat,
+         scale = "row",
+         color = color_palette,
+         breaks = seq(-2, 2, length.out = 101),
+         annotation_col = annotation_col,
+         annotation_row = annotation_row,
+         cluster_cols = FALSE,
+         cluster_rows = FALSE,  # Disable clustering to maintain our manual ordering
+         show_colnames = FALSE,
+         annotation_colors = annotation_colors,
+         main = "Species Abundance Across Ethnic Groups\n(Including SCFA Producers)",
+         fontsize = 10,
+         annotation_names_row = TRUE)
+dev.off()
+```
+
+
+```{r}
+# Print summary and ordering info
+cat("\nNumber of differentially abundant taxa:", length(significant_taxa))
+cat("\nNumber of SCFA-producing taxa found:", length(intersect(selected_taxa, scfa_taxa)))
+cat("\nTotal number of taxa in heatmap:", length(selected_taxa))
+
+# Print the taxa order for reference
+cat("\n\nTaxa ordering (top to bottom):\n")
+print(data.frame(
+    Taxa = rownames(abundance_mat),
+    Type = annotation_row$Type,
+    MeanAbundance = mean_abundance[match(rownames(abundance_mat), names(mean_abundance))]
+))
+```
+
+#enterotype
+```{r}
+library(vegan)
+library(cluster)
+# Filter samples to keep only C, I, M ethnic groups
+phyloseq_filtered_CIM <- subset_samples(phyloseq_filtered, FREG5_Ethnic_Group %in% c("C", "I", "M"))
+
+# Ensure samples are rows and genera are columns (transpose if needed)
+otu_sample_matrix <- otu_table(phyloseq_filtered_CIM)
+
+# Check the dimensions: should have 866 rows (samples) and 1336 columns (genera)
+dim(otu_sample_matrix)
+
+
+```
+```{r}
+# Calculate Bray-Curtis distance between samples
+library(vegan)
+dist_bc <- vegdist(otu_sample_matrix, method = "bray")
+
+# Perform PAM clustering on samples
+library(cluster)
+pam_clustering <- pam(dist_bc, k = 3)  # Adjust k based on the number of enterotypes desired
+
+# Assign enterotype labels to samples
+sample_data(phyloseq_filtered_CIM)$Enterotype <- as.factor(pam_clustering$clustering)
+
+
+# Create a table of enterotype proportions by ethnic group
+enterotype_proportions <- prop.table(table(sample_data(phyloseq_filtered_CIM)$FREG5_Ethnic_Group,
+                                           sample_data(phyloseq_filtered_CIM)$Enterotype), 1)
+
+# Convert the table to a data frame for plotting
+enterotype_proportions_df <- as.data.frame(as.table(enterotype_proportions))
+colnames(enterotype_proportions_df) <- c("Ethnic_Group", "Enterotype", "Proportion")
+
+
+# Plot enterotype proportions
+ggplot(enterotype_proportions_df, aes(x = Ethnic_Group, y = Proportion, fill = Enterotype)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(title = "Enterotype Proportions by Ethnic Group",
+       x = "Ethnic Group", y = "Proportion") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+```
+
+
+
