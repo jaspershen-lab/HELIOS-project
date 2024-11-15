@@ -7,24 +7,260 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggraph)
+library(igraph)
+library(Hmisc)
+library(writexl)
+
+library(tidygraph)
+library(ppcor)
+
+library(reshape2)
+library(ComplexHeatmap)
+
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+#demographic
+```{r}
+food_data = read_xlsx("data/FFQA862.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms", "Papaya", "Orange", "Chapati"), as.numeric))
+food_data
+nutrition_data
+species
+metadata
 ```
 
-## Including Plots
+```{r}
+colnames(species)[1] = "Participant_ID"
+colnames(metadata)[1] = "Participant_ID"
+threshold <- nrow(species) * 0.5
 
-You can also embed plots, for example:
+species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+species_filtered1
+species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+#species_filtered2
+species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "Homo sapiens")]
+#species_filtered2$`Homo sapiens`
+#species_filtered2
+food_data[is.na(food_data)] <- 0
+#food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
+nutrition_data[is.na(nutrition_data)] <- 0
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+unique_species <- read.csv("figure/unique_significant_species.csv")
+unique_species
+sig_species <- species %>%
+  select("Participant_ID", all_of(unique_species$species))
+```
+
+
+```{r}
+food_data
+nutrition_data
+sig_species
+metadata
+```
+```{r}
+merged_data <- food_data %>%
+  inner_join(sig_species, by = "Participant_ID") %>%
+  inner_join(metadata, by = "Participant_ID")
+
+# 2. Calculate partial correlations adjusting for confounders
+# Initialize matrices to store correlations and p-values
+species_cols <- colnames(sig_species)[colnames(sig_species) != "Participant_ID"]
+food_cols <- colnames(food_data)[colnames(food_data) != "Participant_ID"]
+cor_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(food_cols))
+p_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(food_cols))
+
+for(i in 1:length(species_cols)) {
+  for(j in 1:length(food_cols)) {
+    # Create dummy variables for ethnicity using the correct column name
+    temp_data <- data.frame(
+      species = rank(merged_data[[species_cols[i]]]),  
+      food = rank(merged_data[[food_cols[j]]]),        
+      gender = as.numeric(merged_data$FREG7_Gender == "M"),
+      age = rank(merged_data$FREG8_Age),              
+      bmi = rank(merged_data$BMI),                    
+      ethnic_C = as.numeric(merged_data$FREG5_Ethnic_Group == "C"),  # Updated column name
+      ethnic_I = as.numeric(merged_data$FREG5_Ethnic_Group == "I"),
+      ethnic_M = as.numeric(merged_data$FREG5_Ethnic_Group == "M")
+    )
+    
+    pcor_result <- pcor.test(temp_data$species, temp_data$food, 
+                            temp_data[,c("gender", "age", "bmi", 
+                                       "ethnic_C", "ethnic_I", "ethnic_M")])
+    
+    cor_matrix[i,j] <- pcor_result$estimate
+    p_matrix[i,j] <- pcor_result$p.value
+  }
+}
+
+# Convert matrices to data frames
+rownames(cor_matrix) <- species_cols
+colnames(cor_matrix) <- food_cols
+rownames(p_matrix) <- species_cols
+colnames(p_matrix) <- food_cols
+
+# Create annotation for significant correlations
+sig_matrix <- p_matrix < 0.05
+stars <- ifelse(sig_matrix, "*", "")
+```
+
+```{r}
+species_dist <- dist(cor_matrix)
+species_clust <- hclust(species_dist)
+species_order <- species_clust$labels[species_clust$order]
+
+# For food groups (columns)
+food_dist <- dist(t(cor_matrix))
+food_clust <- hclust(food_dist)
+food_order <- food_clust$labels[food_clust$order]
+
+# Convert to long format with ordered factors
+melted_cor <- melt(cor_matrix)
+colnames(melted_cor) <- c("Species", "Food", "Correlation")
+melted_cor$Significant <- melted_p$value < 0.05
+
+# Set the order based on clustering
+melted_cor$Species <- factor(melted_cor$Species, levels = species_order)
+melted_cor$Food <- factor(melted_cor$Food, levels = food_order)
+
+# Create custom color palette
+extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+
+# Create the plot with italicized species names
+ggplot(melted_cor, aes(x = Food, y = Species, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = rev(extended_palette), 
+                      limits = c(-0.2, 0.2),
+                      oob = scales::squish) +
+  geom_text(aes(label = ifelse(Significant, "*", "")), 
+            color = "black", size = 5) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(face = "italic"),  # Italicize species names
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Spearman Correlations between Species and Food Groups",
+    subtitle = "Adjusted for Gender, Age, and BMI\n* indicates p < 0.05",
+    x = "Food Groups",
+    y = "Species"
+  )
+ggsave("figure/figure4_correlation_heatmap.png", width = 12, height = 10, dpi = 300)
+```
+```{r}
+library(ComplexHeatmap)
+library(grid)
+library(circlize)
+library(RColorBrewer)
+# Clip the correlation values to [-0.2, 0.2]
+clipped_cor_matrix <- cor_matrix
+clipped_cor_matrix[clipped_cor_matrix > 0.2] <- 0.2
+clipped_cor_matrix[clipped_cor_matrix < -0.2] <- -0.2
+
+#display.brewer.pal(11, "RdBu")  # This will show us the actual colors
+
+rd_bu_colors <- rev(brewer.pal(11, "RdBu"))
+
+# Modify color function to use full RdBu palette evenly over the actual data range
+col_fun <- colorRamp2(c(-0.2, 0, 0.2), rd_bu_colors[c(1, 6, 11)])
+
+# Create the matrix of significance stars
+star_matrix <- matrix("", nrow = nrow(cor_matrix), ncol = ncol(cor_matrix))
+star_matrix[p_matrix < 0.05] <- "*"
+
+# Create the heatmap using the clipped matrix
+ht <- Heatmap(clipped_cor_matrix,
+        name = "Correlation",
+        col = col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        row_names_gp = gpar(fontface = "italic"),  # Italic species names
+        column_names_rot = 45,  # Rotate column names
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          if(star_matrix[i, j] == "*")
+            grid.text("*", x, y, gp = gpar(fontsize = 14))
+        },
+        heatmap_legend_param = list(
+          title = "Spearman\nCorrelation",
+          at = seq(-0.2, 0.2, by = 0.1)
+        ),
+        column_title = "Food Groups",
+        row_title = "Species",
+        column_title_side = "bottom",
+        show_row_dend = TRUE,  # Show row dendrogram
+        show_column_dend = TRUE  # Show column dendrogram
+)
+ht
+# Save the plot
+png("figure/figure2_correlation_heatmap_with_dendrograms.png",
+    width = 12, height = 10, units = "in", res = 300)
+draw(ht, padding = unit(c(2, 2, 2, 2), "cm"))
+dev.off()
+```
+
+
+
+```{r}
+ggsave("figure/figure4_correlation_heatmap.png", width = 12, height = 10, dpi = 300)
+```
+
+```{r}
+# Print the colors we're using
+extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+print("Colors at positions 1, 50, 100:")
+print(extended_palette[c(1, 50, 100)])
+print("Colors after reversing:")
+print(rev(extended_palette[c(1, 50, 100)]))
+
+# Try different ways of creating the color mapping
+# Original way
+col_fun1 <- colorRamp2(c(-0.2, 0, 0.2), rev(extended_palette[c(1, 50, 100)]))
+
+# Alternative way - using the palette directly
+col_fun2 <- colorRamp2(c(-0.2, 0, 0.2), c("#67001F", "#F7F7F7", "#053061"))
+
+# Print a few sample transformations
+test_values <- c(-0.2, -0.1, 0, 0.1, 0.2)
+print("Sample colors for test values:")
+print(col_fun1(test_values))
+display.brewer.pal(11, "RdBu")
+```
+
+
+
+
+
+
+
+
+
+
+
+
