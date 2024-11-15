@@ -511,6 +511,219 @@ ggplot(enterotype_proportions_df, aes(x = Ethnic_Group, y = Proportion, fill = E
   theme(legend.title = element_blank())
 
 ```
+#test
+```{r}
+# Create contingency table
+contingency_table <- table(sample_data(phyloseq_filtered_CIM)$FREG5_Ethnic_Group,
+                          sample_data(phyloseq_filtered_CIM)$Enterotype)
+
+# Chi-square test
+chi_result <- chisq.test(contingency_table)
+print("Chi-square test results:")
+print(chi_result)
+
+# Fisher's exact test (more accurate for small sample sizes)
+fisher_result <- fisher.test(contingency_table, simulate.p.value = TRUE)
+print("\nFisher's exact test results:")
+print(fisher_result)
+
+# Post-hoc analysis - pairwise comparisons between ethnic groups for each enterotype
+# Using proportion test for each enterotype
+for(enterotype in unique(sample_data(phyloseq_filtered_CIM)$Enterotype)) {
+  print(paste("\nAnalyzing Enterotype", enterotype))
+  
+  # Create subset for this enterotype
+  subset_data <- contingency_table[, enterotype]
+  total_counts <- rowSums(contingency_table)
+  
+  # Perform pairwise proportion tests
+  ethnic_groups <- unique(sample_data(phyloseq_filtered_CIM)$FREG5_Ethnic_Group)
+  for(i in 1:(length(ethnic_groups)-1)) {
+    for(j in (i+1):length(ethnic_groups)) {
+      group1 <- ethnic_groups[i]
+      group2 <- ethnic_groups[j]
+      
+      test_result <- prop.test(
+        x = c(subset_data[group1], subset_data[group2]),
+        n = c(total_counts[group1], total_counts[group2])
+      )
+      
+      print(paste("Comparison:", group1, "vs", group2))
+      print(paste("p-value:", round(test_result$p.value, 4)))
+    }
+  }
+}
+
+# Optionally, adjust p-values for multiple comparisons
+# You might want to collect all p-values and adjust them using p.adjust()
+```
+
+```{r}
+
+```
+
+
+```{r}
+# Extract abundance data
+otu_matrix <- as(otu_table(phyloseq_filtered_CIM), "matrix")
+key_genera_abundance <- otu_matrix[, colnames(otu_matrix) %in% key_genera]
+
+# Normalize to relative abundance if not already done
+key_genera_abundance <- sweep(key_genera_abundance, 1, rowSums(key_genera_abundance), '/')
+
+# Perform PAM clustering
+pam_clustering <- pam(dist(key_genera_abundance), k = 3)
+
+# Get cluster centers (medoids)
+medoid_indices <- pam_clustering$medoids
+cluster_centers <- key_genera_abundance[medoid_indices, ]
+
+# Assign labels based on dominant genus in each medoid
+enterotype_labels <- colnames(key_genera_abundance)[apply(cluster_centers, 1, which.max)]
+
+# Assign enterotypes to samples
+sample_data(phyloseq_filtered_CIM)$Enterotype <- factor(
+    pam_clustering$clustering,
+    levels = 1:3,
+    labels = paste0("Enterotype_", enterotype_labels)
+)
+
+# Print cluster characteristics
+print("Cluster medoid compositions:")
+print(cluster_centers)
+print("\nEnterotype labels:")
+print(enterotype_labels)
+
+# Create enterotype proportion table
+enterotype_proportions <- prop.table(table(
+    sample_data(phyloseq_filtered_CIM)$FREG5_Ethnic_Group,
+    sample_data(phyloseq_filtered_CIM)$Enterotype
+), 1)
+
+# Convert to data frame for plotting
+enterotype_proportions_df <- as.data.frame(as.table(enterotype_proportions))
+colnames(enterotype_proportions_df) <- c("Ethnic_Group", "Enterotype", "Proportion")
+
+# Plot
+ggplot(enterotype_proportions_df, aes(x = Ethnic_Group, y = Proportion, fill = Enterotype)) +
+    geom_bar(stat = "identity", position = "fill") +
+    labs(title = "Enterotype Proportions by Ethnic Group",
+         x = "Ethnic Group", 
+         y = "Proportion") +
+    theme_minimal() +
+    scale_fill_brewer(palette = "Set2") +
+    theme(legend.title = element_blank())
+
+# Validate clustering
+sil <- silhouette(pam_clustering)
+print(paste("Average silhouette width:", mean(sil[,3])))
+
+# Plot silhouette
+plot(sil, main = "Silhouette Plot of Enterotype Clustering")
+
+# PCA visualization
+pca <- prcomp(key_genera_abundance, scale. = TRUE)
+pca_df <- data.frame(
+    PC1 = pca$x[,1],
+    PC2 = pca$x[,2],
+    Enterotype = sample_data(phyloseq_filtered_CIM)$Enterotype
+)
+
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Enterotype)) +
+    geom_point() +
+    theme_minimal() +
+    labs(title = "PCA Plot of Enterotypes")
+
+# Additional analysis of cluster characteristics
+print("\nCluster sizes:")
+print(table(sample_data(phyloseq_filtered_CIM)$Enterotype))
+
+# Calculate mean abundances for each genus in each cluster
+cluster_means <- aggregate(key_genera_abundance, 
+                         by = list(Enterotype = sample_data(phyloseq_filtered_CIM)$Enterotype), 
+                         mean)
+print("\nMean abundances in each cluster:")
+print(cluster_means)
+```
+
+```{r}
+# Calculate distance matrix
+dist_matrix <- dist(key_genera_abundance)
+
+# Perform PCoA
+pcoa <- cmdscale(dist_matrix, eig = TRUE)
+
+# Calculate variance explained
+variance_explained <- round(100 * pcoa$eig/sum(pcoa$eig), 2)
+
+# Create data frame for plotting
+pcoa_df <- data.frame(
+    PC1 = pcoa$points[,1],
+    PC2 = pcoa$points[,2],
+    Enterotype = sample_data(phyloseq_filtered_CIM)$Enterotype,
+    Ethnic_Group = sample_data(phyloseq_filtered_CIM)$FREG5_Ethnic_Group
+)
+
+# Create PCoA plot with ellipses
+ggplot(pcoa_df, aes(x = PC1, y = PC2, color = Enterotype)) +
+    geom_point(size = 2, alpha = 0.6) +
+    stat_ellipse(type = "t", level = 0.95) +
+    labs(
+        title = "PCoA Plot of Enterotypes",
+        x = paste0("PCoA1 (", variance_explained[1], "%)"),
+        y = paste0("PCoA2 (", variance_explained[2], "%)")
+    ) +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set2") +
+    theme(
+        legend.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.title = element_text(face = "bold")
+    )
+
+# Optional: Create a second plot with ellipses by ethnic group
+ggplot(pcoa_df, aes(x = PC1, y = PC2, color = Ethnic_Group)) +
+    geom_point(size = 2, alpha = 0.6) +
+    stat_ellipse(type = "t", level = 0.95) +
+    labs(
+        title = "PCoA Plot by Ethnic Group",
+        x = paste0("PCoA1 (", variance_explained[1], "%)"),
+        y = paste0("PCoA2 (", variance_explained[2], "%)"),
+        color = "Ethnic Group"
+    ) +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set1") +
+    theme(
+        legend.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.title = element_text(face = "bold")
+    )
+
+# If you want both enterotype and ethnic group information in one plot:
+ggplot(pcoa_df, aes(x = PC1, y = PC2)) +
+    geom_point(aes(color = Enterotype), size = 2, alpha = 0.6) +
+    stat_ellipse(aes(color = Enterotype), type = "t", level = 0.95) +
+    facet_wrap(~Ethnic_Group) +
+    labs(
+        title = "PCoA Plot of Enterotypes by Ethnic Group",
+        x = paste0("PCoA1 (", variance_explained[1], "%)"),
+        y = paste0("PCoA2 (", variance_explained[2], "%)")
+    ) +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set2") +
+    theme(
+        legend.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold")
+    )
+```
+
+
+
+
+
+
 
 
 

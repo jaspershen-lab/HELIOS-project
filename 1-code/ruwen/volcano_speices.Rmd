@@ -251,6 +251,33 @@ plot_volcano(results_IvsCM, "Volcano Plot: Non-Indian vs Indian")
 plot_volcano(results_MvsCI, "Volcano Plot: Non-Malay vs Malay")
 
 ```
+```{r}
+# For Chinese comparison
+sig_CvsIM <- results_CvsIM %>%
+  filter(p_value < 0.03 & abs(logFC) > 1.2) %>%
+  select(species)
+
+# For Indian comparison
+sig_IvsCM <- results_IvsCM %>%
+  filter(p_value < 0.03 & abs(logFC) > 1.2) %>%
+  select(species)
+
+# For Malay comparison
+sig_MvsCI <- results_MvsCI %>%
+  filter(p_value < 0.03 & abs(logFC) > 1.2) %>%
+  select(species)
+
+sig_CvsIM
+sig_IvsCM
+sig_MvsCI
+
+```
+```{r}
+all_unique_species <- unique(c(sig_CvsIM$species, sig_IvsCM$species, sig_MvsCI$species))
+all_unique_species
+# Save to a single file
+write.csv(data.frame(species = all_unique_species), "figure/unique_significant_species.csv", row.names = FALSE)
+```
 
 
 
