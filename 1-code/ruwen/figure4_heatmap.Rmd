@@ -172,8 +172,217 @@ ggplot(melted_cor, aes(x = Food, y = Species, fill = Correlation)) +
     x = "Food Groups",
     y = "Species"
   )
-ggsave("figure/figure4_correlation_heatmap.png", width = 12, height = 10, dpi = 300)
+#ggsave("figure/figure4_correlation_heatmap.png", width = 12, height = 10, dpi = 300)
 ```
+
+```{r}
+# First calculate the overall clustering order from the full dataset
+calculate_global_orders <- function(merged_data) {
+  # Initialize matrices using full dataset
+  species_cols <- colnames(sig_species)[colnames(sig_species) != "Participant_ID"]
+  food_cols <- colnames(food_data)[colnames(food_data) != "Participant_ID"]
+  cor_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(food_cols))
+  p_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(food_cols))
+  
+  # Calculate overall correlations
+  for(i in 1:length(species_cols)) {
+    for(j in 1:length(food_cols)) {
+      temp_data <- data.frame(
+        species = rank(merged_data[[species_cols[i]]]),
+        food = rank(merged_data[[food_cols[j]]]),
+        gender = as.numeric(merged_data$FREG7_Gender == "M"),
+        age = rank(merged_data$FREG8_Age),
+        bmi = rank(merged_data$BMI)
+      )
+      
+      temp_data <- na.omit(temp_data)
+      
+      pcor_result <- pcor.test(temp_data$species, temp_data$food,
+                             temp_data[,c("gender", "age", "bmi")])
+      
+      cor_matrix[i,j] <- pcor_result$estimate
+      p_matrix[i,j] <- pcor_result$p.value
+    }
+  }
+  
+  # Set row and column names
+  rownames(cor_matrix) <- species_cols
+  colnames(cor_matrix) <- food_cols
+  
+  # Calculate clustering order
+  species_dist <- dist(cor_matrix)
+  species_clust <- hclust(species_dist)
+  species_order <- species_clust$labels[species_clust$order]
+  
+  food_dist <- dist(t(cor_matrix))
+  food_clust <- hclust(food_dist)
+  food_order <- food_clust$labels[food_clust$order]
+  
+  return(list(species_order = species_order, food_order = food_order))
+}
+
+# Get global orders
+global_orders <- calculate_global_orders(merged_data)
+
+# Modified function to create heatmap with fixed orders
+create_ethnic_heatmap <- function(merged_data, ethnic_group, species_order, food_order) {
+  # Filter data for specific ethnic group
+  ethnic_data <- merged_data %>%
+    filter(FREG5_Ethnic_Group == ethnic_group)
+  
+  # Print sample size for debugging
+  cat("Sample size for ethnic group", ethnic_group, ":", nrow(ethnic_data), "\n")
+  
+  # Initialize matrices
+  species_cols <- colnames(sig_species)[colnames(sig_species) != "Participant_ID"]
+  food_cols <- colnames(food_data)[colnames(food_data) != "Participant_ID"]
+  cor_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(food_cols))
+  p_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(food_cols))
+  
+  # Calculate correlations
+  for(i in 1:length(species_cols)) {
+    for(j in 1:length(food_cols)) {
+      tryCatch({
+        temp_data <- data.frame(
+          species = rank(ethnic_data[[species_cols[i]]]),
+          food = rank(ethnic_data[[food_cols[j]]]),
+          gender = as.numeric(ethnic_data$FREG7_Gender == "M"),
+          age = rank(ethnic_data$FREG8_Age),
+          bmi = rank(ethnic_data$BMI)
+        )
+        
+        temp_data <- na.omit(temp_data)
+        
+        if(nrow(temp_data) > 10) {
+          pcor_result <- pcor.test(temp_data$species, temp_data$food,
+                                 temp_data[,c("gender", "age", "bmi")])
+          
+          cor_matrix[i,j] <- pcor_result$estimate
+          p_matrix[i,j] <- pcor_result$p.value
+        }
+      }, error = function(e) {
+        cat("Error in correlation calculation for species", species_cols[i], 
+            "and food", food_cols[j], ":", conditionMessage(e), "\n")
+      })
+    }
+  }
+  
+  # Set row and column names
+  rownames(cor_matrix) <- species_cols
+  colnames(cor_matrix) <- food_cols
+  rownames(p_matrix) <- species_cols
+  colnames(p_matrix) <- food_cols
+  
+  # Convert to long format
+  melted_cor <- melt(cor_matrix)
+  colnames(melted_cor) <- c("Species", "Food", "Correlation")
+  melted_cor$Significant <- melt(p_matrix)$value < 0.05
+  
+  # Use global orders for factors
+  melted_cor$Species <- factor(melted_cor$Species, levels = species_order)
+  melted_cor$Food <- factor(melted_cor$Food, levels = food_order)
+  
+  # Create plot
+  p <- ggplot(melted_cor, aes(x = Food, y = Species, fill = Correlation)) +
+    geom_tile() +
+    scale_fill_gradientn(colors = rev(colorRampPalette(brewer.pal(11, "RdBu"))(100)),
+                        limits = c(-0.2, 0.2),
+                        oob = scales::squish,
+                        na.value = "grey90") +
+    geom_text(aes(label = ifelse(Significant & !is.na(Correlation), "*", "")),
+              color = "black", size = 5) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+      axis.text.y = element_text(face = "italic", size = 8),
+      axis.title = element_text(face = "bold"),
+      legend.title = element_text(face = "bold")
+    ) +
+    labs(
+      title = paste("Ethnic Group:", ethnic_group),
+      subtitle = paste0("n=", nrow(ethnic_data), "\nAdjusted for Gender, Age, and BMI\n* indicates p < 0.05"),
+      x = "Food Groups",
+      y = "Species"
+    )
+  
+  return(p)
+}
+
+# Create heatmaps for each ethnic group using fixed orders
+ethnic_groups <- c("C", "I", "M")
+plots <- list()
+
+for(group in ethnic_groups) {
+  plots[[group]] <- create_ethnic_heatmap(merged_data, group, 
+                                        global_orders$species_order, 
+                                        global_orders$food_order)
+}
+
+# Combine plots using patchwork
+library(patchwork)
+combined_plot <- plots$C + plots$I + plots$M +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title = "Stratified Correlation Heatmaps by Ethnic Group",
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+# Save the combined plot
+# ggsave("figure/figure4_stratified_correlation_heatmaps.png", 
+#        combined_plot, 
+#        width = 24, 
+#        height = 10, 
+#        dpi = 300)
+```
+
+
+```{r}
+plots$C
+plots$I
+plots$M
+# Save the combined plot
+# ggsave("figure/figure4_stratified_correlation_heatmaps.png", 
+#        combined_plot, 
+#        width = 24, 
+#        height = 10, 
+#        dpi = 300)
+
+# Save individual plots if needed
+# for(group in ethnic_groups) {
+#   ggsave(
+#     paste0("figure/figure4_correlation_heatmap_", group, ".png"),
+#     plots[[group]],
+#     width = 12,
+#     height = 10,
+#     dpi = 300
+#   )
+# }
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ```{r}
 library(ComplexHeatmap)
 library(grid)
@@ -225,33 +434,6 @@ draw(ht, padding = unit(c(2, 2, 2, 2), "cm"))
 dev.off()
 ```
 
-
-
-```{r}
-ggsave("figure/figure4_correlation_heatmap.png", width = 12, height = 10, dpi = 300)
-```
-
-```{r}
-# Print the colors we're using
-extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
-print("Colors at positions 1, 50, 100:")
-print(extended_palette[c(1, 50, 100)])
-print("Colors after reversing:")
-print(rev(extended_palette[c(1, 50, 100)]))
-
-# Try different ways of creating the color mapping
-# Original way
-col_fun1 <- colorRamp2(c(-0.2, 0, 0.2), rev(extended_palette[c(1, 50, 100)]))
-
-# Alternative way - using the palette directly
-col_fun2 <- colorRamp2(c(-0.2, 0, 0.2), c("#67001F", "#F7F7F7", "#053061"))
-
-# Print a few sample transformations
-test_values <- c(-0.2, -0.1, 0, 0.1, 0.2)
-print("Sample colors for test values:")
-print(col_fun1(test_values))
-display.brewer.pal(11, "RdBu")
-```
 
 
 
