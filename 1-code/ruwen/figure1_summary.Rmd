@@ -7,24 +7,600 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(writexl)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r}
+helios_core_old = read_excel("data/HELIOS_Core_redacted.xlsx")
+helios_core_new = read.csv("data/HELIOS2_Core_redacted_300.csv")
+helios_core_new$FREG5_Ethnic_Group <- ifelse(helios_core_new$FREG5_Race == "CHINESE", "C",
+                                             ifelse(helios_core_new$FREG5_Race == "INDIAN", "I",
+                                             ifelse(helios_core_new$FREG5_Race == "MALAY", "M",
+                                             ifelse(helios_core_new$FREG5_Race == "Other", "O", NA))))
+helios_core_new$FREG7_Gender <- ifelse(helios_core_new$FREG7_Gender == "male", "M",
+                                       ifelse(helios_core_new$FREG7_Gender == "female", "F",NA))
+                                             
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+#helios_core_old
+old_all = helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight", "FWH16_Waist1", "FWH19_Hip1", "FBP16_Caffeine", "FBP17_Smoking", "DBP9_Sbp_1", "DBP12_Dbp_1","DBP15_Hr_1")]
+new_all = helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight", "FWH16_Waist1", "FWH19_Hip1", "FBP16_Caffeine", "FBP17_Smoking", "DBP9_SBP_1","DBP12_DBP_1", "DBP15_HR_1")]
 
-```{r cars}
-summary(cars)
+```
+"FREG0_PID", "FREG1_Barcode"
+
+```{r}
+library(writexl)
+
+colnames(old_all) <- tolower(colnames(old_all))
+colnames(new_all) <- tolower(colnames(new_all))
+
+helios800 = rbind(old_all, new_all)
+helios800
+#write_xlsx(helios800, "data/helios800.xlsx")
+```
+```{r}
+metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
+sample_list = metadata_micro$`Original Sample name`
+helios_new800 <- filter(helios800, freg1_barcode %in% sample_list)
+helios_new800
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+```{r}
+helios_new800$bmi = helios_new800$dbi14_weight/(helios_new800$dbi13_height*0.01)^2
+helios_new800$bmi_groups <- cut(helios_new800$bmi, breaks = c(0,18.5,23,25,Inf),
+                  labels = c("Underweight", "Normal", "Overweight", "Obese"),
+                  include.lowest = TRUE, right = FALSE)
+helios_new800
+#write_xlsx(helios_new800, "data/summary_800.xlsx")
 
-```{r pressure, echo=FALSE}
-plot(pressure)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Define custom ethnic colors and single colors for other variables
+ethnicity_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887", "O" = "#80796BFF")
+variable_colors <- c(
+  "age" = "#B19CD9",        # Purple for age
+  "bmi" = "#FFB6C1",        # Light pink for BMI
+  "waist" = "#FFE4B5",      # Light orange for waist
+  "hip" = "#90EE90",        # Light green for hip
+  "dbp" = "#ADD8E6",        # Light blue for DBP
+  "sbp" = "#FFB366",        # Orange for SBP
+  "hr" = "#D3D3D3"          # Light gray for HR
+)
+
+# Function to create individual-level bar plots
+create_individual_plot <- function(data, var_name, use_ethnic_colors = FALSE) {
+  base_plot <- ggplot(data, aes(x = 1:nrow(data), y = 1)) +
+    labs(x = "Participants", 
+         y = paste0(gsub("_", " ", var_name)),
+         title = gsub("_", " ", var_name)) +
+    theme_minimal() +
+    theme(
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      legend.title = element_blank(),
+      plot.margin = margin(t = 5, r = 10, b = 5, l = 10)
+    )
+    
+  if (use_ethnic_colors) {
+    base_plot + 
+      geom_col(aes(fill = freg5_ethnic_group), width = 1) +
+      scale_fill_manual(values = ethnicity_colors)
+  } else {
+    var_type <- case_when(
+      grepl("age", var_name) ~ "age",
+      grepl("bmi", var_name) ~ "bmi",
+      grepl("waist", var_name) ~ "waist",
+      grepl("hip", var_name) ~ "hip",
+      grepl("dbp_1$", var_name) ~ "dbp",
+      grepl("sbp", var_name) ~ "sbp",
+      grepl("hr", var_name) ~ "hr",
+      TRUE ~ "default"
+    )
+    
+    if(var_name == "y") {  # For actual measurements
+      base_plot + 
+        geom_col(aes(y = .data[[var_name]]), width = 1, fill = variable_colors[var_type])
+    } else {  # For gender
+      base_plot + 
+        geom_col(aes(fill = freg7_gender), width = 1) +
+        scale_fill_manual(values = c("male" = "#0072B2", "female" = "#CC79A7"))
+    }
+  }
+}
+
+# Helper function to get units for variables
+get_unit <- function(var_name) {
+  units <- list(
+    freg8_age = "years",
+    bmi = "kg/m^2",
+    fwh16_waist1 = "cm",
+    fwh19_hip1 = "cm",
+    dbp9_sbp_1 = "mmHg",
+    dbp12_dbp_1 = "mmHg",
+    dbp15_hr_1 = "bpm"
+  )
+  return(units[[var_name]] %||% "")
+}
+
+# Function to create all individual plots
+create_all_individual_plots <- function(data) {
+  # Sort data by ethnic group
+  data <- data %>% arrange(freg5_ethnic_group)
+  
+  # Create list of plots
+  plots <- list(
+    ethnicity_plot = create_individual_plot(data, "freg5_ethnic_group", use_ethnic_colors = TRUE),
+    age_plot = create_individual_plot(data, "freg8_age"),
+    bmi_plot = create_individual_plot(data, "bmi"),
+    waist_plot = create_individual_plot(data, "fwh16_waist1"),
+    hip_plot = create_individual_plot(data, "fwh19_hip1"),
+    dbp_plot = create_individual_plot(data, "dbp12_dbp_1"),
+    sbp_plot = create_individual_plot(data, "dbp9_sbp_1"),
+    hr_plot = create_individual_plot(data, "dbp15_hr_1")
+  )
+  
+  # Create gender plot with colors
+  plots$gender_plot <- ggplot(data, aes(x = 1:nrow(data), y = 1, fill = freg7_gender)) +
+    geom_col(width = 1) +
+    scale_fill_manual(values = c("male" = "#0072B2", "female" = "#CC79A7")) +
+    labs(x = "Participants", y = "", title = "Gender") +
+    theme_minimal() +
+    theme(
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.x = element_blank(),
+      legend.title = element_blank(),
+      plot.margin = margin(t = 5, r = 10, b = 5, l = 10)
+    )
+  
+  return(plots)
+}
+
+# Example usage:
+# First make sure your data is properly sorted
+helios_new800 <- helios_new800 %>% arrange(freg5_ethnic_group)
+
+# Create all plots
+plots <- create_all_individual_plots(helios_new800)
+
+# To combine all plots vertically:
+library(patchwork)
+combined_plot <- plots$ethnicity_plot / plots$age_plot / plots$bmi_plot / 
+                plots$waist_plot / plots$hip_plot / plots$dbp_plot / 
+                plots$sbp_plot / plots$hr_plot / plots$gender_plot +
+                plot_layout(heights = rep(1, 9))
+
+# Save the combined plot
+ggsave("figure/combined_plots.png", combined_plot, height = 22, width = 10)
+```
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Define custom ethnic colors and single colors for other variables
+ethnicity_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887", "O" = "#80796BFF")
+gender_colors <- c("F" = "#CC79A7", "M" = "#0072B2")  # Define specific gender colors
+variable_colors <- c(
+  "age" = "#B19CD9",        # Purple for age
+  "bmi" = "#FFB6C1",        # Light pink for BMI
+  "waist" = "#FFE4B5",      # Light orange for waist
+  "hip" = "#90EE90",        # Light green for hip
+  "dbp" = "#ADD8E6",        # Light blue for DBP
+  "sbp" = "#FFB366",        # Orange for SBP
+  "hr" = "#D3D3D3"          # Light gray for HR
+)
+
+# Function to create individual-level bar plots
+create_individual_plot <- function(data, var_name, use_ethnic_colors = FALSE) {
+  if (use_ethnic_colors) {
+    # For ethnicity plot
+    p <- ggplot(data, aes(x = 1:nrow(data), y = 1, fill = freg5_ethnic_group)) +
+      geom_col(width = 1) +
+      scale_fill_manual(values = ethnicity_colors)
+  } else if (var_name == "gender") {
+    # For gender plot with fixed height and categorical colors
+    p <- ggplot(data, aes(x = 1:nrow(data), y = 1, fill = freg7_gender)) +
+      geom_col(width = 1) +
+      scale_fill_manual(values = gender_colors)
+  } else {
+    # For all other variables
+    p <- ggplot(data, aes(x = 1:nrow(data), y = .data[[var_name]])) +
+      geom_col(width = 1, fill = case_when(
+        var_name == "freg8_age" ~ variable_colors["age"],
+        var_name == "bmi" ~ variable_colors["bmi"],
+        var_name == "fwh16_waist1" ~ variable_colors["waist"],
+        var_name == "fwh19_hip1" ~ variable_colors["hip"],
+        var_name == "dbp12_dbp_1" ~ variable_colors["dbp"],
+        var_name == "dbp9_sbp_1" ~ variable_colors["sbp"],
+        var_name == "dbp15_hr_1" ~ variable_colors["hr"]
+      ))
+  }
+
+  # Add common theme elements
+  p + labs(x = "Participants", 
+         y = paste0(gsub("_", " ", var_name), " (", get_unit(var_name), ")"),
+         title = gsub("_", " ", var_name)) +
+    theme_minimal() +
+    theme(
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      legend.title = element_blank(),
+      plot.margin = margin(t = 5, r = 10, b = 5, l = 10)
+    ) +
+    if(var_name == "gender" || use_ethnic_colors) {
+      # Remove y-axis text for categorical plots
+      theme(axis.text.y = element_blank())
+    } else {
+      theme()
+    }
+}
+
+# Helper function to get units for variables
+get_unit <- function(var_name) {
+  units <- list(
+    freg8_age = "years",
+    bmi = "kg/m^2",
+    fwh16_waist1 = "cm",
+    fwh19_hip1 = "cm",
+    dbp9_sbp_1 = "mmHg",
+    dbp12_dbp_1 = "mmHg",
+    dbp15_hr_1 = "bpm"
+  )
+  return(units[[var_name]] %||% "")
+}
+
+# Function to create all individual plots
+create_all_individual_plots <- function(data) {
+  # Sort data by ethnic group
+  data <- data %>% 
+    arrange(freg5_ethnic_group) %>%
+    # Ensure gender is F/M format
+    mutate(freg7_gender = toupper(substr(freg7_gender, 1, 1)))
+  
+  # Create list of plots
+  plots <- list(
+    ethnicity_plot = create_individual_plot(data, "freg5_ethnic_group", use_ethnic_colors = TRUE),
+    age_plot = create_individual_plot(data, "freg8_age"),
+    bmi_plot = create_individual_plot(data, "bmi"),
+    waist_plot = create_individual_plot(data, "fwh16_waist1"),
+    hip_plot = create_individual_plot(data, "fwh19_hip1"),
+    dbp_plot = create_individual_plot(data, "dbp12_dbp_1"),
+    sbp_plot = create_individual_plot(data, "dbp9_sbp_1"),
+    hr_plot = create_individual_plot(data, "dbp15_hr_1"),
+    gender_plot = create_individual_plot(data, "gender")
+  )
+  
+  return(plots)
+}
+
+# Example usage:
+# First make sure your data is properly sorted
+helios_new800 <- helios_new800 %>% arrange(freg5_ethnic_group)
+
+# Create all plots
+plots <- create_all_individual_plots(helios_new800)
+
+# To combine all plots vertically:
+library(patchwork)
+combined_plot <- plots$ethnicity_plot / plots$age_plot / plots$bmi_plot / 
+                plots$waist_plot / plots$hip_plot / plots$dbp_plot / 
+                plots$sbp_plot / plots$hr_plot / plots$gender_plot +
+                plot_layout(heights = rep(1, 9))
+
+# Save the combined plot
+ggsave("figure/combined_plots.png", combined_plot, height = 22, width = 10)
+```
+
+```{r}
+plot_info <- list(
+  list(name = "ethnicity_plot", filename = "figure/figure1_summary/ethnicity_distribution.png"),
+  list(name = "age_plot", filename = "figure/figure1_summary/age_distribution.png"),
+  list(name = "bmi_plot", filename = "figure/figure1_summary/bmi_distribution.png"),
+  list(name = "waist_plot", filename = "figure/figure1_summary/waist_distribution.png"),
+  list(name = "hip_plot", filename = "figure/figure1_summary/hip_distribution.png"),
+  list(name = "dbp_plot", filename = "figure/figure1_summary/dbp_distribution.png"),
+  list(name = "sbp_plot", filename = "figure/figure1_summary/sbp_distribution.png"),
+  list(name = "hr_plot", filename = "figure/figure1_summary/hr_distribution.png"),
+  list(name = "gender_plot", filename = "figure/figure1_summary/gender_distribution.png")
+)
+
+# Save individual plots
+for (plot_item in plot_info) {
+  ggsave(
+    filename = plot_item$filename,
+    plot = plots[[plot_item$name]],
+    width = 10,
+    height = 3,
+    dpi = 300
+  )
+}
+```
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(gghalves)
+
+# Define the same colors as before for consistency
+variable_colors <- c(
+  "age" = "#B19CD9",        # Purple for age
+  "bmi" = "#FFB6C1",        # Light pink for BMI
+  "waist" = "#FFE4B5",      # Light orange for waist
+  "hip" = "#90EE90",        # Light green for hip
+  "dbp" = "#ADD8E6",        # Light blue for DBP
+  "sbp" = "#FFB366",        # Orange for SBP
+  "hr" = "#D3D3D3"          # Light gray for HR
+)
+
+# Create individual half violin + half box plots
+# Age plot
+plot_age <- helios_new800 %>%
+  ggplot(aes(x = "Age", y = freg8_age)) +
+  geom_half_violin(
+    fill = variable_colors["age"],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = variable_colors["age"],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  labs(x = "", y = "Age (years)") +
+  theme_minimal()
+
+# BMI plot
+plot_bmi <- helios_new800 %>%
+  ggplot(aes(x = "BMI", y = bmi)) +
+  geom_half_violin(
+    fill = variable_colors["bmi"],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = variable_colors["bmi"],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  labs(x = "", y = "BMI (kg/m²)") +
+  theme_minimal()
+
+# Waist plot
+plot_waist <- helios_new800 %>%
+  ggplot(aes(x = "Waist", y = fwh16_waist1)) +
+  geom_half_violin(
+    fill = variable_colors["waist"],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = variable_colors["waist"],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  labs(x = "", y = "Waist (cm)") +
+  theme_minimal()
+
+# Hip plot
+plot_hip <- helios_new800 %>%
+  ggplot(aes(x = "Hip", y = fwh19_hip1)) +
+  geom_half_violin(
+    fill = variable_colors["hip"],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = variable_colors["hip"],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  labs(x = "", y = "Hip (cm)") +
+  theme_minimal()
+
+# SBP plot
+plot_sbp <- helios_new800 %>%
+  ggplot(aes(x = "SBP", y = dbp9_sbp_1)) +
+  geom_half_violin(
+    fill = variable_colors["sbp"],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = variable_colors["sbp"],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  labs(x = "", y = "SBP (mmHg)") +
+  theme_minimal()
+
+# DBP plot
+plot_dbp <- helios_new800 %>%
+  ggplot(aes(x = "DBP", y = dbp12_dbp_1)) +
+  geom_half_violin(
+    fill = variable_colors["dbp"],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = variable_colors["dbp"],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  labs(x = "", y = "DBP (mmHg)") +
+  theme_minimal()
+
+# HR plot
+plot_hr <- helios_new800 %>%
+  ggplot(aes(x = "HR", y = dbp15_hr_1)) +
+  geom_half_violin(
+    fill = variable_colors["hr"],
+    color = "black",
+    alpha = 0.5
+  ) +
+  geom_half_boxplot(
+    fill = variable_colors["hr"],
+    alpha = 0.5,
+    color = "black",
+    side = "r"
+  ) +
+  labs(x = "", y = "HR (bpm)") +
+  theme_minimal()
+
+# Combine all plots using patchwork
+library(patchwork)
+combined_violin_plots <- plot_bmi + plot_age +  plot_waist + 
+                        plot_hip + plot_sbp + plot_dbp + 
+                        plot_hr +
+                        plot_layout(ncol = 7, widths = rep(1, 7))
+
+
+ggsave("figure/combined_violin_plots.png", combined_violin_plots, 
+       width = 15, height = 6)
+```
+
+## life style
+```{r}
+helios_life = read_excel("data/summary_800.xlsx")
+helios_life
+```
+
+```{r}
+# For caffeine consumption by ethnic group
+ggplot(helios_life %>% 
+       filter(!is.na(freg5_ethnic_group)), # Remove NA from ethnic groups
+       aes(x = freg5_ethnic_group, fill = fbp16_caffeine)) +
+  geom_bar(position = "dodge") +
+  labs(x = "Ethnic Group", 
+       y = "Count",
+       fill = "Caffeine Consumption",
+       title = "Caffeine Consumption by Ethnic Group") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Blues")
+
+# For smoking frequency by ethnic group 
+ggplot(helios_life %>% 
+       filter(!is.na(freg5_ethnic_group)), # Remove NA from ethnic groups
+       aes(x = freg5_ethnic_group, fill = fbp17_smoking)) +
+  geom_bar(position = "dodge") +
+  labs(x = "Ethnic Group", 
+       y = "Count",
+       fill = "Smoking Frequency",
+       title = "Smoking Frequency by Ethnic Group") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Oranges")
+```
+```{r}
+# For proportional representation
+ggplot(helios_life, aes(x = freg5_ethnic_group, fill = fbp16_caffeine)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "Ethnic Group", 
+       y = "Percentage",
+       fill = "Caffeine Consumption",
+       title = "Proportion of Caffeine Consumption by Ethnic Group") +
+  theme_minimal()
+```
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Create proportions and prepare data
+plot_data <- helios_life %>%
+  filter(!is.na(freg5_ethnic_group)) %>%
+  group_by(freg5_ethnic_group, fbp16_caffeine) %>%
+  summarise(count = n()) %>%
+  group_by(freg5_ethnic_group) %>%
+  mutate(prop = count/sum(count),
+         # Create variables for donut chart positioning
+         ymax = cumsum(prop),
+         ymin = c(0, head(ymax, n=-1)),
+         labelpos = (ymax + ymin)/2) %>%
+  ungroup()
+
+# Create the donut charts with faceting
+ggplot(plot_data, aes(fill = fbp16_caffeine, ymax = ymax, ymin = ymin, xmax = 4, xmin = 3)) +
+  geom_rect(aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3)) +
+  coord_polar(theta = "y") +
+  facet_wrap(~freg5_ethnic_group, ncol = 2) +
+  scale_fill_brewer(palette = "Blues") +
+  theme_void() +
+  labs(title = "Caffeine Consumption Distribution by Ethnic Group",
+       fill = "Caffeine Consumption") +
+  theme(legend.position = "bottom")
+
+# For smoking data, similar approach:
+plot_data_smoking <- helios_life %>%
+  filter(!is.na(freg5_ethnic_group)) %>%
+  group_by(freg5_ethnic_group, fbp17_smoking) %>%
+  summarise(count = n()) %>%
+  group_by(freg5_ethnic_group) %>%
+  mutate(prop = count/sum(count),
+         ymax = cumsum(prop),
+         ymin = c(0, head(ymax, n=-1)),
+         labelpos = (ymax + ymin)/2) %>%
+  ungroup()
+
+# Create donut charts for smoking
+ggplot(plot_data_smoking, aes(fill = fbp17_smoking, ymax = ymax, ymin = ymin, xmax = 4, xmin = 3)) +
+  geom_rect(aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3)) +
+  coord_polar(theta = "y") +
+  facet_wrap(~freg5_ethnic_group, ncol = 2) +
+  scale_fill_brewer(palette = "Oranges",
+                    labels = c("Smoker", "Non-smoker")) +
+  theme_void() +
+  labs(title = "Smoking Distribution by Ethnic Group",
+       fill = "Smoking") +
+  theme(legend.position = "bottom")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
