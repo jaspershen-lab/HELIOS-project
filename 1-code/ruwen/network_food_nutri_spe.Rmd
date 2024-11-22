@@ -501,7 +501,9 @@ full_data <- merge(food_data, species_filtered2, by = "Participant_ID")
 full_data <- merge(full_data, nutrition_data, by="Participant_ID")
 food_data
 nutrition_data
-full_data
+full_data <- merge(full_data, metadata, by="Participant_ID")
+full_data$Idli_Thosai
+full_data[,c("FREG5_Ethnic_Group", "Bifidobacterium catenulatum", "Bifidobacterium pseudolongum", "Bifidobacterium saguini","")]
 ```
 
 ```{r}
