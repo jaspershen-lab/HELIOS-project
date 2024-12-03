@@ -33,8 +33,10 @@ helios_core_new$FREG7_Gender <- ifelse(helios_core_new$FREG7_Gender == "male", "
                                              
 
 
-helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")]
-helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")]
+helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight", "DLAB27_Hba1C_Percent",
+                   "DLAB83_CRP", "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L")]
+helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight", "DLAB27_HbA1c_Percent",
+                   "DLAB83_CRP", "DLAB81_Insulin", "DLAB25_Gluf_mmol_L")]
 # helios_core_old
 # helios_core_new
 
@@ -42,6 +44,9 @@ helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Ge
 ```{r}
 library(writexl)
 helios800 = rbind(helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")], helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")])
+
+helios500 = helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight", "DLAB27_Hba1C_Percent",
+                   "DLAB83_CRP", "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L")]
 helios800
 #write_xlsx(helios800, "data/helios800.xlsx")
 ```
@@ -52,6 +57,23 @@ helios800$BMI_groups <- cut(helios800$BMI, breaks = c(0,18.5,23,25,Inf),
                   include.lowest = TRUE, right = FALSE)
 helios800
 #write_xlsx(helios800, "data/helios800.xlsx")
+```
+```{r}
+helios500$BMI = helios500$DBI14_Weight/(helios500$DBI13_Height*0.01)^2
+helios500$BMI_groups <- cut(helios500$BMI, breaks = c(0,18.5,23,25,Inf),
+                  labels = c("Underweight", "Normal", "Overweight", "Obese"),
+                  include.lowest = TRUE, right = FALSE)
+helios500$diabetes_status <- ifelse(helios500$DLAB27_Hba1C_Percent > 6.4, "diabetes",
+                                   ifelse(helios500$DLAB27_Hba1C_Percent >= 5.7 & helios500$DLAB27_Hba1C_Percent <= 6.4, "pre-diabetes",
+                                          ifelse(helios500$DLAB27_Hba1C_Percent < 5.7, "normal", NA)))
+
+helios500$glucose <- ifelse(helios500$DLAB25_Gluf_Mmol_L > 7, "diabetes",
+                                   ifelse(helios500$DLAB25_Gluf_Mmol_L >= 5.6 & helios500$DLAB25_Gluf_Mmol_L <= 7, "pre-diabetes",
+                                          ifelse(helios500$DLAB25_Gluf_Mmol_L >= 3.9 & helios500$DLAB25_Gluf_Mmol_L <= 5.6, "normal",
+                                                 ifelse(helios500$DLAB25_Gluf_Mmol_L < 3.9, "hypoglycemia", NA))))
+helios500$HOMA <- helios500$DLAB81_Insulin * helios500$DLAB25_Gluf_Mmol_L / 22.5
+helios500
+#write_xlsx(helios500, "data/helios500_clinical.xlsx")
 ```
 
 

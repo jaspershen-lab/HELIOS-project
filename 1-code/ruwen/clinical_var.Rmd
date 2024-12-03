@@ -1,0 +1,338 @@
+---
+title: "clinical_var"
+author: "Ruwen Zhou"
+date: "12/2/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggraph)
+library(igraph)
+library(Hmisc)
+library(writexl)
+
+library(tidygraph)
+library(ppcor)
+
+library(reshape2)
+library(ComplexHeatmap)
+```
+
+
+```{r}
+food_data = read_xlsx("data/FFQA862.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species1 = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/helios500_clinical.xlsx")
+
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms", "Papaya", "Orange", "Chapati"), as.numeric))
+food_data
+nutrition_data
+species1
+metadata
+```
+
+```{r}
+# colnames(species)[1] = "Participant_ID"
+# colnames(metadata)[2] = "Participant_ID"
+# threshold <- nrow(species) * 0.5
+# 
+# species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+# species_filtered1
+# species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+# 
+# #abundance_threshold <- 0.0001
+# #species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+# #species_filtered2
+# species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "Homo sapiens")]
+# #species_filtered2$`Homo sapiens`
+# #species_filtered2
+# food_data[is.na(food_data)] <- 0
+# #food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
+# nutrition_data[is.na(nutrition_data)] <- 0
+```
+
+
+```{r}
+unique_species <- read.csv("figure/unique_significant_species.csv")
+unique_species$species
+colnames(species1)[1] = "Participant_ID"
+sig_species <- species1 %>%
+  dplyr::select("Participant_ID", all_of(unique_species$species))
+
+colnames(metadata)[2] = "Participant_ID"
+```
+
+
+```{r}
+sig_species
+metadata
+sig_species <- sig_species %>%
+  mutate(Participant_ID = as.character(Participant_ID))
+
+metadata <- metadata %>%
+  mutate(Participant_ID = as.character(Participant_ID))
+```
+
+```{r}
+merged_data <- sig_species %>%
+  inner_join(metadata, by = "Participant_ID")
+
+# Define columns
+species_cols <- colnames(sig_species)[colnames(sig_species) != "Participant_ID"]
+clinical_vars <- c("DLAB27_Hba1C_Percent", "DLAB83_CRP", 
+                  "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L", "BMI", "HOMA")
+
+# Initialize matrices for correlations and p-values
+cor_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(clinical_vars))
+p_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(clinical_vars))
+
+# Calculate partial correlations
+for(i in 1:length(species_cols)) {
+  for(j in 1:length(clinical_vars)) {
+    # Create temporary dataset with ranked variables
+    temp_data <- data.frame(
+      species = rank(merged_data[[species_cols[i]]]),
+      clinical = rank(merged_data[[clinical_vars[j]]]),
+      gender = as.numeric(merged_data$FREG7_Gender == "M"),
+      age = rank(merged_data$FREG8_Age),
+      ethnic_C = as.numeric(merged_data$FREG5_Ethnic_Group == "C"),
+      ethnic_I = as.numeric(merged_data$FREG5_Ethnic_Group == "I"),
+      ethnic_M = as.numeric(merged_data$FREG5_Ethnic_Group == "M")
+    )
+    
+    # Calculate partial correlation
+    pcor_result <- pcor.test(temp_data$species, temp_data$clinical,
+                            temp_data[,c("gender", "age", 
+                                       "ethnic_C", "ethnic_I", "ethnic_M")])
+    
+    # Cap correlation values at ±0.2
+    cor_matrix[i,j] <- pmin(pmax(pcor_result$estimate, -0.15), 0.15)
+    p_matrix[i,j] <- pcor_result$p.value
+  }
+}
+
+# Add row and column names
+rownames(cor_matrix) <- species_cols
+colnames(cor_matrix) <- clinical_vars
+rownames(p_matrix) <- species_cols
+colnames(p_matrix) <- clinical_vars
+
+# Perform clustering
+species_dist <- dist(cor_matrix)
+species_clust <- hclust(species_dist)
+species_order <- species_clust$labels[species_clust$order]
+
+clinical_dist <- dist(t(cor_matrix))
+clinical_clust <- hclust(clinical_dist)
+clinical_order <- clinical_clust$labels[clinical_clust$order]
+
+# Convert to long format
+melted_cor <- melt(cor_matrix)
+melted_p <- melt(p_matrix)
+colnames(melted_cor) <- c("Species", "Clinical", "Correlation")
+melted_cor$Significant <- melted_p$value < 0.05
+
+# Set factor levels based on clustering
+melted_cor$Species <- factor(melted_cor$Species, levels = species_order)
+melted_cor$Clinical <- factor(melted_cor$Clinical, levels = clinical_order)
+
+# Create the plot
+ggplot(melted_cor, aes(x = Clinical, y = Species, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = rev(colorRampPalette(brewer.pal(11, "RdBu"))(100)), 
+                      limits = c(-0.15, 0.15)) +
+  geom_text(aes(label = ifelse(Significant, "*", "")), 
+            color = "black", size = 5) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(face = "italic"),
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Spearman Correlations between Species and Clinical Variables",
+    subtitle = "Adjusted for Gender, Age, and Ethnicity\n* indicates p < 0.05",
+    x = "Clinical Variables",
+    y = "Species"
+  )
+
+# Save the plot if needed
+#ggsave("figure/clinical_species_correlations.pdf", width = 12, height = 10)
+```
+
+```{r}
+library(gridExtra)
+merged_data <- sig_species %>%
+  inner_join(metadata, by = "Participant_ID")
+
+# Define columns
+species_cols <- colnames(sig_species)[colnames(sig_species) != "Participant_ID"]
+continuous_vars <- c("DLAB27_Hba1C_Percent", "DLAB83_CRP", 
+                    "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L", "BMI", "HOMA")
+
+# Initialize matrices for continuous variables
+cont_cor_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(continuous_vars))
+cont_p_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(continuous_vars))
+
+# Initialize vectors for diabetes status
+diab_effect <- numeric(length(species_cols))
+diab_p <- numeric(length(species_cols))
+
+# Calculate correlations for continuous variables
+for(i in 1:length(species_cols)) {
+  for(j in 1:length(continuous_vars)) {
+    temp_data <- data.frame(
+      species = rank(merged_data[[species_cols[i]]]),
+      clinical = rank(merged_data[[continuous_vars[j]]]),
+      gender = as.numeric(merged_data$FREG7_Gender == "M"),
+      age = rank(merged_data$FREG8_Age),
+      ethnic_C = as.numeric(merged_data$FREG5_Ethnic_Group == "C"),
+      ethnic_I = as.numeric(merged_data$FREG5_Ethnic_Group == "I"),
+      ethnic_M = as.numeric(merged_data$FREG5_Ethnic_Group == "M")
+    )
+    
+    pcor_result <- pcor.test(temp_data$species, temp_data$clinical,
+                            temp_data[,c("gender", "age", 
+                                       "ethnic_C", "ethnic_I", "ethnic_M")])
+    
+    cont_cor_matrix[i,j] <- pmin(pmax(pcor_result$estimate, -0.2), 0.2)
+    cont_p_matrix[i,j] <- pcor_result$p.value
+  }
+  
+  # Calculate diabetes association
+  temp_data <- data.frame(
+    species_abundance = merged_data[[species_cols[i]]],
+    gender = merged_data$FREG7_Gender,
+    age = merged_data$FREG8_Age,
+    ethnicity = merged_data$FREG5_Ethnic_Group,
+    diabetes = merged_data$diabetes_status
+  )
+  
+  model <- lm(species_abundance ~ gender + age + ethnicity, data = temp_data)
+  species_residuals <- residuals(model)
+  
+  kw_test <- kruskal.test(species_residuals ~ temp_data$diabetes)
+  
+  groups <- split(species_residuals, temp_data$diabetes)
+  means <- sapply(groups, mean)
+  overall_mean <- mean(species_residuals)
+  ss_between <- sum(sapply(groups, length) * (means - overall_mean)^2)
+  ss_total <- sum((species_residuals - overall_mean)^2)
+  eta_squared <- ss_between / ss_total
+  
+  if("diabetes" %in% names(means) && "normal" %in% names(means)) {
+    direction <- sign(means["diabetes"] - means["normal"])
+  } else {
+    direction <- 1
+  }
+  
+  diab_effect[i] <- direction * eta_squared
+  diab_p[i] <- kw_test$p.value
+}
+
+# Prepare continuous variables plot
+rownames(cont_cor_matrix) <- species_cols
+colnames(cont_cor_matrix) <- continuous_vars
+rownames(cont_p_matrix) <- species_cols
+colnames(cont_p_matrix) <- continuous_vars
+
+# Clustering for continuous variables
+species_dist <- dist(cont_cor_matrix)
+species_clust <- hclust(species_dist)
+species_order <- species_clust$labels[species_clust$order]
+
+clinical_dist <- dist(t(cont_cor_matrix))
+clinical_clust <- hclust(clinical_dist)
+clinical_order <- clinical_clust$labels[clinical_clust$order]
+
+# Prepare data for plots
+# Continuous variables
+melted_cont <- melt(cont_cor_matrix)
+melted_cont_p <- melt(cont_p_matrix)
+colnames(melted_cont) <- c("Species", "Clinical", "Correlation")
+melted_cont$Significant <- melted_cont_p$value < 0.05
+melted_cont$Species <- factor(melted_cont$Species, levels = species_order)
+melted_cont$Clinical <- factor(melted_cont$Clinical, levels = clinical_order)
+
+# Diabetes status
+diab_df <- data.frame(
+  Species = species_cols,
+  Effect = diab_effect,
+  P_value = diab_p
+)
+diab_df$Species <- factor(diab_df$Species, levels = species_order)
+diab_df$Significant <- diab_df$P_value < 0.05
+
+# Create continuous variables plot
+p1 <- ggplot(melted_cont, aes(x = Clinical, y = Species, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = rev(colorRampPalette(brewer.pal(11, "RdBu"))(100)), 
+                      limits = c(-0.2, 0.2)) +
+  geom_text(aes(label = ifelse(Significant, "*", "")), 
+            color = "black", size = 5) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(face = "italic"),
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Species Correlations with Clinical Variables",
+    subtitle = "Adjusted for Gender, Age, and Ethnicity\n* indicates p < 0.05",
+    x = "Clinical Variables",
+    y = "Species",
+    fill = "Correlation"
+  )
+
+# Create diabetes status plot
+p2 <- ggplot(diab_df, aes(y = Species, x = Effect)) +
+  geom_bar(stat = "identity", aes(fill = abs(Effect))) +
+  #scale_fill_gradientn(colors = rev(brewer.pal(9, "PuBu"))) +
+  scale_fill_gradient2(low = "white", high = "plum4") +
+  geom_text(aes(label = ifelse(Significant, "*", ""), x = 0), 
+            color = "black", size = 5) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(face = "italic"),
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Species Associations with Diabetes Status",
+    subtitle = "Adjusted for Gender, Age, and Ethnicity\n* indicates p < 0.05",
+    x = "Effect Size (Eta Squared)",
+    y = NULL,
+    fill = "Absolute\nEffect Size"
+  )
+
+# Arrange plots side by side
+grid.arrange(p1, p2, ncol = 2, widths = c(1.5, 1))
+
+# Optionally save the combined plot
+ggsave("figure/clinical_diabetes_associations2.pdf", arrangeGrob(p1, p2, ncol = 2, widths = c(1.5, 1)), width = 15, height = 10)
+```
+
+
+
+
+
+
+
+
+
