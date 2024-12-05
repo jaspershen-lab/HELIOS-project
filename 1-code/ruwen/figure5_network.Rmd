@@ -523,9 +523,9 @@ create_microbiome_knowledge_graph <- function(food_data, nutrition_data,
 ```{r}
 result2 = create_microbiome_knowledge_graph(food_data, nutrition_data, 
                                                 species_filtered1, metadata,
-                                                species_threshold = 0.14)
+                                                species_threshold = 0.18)
 # View the plot
-ggsave("figure/figure5_network3.pdf", result2$plot, width = 24, height = 20)
+ggsave("figure/figure5_network4.pdf", result2$plot, width = 24, height = 20)
 print(result2$plot)
 ```
 

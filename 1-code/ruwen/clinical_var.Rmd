@@ -210,7 +210,7 @@ for(i in 1:length(species_cols)) {
                             temp_data[,c("gender", "age", 
                                        "ethnic_C", "ethnic_I", "ethnic_M")])
     
-    cont_cor_matrix[i,j] <- pmin(pmax(pcor_result$estimate, -0.2), 0.2)
+    cont_cor_matrix[i,j] <- pmin(pmax(pcor_result$estimate, -0.15), 0.15)
     cont_p_matrix[i,j] <- pcor_result$p.value
   }
   
@@ -282,7 +282,7 @@ diab_df$Significant <- diab_df$P_value < 0.05
 p1 <- ggplot(melted_cont, aes(x = Clinical, y = Species, fill = Correlation)) +
   geom_tile() +
   scale_fill_gradientn(colors = rev(colorRampPalette(brewer.pal(11, "RdBu"))(100)), 
-                      limits = c(-0.2, 0.2)) +
+                      limits = c(-0.15, 0.15)) +
   geom_text(aes(label = ifelse(Significant, "*", "")), 
             color = "black", size = 5) +
   theme_minimal() +
@@ -327,7 +327,220 @@ grid.arrange(p1, p2, ncol = 2, widths = c(1.5, 1))
 # Optionally save the combined plot
 ggsave("figure/clinical_diabetes_associations2.pdf", arrangeGrob(p1, p2, ncol = 2, widths = c(1.5, 1)), width = 15, height = 10)
 ```
+## separate ethnicity
+```{r}
+library(gridExtra)
 
+# Function to perform analysis for one ethnic group
+analyze_ethnic_group <- function(merged_data, ethnic_group) {
+  # Filter data for the specific ethnic group
+  ethnic_data <- merged_data %>% 
+    filter(FREG5_Ethnic_Group == ethnic_group)
+  
+  # Get columns
+  species_cols <- colnames(sig_species)[colnames(sig_species) != "Participant_ID"]
+  continuous_vars <- c("DLAB27_Hba1C_Percent", "DLAB83_CRP", 
+                      "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L", "BMI", "HOMA")
+  
+  # Initialize matrices
+  cont_cor_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(continuous_vars))
+  cont_p_matrix <- matrix(NA, nrow = length(species_cols), ncol = length(continuous_vars))
+  diab_effect <- numeric(length(species_cols))
+  diab_p <- numeric(length(species_cols))
+  
+  # Calculate correlations for continuous variables
+  for(i in 1:length(species_cols)) {
+    for(j in 1:length(continuous_vars)) {
+      temp_data <- data.frame(
+        species = rank(ethnic_data[[species_cols[i]]]),
+        clinical = rank(ethnic_data[[continuous_vars[j]]]),
+        gender = as.numeric(ethnic_data$FREG7_Gender == "M"),
+        age = rank(ethnic_data$FREG8_Age)
+      )
+      
+      # Now adjusting only for gender and age
+      pcor_result <- pcor.test(temp_data$species, temp_data$clinical,
+                              temp_data[,c("gender", "age")])
+      
+      cont_cor_matrix[i,j] <- pmin(pmax(pcor_result$estimate, -0.15), 0.15)
+      cont_p_matrix[i,j] <- pcor_result$p.value
+    }
+    
+    # Calculate diabetes association
+    temp_data <- data.frame(
+      species_abundance = ethnic_data[[species_cols[i]]],
+      gender = ethnic_data$FREG7_Gender,
+      age = ethnic_data$FREG8_Age,
+      diabetes = ethnic_data$diabetes_status
+    )
+    
+    # Adjust for gender and age only
+    model <- lm(species_abundance ~ gender + age, data = temp_data)
+    species_residuals <- residuals(model)
+    
+    kw_test <- kruskal.test(species_residuals ~ temp_data$diabetes)
+    
+    groups <- split(species_residuals, temp_data$diabetes)
+    means <- sapply(groups, mean)
+    overall_mean <- mean(species_residuals)
+    ss_between <- sum(sapply(groups, length) * (means - overall_mean)^2)
+    ss_total <- sum((species_residuals - overall_mean)^2)
+    eta_squared <- ss_between / ss_total
+    
+    if("diabetes" %in% names(means) && "normal" %in% names(means)) {
+      direction <- sign(means["diabetes"] - means["normal"])
+    } else {
+      direction <- 1
+    }
+    
+    diab_effect[i] <- direction * eta_squared
+    diab_p[i] <- kw_test$p.value
+  }
+  
+  # Prepare matrices
+  rownames(cont_cor_matrix) <- species_cols
+  colnames(cont_cor_matrix) <- continuous_vars
+  rownames(cont_p_matrix) <- species_cols
+  colnames(cont_p_matrix) <- continuous_vars
+  
+  # Return results
+  list(
+    cont_cor = cont_cor_matrix,
+    cont_p = cont_p_matrix,
+    diab_effect = diab_effect,
+    diab_p = diab_p
+  )
+}
+
+# Analyze each ethnic group
+results_C <- analyze_ethnic_group(merged_data, "C")
+results_I <- analyze_ethnic_group(merged_data, "I")
+results_M <- analyze_ethnic_group(merged_data, "M")
+
+# Function to create plots for one ethnic group
+create_plots <- function(results, species_cols, continuous_vars, group_name) {
+  # Prepare continuous variables plot
+  melted_cont <- melt(results$cont_cor)
+  melted_cont_p <- melt(results$cont_p)
+  colnames(melted_cont) <- c("Species", "Clinical", "Correlation")
+  melted_cont$Significant <- melted_cont_p$value < 0.05
+  
+  # Create continuous variables plot
+  p1 <- ggplot(melted_cont, aes(x = Clinical, y = Species, fill = Correlation)) +
+    geom_tile() +
+    scale_fill_gradientn(colors = rev(colorRampPalette(brewer.pal(11, "RdBu"))(100)), 
+                        limits = c(-0.15, 0.15)) +
+    geom_text(aes(label = ifelse(Significant, "*", "")), 
+              color = "black", size = 5) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.text.y = element_text(face = "italic"),
+      axis.title = element_text(face = "bold"),
+      legend.title = element_text(face = "bold")
+    ) +
+    labs(
+      title = paste("Species Correlations with Clinical Variables -", group_name),
+      subtitle = "Adjusted for Gender and Age\n* indicates p < 0.05",
+      x = "Clinical Variables",
+      y = "Species",
+      fill = "Correlation"
+    )
+  
+  # Prepare diabetes plot data
+  diab_df <- data.frame(
+    Species = species_cols,
+    Effect = results$diab_effect,
+    P_value = results$diab_p
+  )
+  diab_df$Significant <- diab_df$P_value < 0.05
+  
+  # Create diabetes plot
+  p2 <- ggplot(diab_df, aes(y = Species, x = Effect)) +
+    geom_bar(stat = "identity", aes(fill = abs(Effect))) +
+    scale_fill_gradient2(low = "white", high = "plum4") +
+    geom_text(aes(label = ifelse(Significant, "*", ""), x = 0), 
+              color = "black", size = 5) +
+    theme_minimal() +
+    theme(
+      axis.text.y = element_text(face = "italic"),
+      axis.title = element_text(face = "bold"),
+      legend.title = element_text(face = "bold")
+    ) +
+    labs(
+      title = paste("Species Associations with Diabetes Status -", group_name),
+      subtitle = "Adjusted for Gender and Age\n* indicates p < 0.05",
+      x = "Effect Size (Eta Squared)",
+      y = NULL,
+      fill = "Absolute\nEffect Size"
+    )
+  
+  list(continuous = p1, diabetes = p2)
+}
+```
+
+
+```{r}
+# Create plots for each ethnic group
+plots_C <- create_plots(results_C, species_cols, continuous_vars, "Chinese")
+plots_I <- create_plots(results_I, species_cols, continuous_vars, "Indian")
+plots_M <- create_plots(results_M, species_cols, continuous_vars, "Malay")
+
+# plots_C
+# plots_I 
+# plots_M
+```
+
+
+```{r}
+# Arrange all plots
+# Continuous variables plots on top row, diabetes plots on bottom row
+grid.arrange(
+  plots_C$continuous, plots_I$continuous, plots_M$continuous,
+  plots_C$diabetes, plots_I$diabetes, plots_M$diabetes,
+  ncol = 3, nrow = 2
+)
+
+
+ggsave("figure/ethnic_stratified_analysis.pdf",
+       arrangeGrob(plots_C$continuous, plots_I$continuous, plots_M$continuous,
+                  plots_C$diabetes, plots_I$diabetes, plots_M$diabetes,
+                  ncol = 3, nrow = 2),
+       width = 24, height = 16)
+```
+
+```{r}
+# Create summary table
+diabetes_dist <- merged_data %>%
+  group_by(FREG5_Ethnic_Group, diabetes_status) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  # Calculate percentages within each ethnic group
+  group_by(FREG5_Ethnic_Group) %>%
+  mutate(percentage = count/sum(count) * 100)
+
+# Create a plot
+ggplot(diabetes_dist, aes(x = FREG5_Ethnic_Group, y = count, fill = diabetes_status)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), 
+            position = position_stack(vjust = 0.5)) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Diabetes Status by Ethnic Group",
+    x = "Ethnic Group",
+    y = "Count",
+    fill = "Diabetes Status"
+  ) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold")
+  )
+
+# Print numerical summary
+print(diabetes_dist)
+```
 
 
 
