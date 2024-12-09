@@ -63,7 +63,11 @@ species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
 species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "Homo sapiens")]
 #species_filtered2$`Homo sapiens`
 #species_filtered2
-food_data[is.na(food_data)] <- 0
+
+cols_to_fix <- setdiff(names(food_data), "Participant_ID")
+cols_to_fix
+food_data[cols_to_fix][is.na(food_data[cols_to_fix])] <- 0
+# food_data[is.na(food_data)] <- 0
 #food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
 nutrition_data[is.na(nutrition_data)] <- 0
 ```
@@ -73,7 +77,7 @@ nutrition_data[is.na(nutrition_data)] <- 0
 unique_species <- read.csv("figure/unique_significant_species.csv")
 unique_species
 sig_species <- species %>%
-  select("Participant_ID", all_of(unique_species$species))
+  dplyr::select("Participant_ID", all_of(unique_species$species))
 ```
 
 
@@ -140,22 +144,66 @@ food_clust <- hclust(food_dist)
 food_order <- food_clust$labels[food_clust$order]
 
 # Convert to long format with ordered factors
+# melted_cor <- melt(cor_matrix)
+# colnames(melted_cor) <- c("Species", "Food", "Correlation")
+# melted_cor$Significant <- melted_p$value < 0.05
+# 
+# # Set the order based on clustering
+# melted_cor$Species <- factor(melted_cor$Species, levels = species_order)
+# melted_cor$Food <- factor(melted_cor$Food, levels = food_order)
+# 
+# # Create custom color palette
+# extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+# 
+# # Create the plot with italicized species names
+# ggplot(melted_cor, aes(x = Food, y = Species, fill = Correlation)) +
+#   geom_tile() +
+#   scale_fill_gradientn(colors = rev(extended_palette), 
+#                       limits = c(-0.15, 0.15),
+#                       oob = scales::squish) +
+#   geom_text(aes(label = ifelse(Significant, "*", "")), 
+#             color = "black", size = 5) +
+#   theme_minimal() +
+#   theme(
+#     axis.text.x = element_text(angle = 45, hjust = 1),
+#     axis.text.y = element_text(face = "italic"),  # Italicize species names
+#     axis.title = element_text(face = "bold"),
+#     legend.title = element_text(face = "bold")
+#   ) +
+#   labs(
+#     title = "Spearman Correlations between Species and Food Groups",
+#     subtitle = "Adjusted for Gender, Age, and BMI\n* indicates p < 0.05",
+#     x = "Food Groups",
+#     y = "Species"
+#   )
+# #ggsave("figure/figure4_correlation_heatmap.png", width = 12, height = 10, dpi = 300)
+```
+
+```{r}
+# Previous code remains the same until the melting part
+
+# Melt both matrices
 melted_cor <- melt(cor_matrix)
+melted_p <- melt(p_matrix)
 colnames(melted_cor) <- c("Species", "Food", "Correlation")
-melted_cor$Significant <- melted_p$value < 0.05
+colnames(melted_p) <- c("Species", "Food", "P_value")
+
+# Combine the melted data
+melted_data <- melted_cor %>%
+  mutate(Significant = melted_p$P_value < 0.05)
 
 # Set the order based on clustering
-melted_cor$Species <- factor(melted_cor$Species, levels = species_order)
-melted_cor$Food <- factor(melted_cor$Food, levels = food_order)
+melted_data$Species <- factor(melted_data$Species, levels = species_order)
+melted_data$Food <- factor(melted_data$Food, levels = food_order)
 
 # Create custom color palette
 extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
 
 # Create the plot with italicized species names
-ggplot(melted_cor, aes(x = Food, y = Species, fill = Correlation)) +
+ggplot(melted_data, aes(x = Food, y = Species, fill = Correlation)) +
   geom_tile() +
   scale_fill_gradientn(colors = rev(extended_palette), 
-                      limits = c(-0.2, 0.2),
+                      limits = c(-0.15, 0.15),
                       oob = scales::squish) +
   geom_text(aes(label = ifelse(Significant, "*", "")), 
             color = "black", size = 5) +
@@ -172,8 +220,10 @@ ggplot(melted_cor, aes(x = Food, y = Species, fill = Correlation)) +
     x = "Food Groups",
     y = "Species"
   )
-#ggsave("figure/figure4_correlation_heatmap.png", width = 12, height = 10, dpi = 300)
+
+ggsave("figure/figure4_correlation_heatmap_more.png", width = 12, height = 10, dpi = 300)
 ```
+
 
 ```{r}
 # First calculate the overall clustering order from the full dataset
