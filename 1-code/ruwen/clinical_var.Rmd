@@ -551,9 +551,11 @@ library(ape)
 
 # Function for comprehensive diversity analysis
 analyze_diversity <- function(species_data, metadata) {
-  # Ensure species_data only contains abundance columns (remove Participant_ID)
+  # Convert species data to matrix and ensure numeric
   abundance_matrix <- species_data %>% 
-    column_to_rownames("Participant_ID")
+    column_to_rownames("Participant_ID") %>%
+    as.matrix() %>%
+    apply(2, as.numeric)
   
   # Merge metadata
   sample_data <- metadata %>%
@@ -562,9 +564,9 @@ analyze_diversity <- function(species_data, metadata) {
   # Calculate alpha diversity
   calculate_alpha_diversity <- function(abundance_mat) {
     # Calculate various alpha diversity indices
-    shannon <- diversity(abundance_mat, "shannon", base = exp(1))  # Changed syntax
-    simpson <- diversity(abundance_mat, "simpson")                 # Changed syntax
-    observed_features <- specnumber(abundance_mat)
+    shannon <- vegan::diversity(abundance_mat)  # Explicitly use vegan's diversity function
+    simpson <- vegan::diversity(abundance_mat, "simpson")  # Simpson index
+    observed_features <- vegan::specnumber(abundance_mat)  # Species richness
     
     # Combine into a data frame
     alpha_div <- data.frame(
@@ -612,10 +614,10 @@ analyze_diversity <- function(species_data, metadata) {
   
   # Beta Diversity Analysis
   # Calculate Bray-Curtis distance
-  bray_dist <- vegdist(abundance_matrix, method = "bray")
+  bray_dist <- vegan::vegdist(abundance_matrix, method = "bray")
   
   # Perform PCoA
-  pcoa_result <- pcoa(bray_dist)
+  pcoa_result <- ape::pcoa(bray_dist)
   
   # Create PCoA dataframe
   pcoa_df <- data.frame(
@@ -632,8 +634,8 @@ analyze_diversity <- function(species_data, metadata) {
   beta_stats <- list()
   
   # Overall PERMANOVA
-  beta_stats$overall <- adonis2(bray_dist ~ diabetes_status, 
-                              data = sample_data)
+  beta_stats$overall <- vegan::adonis2(bray_dist ~ diabetes_status, 
+                                     data = sample_data)
   
   # PERMANOVA by ethnic group
   beta_stats$by_ethnic <- lapply(unique(sample_data$FREG5_Ethnic_Group), function(ethnic) {
@@ -641,7 +643,7 @@ analyze_diversity <- function(species_data, metadata) {
     ethnic_dist <- as.dist(as.matrix(bray_dist)[ethnic_indices, ethnic_indices])
     ethnic_data <- sample_data[ethnic_indices, ]
     
-    adonis2(ethnic_dist ~ diabetes_status, data = ethnic_data)
+    vegan::adonis2(ethnic_dist ~ diabetes_status, data = ethnic_data)
   })
   names(beta_stats$by_ethnic) <- unique(sample_data$FREG5_Ethnic_Group)
   
@@ -653,7 +655,7 @@ analyze_diversity <- function(species_data, metadata) {
   ))
 }
 
-# Plot function remains the same as before
+# Plot function remains the same
 plot_diversity_results <- function(diversity_results) {
   # Alpha diversity plots
   alpha_plots <- list()
@@ -719,6 +721,17 @@ print(results$alpha_stats)
 
 print("Beta Diversity Statistics:")
 print(results$beta_stats)
+```
+```{r}
+# Check data structure
+str(species_filtered1)
+str(metadata)
+
+# Check for any non-numeric values in species data
+any(!apply(species_filtered1[,-1], 2, is.numeric))
+
+# Check for NAs
+any(is.na(species_filtered1))
 ```
 
 
