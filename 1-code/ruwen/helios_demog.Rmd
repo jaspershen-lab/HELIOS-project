@@ -907,6 +907,118 @@ pheatmap(order_matrix,
          annotation_colors = list(Group = group_colors))
 
 ```
+### z score diabete
+```{r}
+# Extract the significantly differentially abundant taxa
+sig_taxa <- rownames(res)
+sig_taxa <- sig_taxa[sig_taxa != "unclassified"]
+# Extracting the significant OTU table
+sig_otu_table <- otu_table(phyloseq_filtered)[,sig_taxa]
+sig_otu_table_df <- as.data.frame(sig_otu_table)
+
+# Log-transform the data frame
+sig_otu_table_log <- log10(sig_otu_table_df + 1)
+
+# Transpose the data frame to have taxa as rows and samples as columns
+sig_otu_table_log_t <- t(sig_otu_table_log)
+
+# Calculating z-scores
+sig_otu_table_log_t_z <- scale(sig_otu_table_log_t)
+
+# Getting the grouping information from sample data
+grouping_df <- sample_data(phyloseq_filtered)
+grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
+
+# Reordering columns based on diabetes status
+ordered_cols <- order(grouping_df$diabetes_status)
+sig_otu_table_log_matrix_z_ordered <- sig_otu_table_log_t_z[, ordered_cols]
+
+# Create annotation data
+annotation_data <- as.data.frame(grouping_df$diabetes_status[ordered_cols])
+rownames(annotation_data) <- NULL  # Removing row names
+colnames(annotation_data) <- c('Group')
+
+# Assigning colors to groups
+group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
+names(group_colors) <- levels(grouping_df$diabetes_status)
+
+# Plotting the heatmap with annotations
+pheatmap(sig_otu_table_log_matrix_z_ordered, annotation_col = annotation_data, 
+         color = colorRampPalette(rev(RColorBrewer::brewer.pal(11, "RdBu")))(11), show_rownames = TRUE, 
+         show_colnames = FALSE, cluster_cols = FALSE,
+         annotation_colors = group_colors)  # No clustering for columns to maintain group order
+
+
+```
+
+```{r}
+# Extract the significantly differentially abundant taxa
+sig_taxa <- rownames(res)
+sig_taxa <- sig_taxa[sig_taxa != "unclassified"]
+
+# Extracting the significant OTU table
+sig_otu_table <- otu_table(phyloseq_filtered)[,sig_taxa]
+sig_otu_table_df <- as.data.frame(sig_otu_table)
+
+# Log-transform the data frame
+sig_otu_table_log <- log10(sig_otu_table_df + 1)
+
+# Transpose the data frame to have taxa as rows and samples as columns
+sig_otu_table_log_t <- t(sig_otu_table_log)
+
+# Calculating z-scores
+sig_otu_table_log_t_z <- scale(sig_otu_table_log_t)
+
+# Clip the z-scores to [-2, 2]
+sig_otu_table_log_t_z_clipped <- pmin(pmax(sig_otu_table_log_t_z, -2), 2)
+
+# Getting the grouping information from sample data
+grouping_df <- sample_data(phyloseq_filtered)
+grouping_df$diabetes_status <- factor(grouping_df$diabetes_status)
+
+# Reordering columns based on diabetes status
+ordered_cols <- order(grouping_df$diabetes_status)
+sig_otu_table_log_matrix_z_ordered <- sig_otu_table_log_t_z_clipped[, ordered_cols]
+
+# Create annotation data
+annotation_data <- as.data.frame(grouping_df$diabetes_status[ordered_cols])
+rownames(annotation_data) <- NULL  # Removing row names
+colnames(annotation_data) <- c('Group')
+
+# Assigning colors to groups - create named vector for annotation colors
+group_colors <- brewer.pal(n = length(levels(grouping_df$diabetes_status)), "Set1")
+names(group_colors) <- levels(grouping_df$diabetes_status)
+annotation_colors <- list(Group = group_colors)
+
+# Define RdBu color palette with more color gradients
+color_palette <- colorRampPalette(rev(RColorBrewer::brewer.pal(11, "RdBu")))(100)
+```
+
+
+```{r}
+png("figure/diabete_heatmap.png", 
+    width = 12,      # Width in inches
+    height = 8,     # Height in inches
+    res = 300,       # Resolution in dpi
+    units = "in") 
+
+pheatmap(sig_otu_table_log_matrix_z_ordered,
+         annotation_col = annotation_data,
+         color = color_palette,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_colors = annotation_colors,
+         main = "Differential Abundance Heatmap",
+         fontsize_row = 8,
+         annotation_names_col = TRUE,
+         annotation_legend = TRUE,
+         breaks = seq(-2, 2, length.out = 101))  # Set breaks to match the clipped range
+dev.off()
+```
+
+
+
 
 ## ethinity
 ## alpha analysis
