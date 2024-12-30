@@ -46,10 +46,10 @@ metadata
 ```
 
 ```{r}
-colnames(species)[1] = "Participant_ID"
+colnames(species1)[1] = "Participant_ID"
 colnames(metadata)[2] = "Participant_ID"
-threshold <- nrow(species) * 0.5
-species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+threshold <- nrow(species1) * 0.5
+species_filtered1 <- species1 %>% select_if(function(x) sum(x > 0) > threshold)
 species_filtered1
 # species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
 # 
@@ -543,196 +543,242 @@ print(diabetes_dist)
 
 ## overall analysis for clinical variables
 ```{r}
-# Load required libraries
-library(vegan)
-library(ggplot2)
-library(tidyverse)
-library(ape)
 
-# Function for comprehensive diversity analysis
-analyze_diversity <- function(species_data, metadata) {
-  # Convert species data to matrix and ensure numeric
-  abundance_matrix <- species_data %>% 
-    column_to_rownames("Participant_ID") %>%
-    as.matrix() %>%
-    apply(2, as.numeric)
+# Match samples and create merged dataset
+merged_data <- species_filtered1 %>%
+  inner_join(metadata, by = "Participant_ID")
+
+# Print summary of merged data
+print("Summary of merged dataset:")
+print(paste("Number of samples:", nrow(merged_data)))
+print("Samples per diabetes status:")
+print(table(merged_data$diabetes_status))
+print("Samples per ethnic group:")
+print(table(merged_data$FREG5_Ethnic_Group))
+
+# Get species columns (all columns from species_filtered1 except Participant_ID)
+species_cols <- setdiff(colnames(species_filtered1), "Participant_ID")
+print("Number of species columns:")
+print(length(species_cols))
+
+# Verify species columns exist in merged_data
+missing_cols <- species_cols[!species_cols %in% colnames(merged_data)]
+if(length(missing_cols) > 0) {
+  stop("Missing species columns in merged data: ", paste(missing_cols, collapse=", "))
+}
+
+# Extract species abundance matrix
+species_matrix <- as.matrix(merged_data[, species_cols])
+
+# Z-score normalize species abundance
+species_matrix_z <- scale(species_matrix)
+merged_data[, species_cols] <- species_matrix_z
+
+# Convert categorical variables to factors
+merged_data$diabetes_status <- factor(merged_data$diabetes_status, 
+                                    levels = c("normal", "pre-diabetes", "diabetes"))
+merged_data$FREG5_Ethnic_Group <- factor(merged_data$FREG5_Ethnic_Group)
+
+# Function to calculate alpha diversity
+calculate_alpha_diversity <- function(abundance_matrix) {
+  # Ensure non-negative values for diversity calculations
+  abundance_matrix[abundance_matrix < 0] <- 0
   
-  # Merge metadata
-  sample_data <- metadata %>%
-    column_to_rownames("Participant_ID")
-  
-  # Calculate alpha diversity
-  calculate_alpha_diversity <- function(abundance_mat) {
-    # Calculate various alpha diversity indices
-    shannon <- vegan::diversity(abundance_mat)  # Explicitly use vegan's diversity function
-    simpson <- vegan::diversity(abundance_mat, "simpson")  # Simpson index
-    observed_features <- vegan::specnumber(abundance_mat)  # Species richness
-    
-    # Combine into a data frame
-    alpha_div <- data.frame(
-      Shannon = shannon,
-      Simpson = simpson,
-      Observed_Features = observed_features,
-      Sample = rownames(abundance_mat)
-    )
-    
-    return(alpha_div)
-  }
-  
-  # Calculate alpha diversity
-  alpha_diversity <- calculate_alpha_diversity(abundance_matrix)
-  
-  # Add metadata
-  alpha_diversity <- alpha_diversity %>%
-    left_join(metadata %>% 
-                select(Participant_ID, diabetes_status, FREG5_Ethnic_Group) %>%
-                rename(Sample = Participant_ID), 
-              by = "Sample")
-  
-  # Statistical tests for alpha diversity
-  alpha_stats <- list()
-  
-  # Overall analysis
-  alpha_stats$overall <- list(
-    Shannon = kruskal.test(Shannon ~ diabetes_status, data = alpha_diversity),
-    Simpson = kruskal.test(Simpson ~ diabetes_status, data = alpha_diversity),
-    Observed = kruskal.test(Observed_Features ~ diabetes_status, data = alpha_diversity)
+  alpha_div <- data.frame(
+    shannon = diversity(abundance_matrix, index = "shannon"),
+    simpson = diversity(abundance_matrix, index = "simpson"),
+    observed_otus = specnumber(abundance_matrix)
   )
+  return(alpha_div)
+}
+species_matrix
+# Calculate alpha diversity
+alpha_div <- calculate_alpha_diversity(species_matrix)
+alpha_div$diabetes_status <- merged_data$diabetes_status
+alpha_div$FREG5_Ethnic_Group <- merged_data$FREG5_Ethnic_Group
+
+# Plot alpha diversity
+alpha_plot <- alpha_div %>%
+  pivot_longer(cols = c(shannon, simpson, observed_otus),
+               names_to = "metric", values_to = "value") %>%
+  ggplot(aes(x = diabetes_status, y = value, fill = FREG5_Ethnic_Group)) +
+  geom_boxplot() +
+  facet_wrap(~metric, scales = "free_y") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_bw() +
+  labs(x = "Diabetes Status", 
+       y = "Alpha Diversity Value",
+       fill = "Ethnic Group") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.background = element_rect(fill = "white"),
+        strip.text = element_text(face = "bold"))
+
+# Save alpha diversity plot
+ggsave("alpha_diversity.pdf", alpha_plot, width = 12, height = 6)
+
+# Calculate beta diversity (Bray-Curtis dissimilarity)
+beta_dist <- vegdist(species_matrix, method = "bray")
+
+# Perform PCoA
+pcoa_result <- cmdscale(beta_dist, k = 2, eig = TRUE)
+var_explained <- round(100 * pcoa_result$eig / sum(pcoa_result$eig), 2)
+
+# Create PCoA plot
+beta_plot <- data.frame(
+  PC1 = pcoa_result$points[,1],
+  PC2 = pcoa_result$points[,2],
+  diabetes_status = merged_data$diabetes_status,
+  FREG5_Ethnic_Group = merged_data$FREG5_Ethnic_Group
+) %>%
+  ggplot(aes(x = PC1, y = PC2, color = diabetes_status, shape = FREG5_Ethnic_Group)) +
+  geom_point(size = 3, alpha = 0.7) +
+  stat_ellipse(aes(group = interaction(diabetes_status, FREG5_Ethnic_Group)), 
+               level = 0.95, linetype = 2) +
+  scale_color_brewer(palette = "Set1") +
+  theme_bw() +
+  labs(x = paste0("PC1 (", var_explained[1], "%)"),
+       y = paste0("PC2 (", var_explained[2], "%)"),
+       color = "Diabetes Status",
+       shape = "Ethnic Group")
+
+# Save beta diversity plot
+ggsave("beta_diversity.pdf", beta_plot, width = 10, height = 8)
+
+# Perform PERMANOVA
+permanova_result <- adonis2(beta_dist ~ diabetes_status * FREG5_Ethnic_Group, 
+                          data = merged_data, permutations = 999)
+print("PERMANOVA results:")
+print(permanova_result)
+
+# Create abundance heatmap
+# Calculate mean abundance for each combination
+abundance_summary <- merged_data %>%
+  group_by(diabetes_status, FREG5_Ethnic_Group) %>%
+  summarise(across(all_of(species_cols), mean, na.rm = TRUE), .groups = "drop")
+
+# Prepare matrix for heatmap
+plot_matrix <- as.matrix(abundance_summary[, species_cols])
+rownames(plot_matrix) <- paste(abundance_summary$diabetes_status, 
+                             abundance_summary$FREG5_Ethnic_Group, 
+                             sep = "_")
+
+# Create annotation data frame
+annotation_df <- data.frame(
+  diabetes_status = abundance_summary$diabetes_status,
+  FREG5_Ethnic_Group = abundance_summary$FREG5_Ethnic_Group,
+  row.names = rownames(plot_matrix)
+)
+
+# Define annotation colors
+annotation_colors <- list(
+  diabetes_status = c(normal = "#4DAF4A", 
+                     `pre-diabetes` = "#FF7F00", 
+                     diabetes = "#E41A1C"),
+  FREG5_Ethnic_Group = c(C = "#377EB8", 
+                        I = "#984EA3", 
+                        M = "#FF7F00",
+                        O = "#A65628")
+)
+
+# Create and save heatmap
+pdf("abundance_heatmap.pdf", width = 12, height = 8)
+pheatmap(plot_matrix,
+         scale = "none",  # already z-scored
+         color = colorRampPalette(c("navy", "white", "red"))(100),
+         annotation_row = annotation_df,
+         annotation_colors = annotation_colors,
+         main = "Z-scored Species Abundance Heatmap",
+         fontsize_row = 8,
+         fontsize_col = 6,
+         angle_col = 45,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         show_colnames = FALSE)
+dev.off()
+
+# Perform statistical tests
+# Kruskal-Wallis test for alpha diversity
+kruskal_results <- lapply(c("shannon", "simpson", "observed_otus"), function(metric) {
+  kruskal.test(as.formula(paste(metric, "~ diabetes_status")), data = alpha_div)
+})
+names(kruskal_results) <- c("shannon", "simpson", "observed_otus")
+print("Kruskal-Wallis test results:")
+print(kruskal_results)
+
+# Stratified analysis by ethnic group
+# Only analyze groups with sufficient samples (e.g., >30)
+ethnic_groups_to_analyze <- names(table(merged_data$FREG5_Ethnic_Group))[table(merged_data$FREG5_Ethnic_Group) > 30]
+
+for(ethnic in ethnic_groups_to_analyze) {
+  subset_data <- merged_data[merged_data$FREG5_Ethnic_Group == ethnic, ]
   
-  # Analysis by ethnic group
-  alpha_stats$by_ethnic <- lapply(unique(alpha_diversity$FREG5_Ethnic_Group), function(ethnic) {
-    ethnic_data <- alpha_diversity %>% 
-      filter(FREG5_Ethnic_Group == ethnic)
-    
-    list(
-      Shannon = kruskal.test(Shannon ~ diabetes_status, data = ethnic_data),
-      Simpson = kruskal.test(Simpson ~ diabetes_status, data = ethnic_data),
-      Observed = kruskal.test(Observed_Features ~ diabetes_status, data = ethnic_data)
-    )
+  # Calculate alpha diversity for subset
+  subset_matrix <- as.matrix(subset_data[, species_cols])
+  subset_alpha <- calculate_alpha_diversity(subset_matrix)
+  subset_alpha$diabetes_status <- subset_data$diabetes_status
+  
+  # Kruskal-Wallis test for subset
+  subset_kruskal <- lapply(c("shannon", "simpson", "observed_otus"), function(metric) {
+    kruskal.test(as.formula(paste(metric, "~ diabetes_status")), data = subset_alpha)
   })
-  names(alpha_stats$by_ethnic) <- unique(alpha_diversity$FREG5_Ethnic_Group)
+  names(subset_kruskal) <- c("shannon", "simpson", "observed_otus")
   
-  # Beta Diversity Analysis
-  # Calculate Bray-Curtis distance
-  bray_dist <- vegan::vegdist(abundance_matrix, method = "bray")
-  
-  # Perform PCoA
-  pcoa_result <- ape::pcoa(bray_dist)
-  
-  # Create PCoA dataframe
-  pcoa_df <- data.frame(
-    PC1 = pcoa_result$vectors[,1],
-    PC2 = pcoa_result$vectors[,2],
-    Sample = rownames(abundance_matrix)
-  ) %>%
-    left_join(metadata %>% 
-                select(Participant_ID, diabetes_status, FREG5_Ethnic_Group) %>%
-                rename(Sample = Participant_ID), 
-              by = "Sample")
-  
-  # PERMANOVA tests
-  beta_stats <- list()
-  
-  # Overall PERMANOVA
-  beta_stats$overall <- vegan::adonis2(bray_dist ~ diabetes_status, 
-                                     data = sample_data)
-  
-  # PERMANOVA by ethnic group
-  beta_stats$by_ethnic <- lapply(unique(sample_data$FREG5_Ethnic_Group), function(ethnic) {
-    ethnic_indices <- sample_data$FREG5_Ethnic_Group == ethnic
-    ethnic_dist <- as.dist(as.matrix(bray_dist)[ethnic_indices, ethnic_indices])
-    ethnic_data <- sample_data[ethnic_indices, ]
-    
-    vegan::adonis2(ethnic_dist ~ diabetes_status, data = ethnic_data)
-  })
-  names(beta_stats$by_ethnic) <- unique(sample_data$FREG5_Ethnic_Group)
-  
-  return(list(
-    alpha_diversity = alpha_diversity,
-    alpha_stats = alpha_stats,
-    pcoa_data = pcoa_df,
-    beta_stats = beta_stats
-  ))
+  print(paste("\nResults for ethnic group:", ethnic))
+  print(subset_kruskal)
 }
 
-# Plot function remains the same
-plot_diversity_results <- function(diversity_results) {
-  # Alpha diversity plots
-  alpha_plots <- list()
-  
-  # Overall alpha diversity
-  alpha_plots$overall <- ggplot(diversity_results$alpha_diversity, 
-                              aes(x = diabetes_status, y = Shannon)) +
-    geom_boxplot() +
-    geom_jitter(width = 0.2, alpha = 0.5) +
-    theme_bw() +
-    labs(title = "Overall Shannon Diversity by Diabetes Status")
-  
-  # Alpha diversity by ethnic group
-  alpha_plots$by_ethnic <- ggplot(diversity_results$alpha_diversity, 
-                                 aes(x = diabetes_status, y = Shannon, color = FREG5_Ethnic_Group)) +
-    geom_boxplot() +
-    geom_jitter(width = 0.2, alpha = 0.5) +
-    facet_wrap(~FREG5_Ethnic_Group) +
-    theme_bw() +
-    labs(title = "Shannon Diversity by Diabetes Status and Ethnic Group")
-  
-  # Beta diversity PCoA plots
-  beta_plots <- list()
-  
-  # PCoA by diabetes status
-  beta_plots$diabetes <- ggplot(diversity_results$pcoa_data, 
-                               aes(x = PC1, y = PC2, color = diabetes_status)) +
-    geom_point(size = 3, alpha = 0.7) +
-    theme_bw() +
-    labs(title = "PCoA - Samples colored by Diabetes Status")
-  
-  # PCoA by ethnic group
-  beta_plots$ethnic <- ggplot(diversity_results$pcoa_data, 
-                             aes(x = PC1, y = PC2, color = FREG5_Ethnic_Group)) +
-    geom_point(size = 3, alpha = 0.7) +
-    theme_bw() +
-    labs(title = "PCoA - Samples colored by Ethnic Group")
-  
-  return(list(
-    alpha_plots = alpha_plots,
-    beta_plots = beta_plots
-  ))
-}
+# Save all results to RData file
+save(merged_data, alpha_div, permanova_result, kruskal_results, 
+     file = "microbiome_analysis_results.RData")
 ```
 
 
 ```{r}
-# Run the analysis
-results <- analyze_diversity(species_filtered1, metadata)
+# Assuming merged_data is already loaded and contains species and metadata columns
+# Create OTU Table
+OTU <- otu_table(as.matrix(merged_data[, species_cols]), taxa_are_rows = FALSE)
 
-# Create plots
-plots <- plot_diversity_results(results)
+# Make sure the row names of the OTU table are the Participant IDs
+rownames(OTU) <- merged_data$Participant_ID
 
-# View plots
-plots$alpha_plots$overall
-plots$alpha_plots$by_ethnic
-plots$beta_plots$diabetes
-plots$beta_plots$ethnic
+# Create Sample Data
+# Ensure that the sample_data dataframe has Participant_ID as row names
+samples_data <- sample_data(merged_data[, c("diabetes_status", "FREG5_Ethnic_Group", "DLAB27_Hba1C_Percent", "DLAB83_CRP", "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L", "BMI")])
+rownames(samples_data) <- merged_data$Participant_ID
 
-# View statistical results
-print("Alpha Diversity Statistics:")
-print(results$alpha_stats)
-
-print("Beta Diversity Statistics:")
-print(results$beta_stats)
+# Create a phyloseq object
+physeq <- phyloseq(OTU, samples_data)
 ```
+
+
 ```{r}
-# Check data structure
-str(species_filtered1)
-str(metadata)
+library(phyloseq)
+library(dplyr)
 
-# Check for any non-numeric values in species data
-any(!apply(species_filtered1[,-1], 2, is.numeric))
+alpha_diversity <- estimate_richness(physeq, measures = "Shannon")
+# Convert rownames to a column for merging
+alpha_diversity$Participant_ID <- rownames(alpha_diversity)
 
-# Check for NAs
-any(is.na(species_filtered1))
+# Extract sample metadata from the phyloseq object and make it a regular data frame
+sample_metadata <- as.data.frame(sample_data(physeq))
+# Ensure 'Participant_ID' is a column for merging
+sample_metadata$Participant_ID <- rownames(sample_metadata)
+
+# Merge alpha diversity data with sample metadata
+alpha_diversity_full <- merge(alpha_diversity, sample_metadata, by = "Participant_ID")
+
+
+# Now you can plot or analyze your merged data
+# For example, to visualize alpha diversity across diabetes status:
+library(ggplot2)
+ggplot(alpha_diversity_full, aes(x = diabetes_status, y = Shannon)) +
+  geom_boxplot() +
+  labs(title = "Alpha Diversity across Diabetes Status", y = "Shannon Diversity Index", x = "Diabetes Status")
+
 ```
+
+
+
 
 
 
