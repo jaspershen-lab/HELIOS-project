@@ -89,7 +89,321 @@ metadata <- metadata %>%
 ```{r}
 merged_data <- sig_species %>%
   inner_join(metadata, by = "Participant_ID")
+merged_data_all = merged_data %>%
+  inner_join(food_data, by = "Participant_ID")
+merged_data_all$`Bifidobacterium catenulatum`
+```
+# four groups based on bifido and thosai
+```{r}
+# Create binary categories using median splits
+merged_data_all$bifido_cat <- ifelse(
+  merged_data_all$`Bifidobacterium catenulatum` > 
+    median(merged_data_all$`Bifidobacterium catenulatum`), 
+  "High", "Low"
+)
 
+merged_data_all$thosai_cat <- ifelse(
+  merged_data_all$Idli_Thosai > median(merged_data_all$Idli_Thosai), 
+  "High", "Low"
+)
+
+# Create combined groups
+merged_data_all$combined_group <- paste(
+  merged_data_all$bifido_cat, 
+  merged_data_all$thosai_cat
+)
+
+# Create a contingency table
+contingency_table <- table(
+  merged_data_all$combined_group, 
+  merged_data_all$diabetes_status
+)
+
+# View the contingency table
+print(contingency_table)
+```
+
+
+```{r}
+# Perform chi-square test
+chi_test <- chisq.test(contingency_table)
+print(chi_test)
+```
+
+
+```{r}
+# Create a visual representation using ggplot2
+library(ggplot2)
+
+# Convert to percentages
+prop_table <- prop.table(contingency_table, margin = 1) * 100
+
+# Convert to data frame for plotting
+plot_data <- as.data.frame(prop_table)
+colnames(plot_data) <- c("Group", "Diabetes_Status", "Percentage")
+
+# Create stacked bar plot
+ggplot(plot_data, aes(x = Group, y = Percentage, fill = Diabetes_Status)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Diabetes Status by Bifido-Thosai Groups",
+    x = "Bifido-Thosai Group",
+    y = "Percentage (%)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+# Get summary statistics for each group
+library(dplyr)
+
+group_summary <- merged_data_all %>%
+  group_by(combined_group, diabetes_status) %>%
+  summarise(
+    n = n(),
+    percent = n() / nrow(merged_data_all) * 100
+  ) %>%
+  arrange(combined_group, diabetes_status)
+
+print(group_summary)
+```
+```{r}
+# First, create a specific group for high-high vs others
+merged_data_all$special_group <- ifelse(
+  merged_data_all$bifido_cat == "High" & merged_data_all$thosai_cat == "High",
+  "High Bifido & High Thosai",
+  "Other Groups"
+)
+
+# Create contingency table for this specific comparison
+high_high_table <- table(
+  merged_data_all$special_group,
+  merged_data_all$diabetes_status
+)
+
+# Chi-square test
+high_high_chi <- chisq.test(high_high_table)
+print(high_high_chi)
+
+# Calculate proportions within each group
+prop_table <- prop.table(high_high_table, margin = 1) * 100
+
+# Print percentages
+print("Percentage of diabetes status in each group:")
+print(prop_table)
+
+# Visualize using ggplot2
+library(ggplot2)
+
+# Convert to data frame for plotting
+plot_data <- as.data.frame(prop_table)
+colnames(plot_data) <- c("Group", "Diabetes_Status", "Percentage")
+
+# Create bar plot
+ggplot(plot_data, aes(x = Group, y = Percentage, fill = Diabetes_Status)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(
+    title = "Diabetes Status Distribution",
+    subtitle = "High Bifido & High Thosai vs Other Groups",
+    x = "Group",
+    y = "Percentage (%)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# You might also want to perform a logistic regression
+# This will give you odds ratios
+library(stats)
+
+# Create binary outcome for diabetes (1 = diabetes, 0 = normal/pre-diabetes)
+merged_data_all$diabetes_binary <- ifelse(
+  merged_data_all$diabetes_status == "diabetes", 1, 0
+)
+
+# Fit logistic regression
+logistic_model <- glm(
+  diabetes_binary ~ special_group,
+  family = binomial(link = "logit"),
+  data = merged_data_all
+)
+
+# Print odds ratios
+odds_ratios <- exp(coef(logistic_model))
+print("Odds Ratios:")
+print(odds_ratios)
+
+# Calculate risk ratios
+risk_ratio <- function(table) {
+  # Risk in high-high group
+  risk_high <- table["High Bifido & High Thosai", "diabetes"] / 
+    sum(table["High Bifido & High Thosai", ])
+  
+  # Risk in other groups
+  risk_other <- table["Other Groups", "diabetes"] / 
+    sum(table["Other Groups", ])
+  
+  return(risk_high / risk_other)
+}
+
+rr <- risk_ratio(high_high_table)
+print("Risk Ratio (High-High vs Others):")
+print(rr)
+```
+# only in indian
+```{r}
+only_i = subset(merged_data_all, FREG5_Ethnic_Group == "I")
+only_i$`Bifidobacterium catenulatum`
+```
+```{r}
+# Create binary categories using median splits
+only_i$bifido_cat <- ifelse(
+  only_i$`Bifidobacterium catenulatum` > 
+    median(only_i$`Bifidobacterium catenulatum`), 
+  "High", "Low"
+)
+
+only_i$thosai_cat <- ifelse(
+  only_i$Idli_Thosai > median(only_i$Idli_Thosai), 
+  "High", "Low"
+)
+
+# Create combined groups
+only_i$combined_group <- paste(
+  only_i$bifido_cat, 
+  only_i$thosai_cat
+)
+
+# Create a contingency table
+contingency_table_i <- table(
+  only_i$combined_group, 
+  only_i$diabetes_status
+)
+
+# View the contingency table
+print(contingency_table_i)
+```
+
+
+```{r}
+# Perform chi-square test
+chi_test <- chisq.test(contingency_table_i)
+print(chi_test)
+```
+
+
+```{r}
+# Create a visual representation using ggplot2
+library(ggplot2)
+
+# Convert to percentages
+prop_table <- prop.table(contingency_table_i, margin = 1) * 100
+
+# Convert to data frame for plotting
+plot_data <- as.data.frame(prop_table)
+colnames(plot_data) <- c("Group", "Diabetes_Status", "Percentage")
+
+# Create stacked bar plot
+ggplot(plot_data, aes(x = Group, y = Percentage, fill = Diabetes_Status)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Diabetes Status by Bifido-Thosai Groups",
+    x = "Bifido-Thosai Group",
+    y = "Percentage (%)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+
+# First, create a specific group for high-high vs others
+only_i$special_group <- ifelse(
+  only_i$bifido_cat == "High" & only_i$thosai_cat == "High",
+  "High Bifido & High Thosai",
+  "Other Groups"
+)
+
+# Create contingency table for this specific comparison
+high_high_table <- table(
+  only_i$special_group,
+  only_i$diabetes_status
+)
+
+# Chi-square test
+high_high_chi <- chisq.test(high_high_table)
+print(high_high_chi)
+
+# Calculate proportions within each group
+prop_table <- prop.table(high_high_table, margin = 1) * 100
+
+# Print percentages
+print("Percentage of diabetes status in each group:")
+print(prop_table)
+
+# Visualize using ggplot2
+library(ggplot2)
+
+# Convert to data frame for plotting
+plot_data <- as.data.frame(prop_table)
+colnames(plot_data) <- c("Group", "Diabetes_Status", "Percentage")
+
+# Create bar plot
+ggplot(plot_data, aes(x = Group, y = Percentage, fill = Diabetes_Status)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(
+    title = "Diabetes Status Distribution",
+    subtitle = "High Bifido & High Thosai vs Other Groups",
+    x = "Group",
+    y = "Percentage (%)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# You might also want to perform a logistic regression
+# This will give you odds ratios
+library(stats)
+
+# Create binary outcome for diabetes (1 = diabetes, 0 = normal/pre-diabetes)
+only_i$diabetes_binary <- ifelse(
+  only_i$diabetes_status == "diabetes", 1, 0
+)
+
+# Fit logistic regression
+logistic_model <- glm(
+  diabetes_binary ~ special_group,
+  family = binomial(link = "logit"),
+  data = only_i
+)
+
+# Print odds ratios
+odds_ratios <- exp(coef(logistic_model))
+print("Odds Ratios:")
+print(odds_ratios)
+
+# Calculate risk ratios
+risk_ratio <- function(table) {
+  # Risk in high-high group
+  risk_high <- table["High Bifido & High Thosai", "diabetes"] / 
+    sum(table["High Bifido & High Thosai", ])
+  
+  # Risk in other groups
+  risk_other <- table["Other Groups", "diabetes"] / 
+    sum(table["Other Groups", ])
+  
+  return(risk_high / risk_other)
+}
+
+rr <- risk_ratio(high_high_table)
+print("Risk Ratio (High-High vs Others):")
+print(rr)
+```
+
+
+
+
+
+
+# heatmaps
+```{r}
 # Define columns
 species_cols <- colnames(sig_species)[colnames(sig_species) != "Participant_ID"]
 clinical_vars <- c("DLAB27_Hba1C_Percent", "DLAB83_CRP", 
