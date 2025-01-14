@@ -1091,6 +1091,438 @@ ggplot(alpha_diversity_full, aes(x = diabetes_status, y = Shannon)) +
 
 ```
 
+## food and clinical variables
+```{r}
+food_data
+merged_data_f = food_data %>%
+  inner_join(metadata, by = "Participant_ID")
+```
+
+```{r}
+food_cols <- colnames(food_data)[colnames(food_data) != "Participant_ID"]
+clinical_vars <- c("DLAB27_Hba1C_Percent", "DLAB83_CRP", 
+                  "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L", "BMI", "HOMA")
+food_cols
+# Initialize matrices for correlations and p-values
+cor_matrix <- matrix(NA, nrow = length(food_cols), ncol = length(clinical_vars))
+p_matrix <- matrix(NA, nrow = length(food_cols), ncol = length(clinical_vars))
+
+# Calculate partial correlations
+for(i in 1:length(food_cols)) {
+  for(j in 1:length(clinical_vars)) {
+    # Create temporary dataset with ranked variables
+    temp_data <- data.frame(
+      food = rank(merged_data_f[[food_cols[i]]]),
+      clinical = rank(merged_data_f[[clinical_vars[j]]]),
+      gender = as.numeric(merged_data_f$FREG7_Gender == "M"),
+      age = rank(merged_data_f$FREG8_Age),
+      ethnic_C = as.numeric(merged_data_f$FREG5_Ethnic_Group == "C"),
+      ethnic_I = as.numeric(merged_data_f$FREG5_Ethnic_Group == "I"),
+      ethnic_M = as.numeric(merged_data_f$FREG5_Ethnic_Group == "M")
+    )
+    
+    # Calculate partial correlation
+    pcor_result <- pcor.test(temp_data$food, temp_data$clinical,
+                            temp_data[,c("gender", "age", 
+                                       "ethnic_C", "ethnic_I", "ethnic_M")])
+    
+    # Cap correlation values at ±0.2
+    cor_matrix[i,j] <- pmin(pmax(pcor_result$estimate, -0.15), 0.15)
+    p_matrix[i,j] <- pcor_result$p.value
+  }
+}
+
+# Add row and column names
+rownames(cor_matrix) <- food_cols
+colnames(cor_matrix) <- clinical_vars
+rownames(p_matrix) <- food_cols
+colnames(p_matrix) <- clinical_vars
+
+# Perform clustering
+food_dist <- dist(cor_matrix)
+food_clust <- hclust(food_dist)
+food_order <- food_clust$labels[food_clust$order]
+
+clinical_dist <- dist(t(cor_matrix))
+clinical_clust <- hclust(clinical_dist)
+clinical_order <- clinical_clust$labels[clinical_clust$order]
+
+# Convert to long format
+melted_cor <- melt(cor_matrix)
+melted_p <- melt(p_matrix)
+colnames(melted_cor) <- c("Food", "Clinical", "Correlation")
+melted_cor$Significant <- melted_p$value < 0.05
+
+# Set factor levels based on clustering
+melted_cor$Food <- factor(melted_cor$Food, levels = food_order)
+melted_cor$Clinical <- factor(melted_cor$Clinical, levels = clinical_order)
+
+# Create the plot
+ggplot(melted_cor, aes(x = Clinical, y = Food, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = rev(colorRampPalette(brewer.pal(11, "RdBu"))(100)), 
+                      limits = c(-0.15, 0.15)) +
+  geom_text(aes(label = ifelse(Significant, "*", "")), 
+            color = "black", size = 5) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(face = "italic"),
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Spearman Correlations between Food and Clinical Variables",
+    subtitle = "Adjusted for Gender, Age, and Ethnicity\n* indicates p < 0.05",
+    x = "Clinical Variables",
+    y = "Food"
+  )
+
+```
+
+
+
+```{r}
+
+
+# Define columns
+food_cols <- colnames(food_data)[colnames(food_data) != "Participant_ID"]
+continuous_vars <- c("DLAB27_Hba1C_Percent", "DLAB83_CRP", 
+                    "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L", "BMI", "HOMA")
+
+# Initialize matrices for continuous variables
+cont_cor_matrix <- matrix(NA, nrow = length(food_cols), ncol = length(continuous_vars))
+cont_p_matrix <- matrix(NA, nrow = length(food_cols), ncol = length(continuous_vars))
+
+# Initialize vectors for diabetes status
+diab_effect <- numeric(length(food_cols))
+diab_p <- numeric(length(food_cols))
+
+# Calculate correlations for continuous variables
+for(i in 1:length(food_cols)) {
+  for(j in 1:length(continuous_vars)) {
+    temp_data <- data.frame(
+      food = rank(merged_data_f[[food_cols[i]]]),
+      clinical = rank(merged_data_f[[continuous_vars[j]]]),
+      gender = as.numeric(merged_data_f$FREG7_Gender == "M"),
+      age = rank(merged_data_f$FREG8_Age),
+      ethnic_C = as.numeric(merged_data_f$FREG5_Ethnic_Group == "C"),
+      ethnic_I = as.numeric(merged_data_f$FREG5_Ethnic_Group == "I"),
+      ethnic_M = as.numeric(merged_data_f$FREG5_Ethnic_Group == "M")
+    )
+    
+    pcor_result <- pcor.test(temp_data$food, temp_data$clinical,
+                            temp_data[,c("gender", "age", 
+                                       "ethnic_C", "ethnic_I", "ethnic_M")])
+    
+    cont_cor_matrix[i,j] <- pmin(pmax(pcor_result$estimate, -0.15), 0.15)
+    cont_p_matrix[i,j] <- pcor_result$p.value
+  }
+  
+  # Calculate diabetes association
+  temp_data <- data.frame(
+    food_abundance = merged_data_f[[food_cols[i]]],
+    gender = merged_data_f$FREG7_Gender,
+    age = merged_data_f$FREG8_Age,
+    ethnicity = merged_data_f$FREG5_Ethnic_Group,
+    diabetes = merged_data_f$diabetes_status
+  )
+  
+  model <- lm(food_abundance ~ gender + age + ethnicity, data = temp_data)
+  food_residuals <- residuals(model)
+  
+  kw_test <- kruskal.test(food_residuals ~ temp_data$diabetes)
+  
+  groups <- split(food_residuals, temp_data$diabetes)
+  means <- sapply(groups, mean)
+  overall_mean <- mean(food_residuals)
+  ss_between <- sum(sapply(groups, length) * (means - overall_mean)^2)
+  ss_total <- sum((food_residuals - overall_mean)^2)
+  eta_squared <- ss_between / ss_total
+  
+  if("diabetes" %in% names(means) && "normal" %in% names(means)) {
+    direction <- sign(means["diabetes"] - means["normal"])
+  } else {
+    direction <- 1
+  }
+  
+  diab_effect[i] <- direction * eta_squared
+  diab_p[i] <- kw_test$p.value
+}
+
+# Prepare continuous variables plot
+rownames(cont_cor_matrix) <- food_cols
+colnames(cont_cor_matrix) <- continuous_vars
+rownames(cont_p_matrix) <- food_cols
+colnames(cont_p_matrix) <- continuous_vars
+
+# Clustering for continuous variables
+food_dist <- dist(cont_cor_matrix)
+food_clust <- hclust(food_dist)
+food_order <- food_clust$labels[food_clust$order]
+
+clinical_dist <- dist(t(cont_cor_matrix))
+clinical_clust <- hclust(clinical_dist)
+clinical_order <- clinical_clust$labels[clinical_clust$order]
+
+# Prepare data for plots
+# Continuous variables
+melted_cont <- melt(cont_cor_matrix)
+melted_cont_p <- melt(cont_p_matrix)
+colnames(melted_cont) <- c("Food", "Clinical", "Correlation")
+melted_cont$Significant <- melted_cont_p$value < 0.05
+melted_cont$Food <- factor(melted_cont$Food, levels = food_order)
+melted_cont$Clinical <- factor(melted_cont$Clinical, levels = clinical_order)
+
+# Diabetes status
+diab_df <- data.frame(
+  Food = food_cols,
+  Effect = diab_effect,
+  P_value = diab_p
+)
+diab_df$Food <- factor(diab_df$Food, levels = food_order)
+diab_df$Significant <- diab_df$P_value < 0.05
+
+# Create continuous variables plot
+p1 <- ggplot(melted_cont, aes(x = Clinical, y = Food, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = rev(colorRampPalette(brewer.pal(11, "RdBu"))(100)), 
+                      limits = c(-0.15, 0.15)) +
+  geom_text(aes(label = ifelse(Significant, "*", "")), 
+            color = "black", size = 5) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(face = "italic"),
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Food Correlations with Clinical Variables",
+    subtitle = "Adjusted for Gender, Age, and Ethnicity\n* indicates p < 0.05",
+    x = "Clinical Variables",
+    y = "Food",
+    fill = "Correlation"
+  )
+
+# Create diabetes status plot
+p2 <- ggplot(diab_df, aes(y = Food, x = Effect)) +
+  geom_bar(stat = "identity", aes(fill = abs(Effect))) +
+  #scale_fill_gradientn(colors = rev(brewer.pal(9, "PuBu"))) +
+  scale_fill_gradient2(low = "white", high = "plum4") +
+  geom_text(aes(label = ifelse(Significant, "*", ""), x = 0), 
+            color = "black", size = 5) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(face = "italic"),
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Food Associations with Diabetes Status",
+    subtitle = "Adjusted for Gender, Age, and Ethnicity\n* indicates p < 0.05",
+    x = "Effect Size (Eta Squared)",
+    y = NULL,
+    fill = "Absolute\nEffect Size"
+  )
+
+# Arrange plots side by side
+grid.arrange(p1, p2, ncol = 2, widths = c(1.5, 1))
+
+# Optionally save the combined plot
+ggsave("figure/clinical_food_associations2.pdf", arrangeGrob(p1, p2, ncol = 2, widths = c(1.5, 1)), width = 15, height = 10)
+```
+
+## separate ethnic groups
+```{r}
+
+# Function to perform analysis for one ethnic group
+analyze_ethnic_group <- function(merged_data_f, ethnic_group) {
+  # Filter data for the specific ethnic group
+  ethnic_data <- merged_data_f %>% 
+    filter(FREG5_Ethnic_Group == ethnic_group)
+  
+  # Get columns
+  food_cols <- colnames(food_data)[colnames(food_data) != "Participant_ID"]
+  continuous_vars <- c("DLAB27_Hba1C_Percent", "DLAB83_CRP", 
+                      "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L", "BMI", "HOMA")
+  
+  # Initialize matrices
+  cont_cor_matrix <- matrix(NA, nrow = length(food_cols), ncol = length(continuous_vars))
+  cont_p_matrix <- matrix(NA, nrow = length(food_cols), ncol = length(continuous_vars))
+  diab_effect <- numeric(length(food_cols))
+  diab_p <- numeric(length(food_cols))
+  
+  # Calculate correlations for continuous variables
+  for(i in 1:length(food_cols)) {
+    for(j in 1:length(continuous_vars)) {
+      temp_data <- data.frame(
+        food = rank(ethnic_data[[food_cols[i]]]),
+        clinical = rank(ethnic_data[[continuous_vars[j]]]),
+        gender = as.numeric(ethnic_data$FREG7_Gender == "M"),
+        age = rank(ethnic_data$FREG8_Age)
+      )
+      
+      # Now adjusting only for gender and age
+      pcor_result <- pcor.test(temp_data$food, temp_data$clinical,
+                              temp_data[,c("gender", "age")])
+      
+      cont_cor_matrix[i,j] <- pmin(pmax(pcor_result$estimate, -0.15), 0.15)
+      cont_p_matrix[i,j] <- pcor_result$p.value
+    }
+    
+    # Calculate diabetes association
+    temp_data <- data.frame(
+      food_abundance = ethnic_data[[food_cols[i]]],
+      gender = ethnic_data$FREG7_Gender,
+      age = ethnic_data$FREG8_Age,
+      diabetes = ethnic_data$diabetes_status
+    )
+    
+    # Adjust for gender and age only
+    model <- lm(food_abundance ~ gender + age, data = temp_data)
+    food_residuals <- residuals(model)
+    
+    kw_test <- kruskal.test(food_residuals ~ temp_data$diabetes)
+    
+    groups <- split(food_residuals, temp_data$diabetes)
+    means <- sapply(groups, mean)
+    overall_mean <- mean(food_residuals)
+    ss_between <- sum(sapply(groups, length) * (means - overall_mean)^2)
+    ss_total <- sum((food_residuals - overall_mean)^2)
+    eta_squared <- ss_between / ss_total
+    
+    if("diabetes" %in% names(means) && "normal" %in% names(means)) {
+      direction <- sign(means["diabetes"] - means["normal"])
+    } else {
+      direction <- 1
+    }
+    
+    diab_effect[i] <- direction * eta_squared
+    diab_p[i] <- kw_test$p.value
+  }
+  
+  # Prepare matrices
+  rownames(cont_cor_matrix) <- food_cols
+  colnames(cont_cor_matrix) <- continuous_vars
+  rownames(cont_p_matrix) <- food_cols
+  colnames(cont_p_matrix) <- continuous_vars
+  
+  # Return results
+  list(
+    cont_cor = cont_cor_matrix,
+    cont_p = cont_p_matrix,
+    diab_effect = diab_effect,
+    diab_p = diab_p
+  )
+}
+
+# Analyze each ethnic group
+results_C <- analyze_ethnic_group(merged_data_f, "C")
+results_I <- analyze_ethnic_group(merged_data_f, "I")
+results_M <- analyze_ethnic_group(merged_data_f, "M")
+
+# Function to create plots for one ethnic group
+create_plots <- function(results, food_cols, continuous_vars, group_name) {
+  # Prepare continuous variables plot
+  melted_cont <- melt(results$cont_cor)
+  melted_cont_p <- melt(results$cont_p)
+  colnames(melted_cont) <- c("Food", "Clinical", "Correlation")
+  melted_cont$Significant <- melted_cont_p$value < 0.05
+  
+  # Create continuous variables plot
+  p1 <- ggplot(melted_cont, aes(x = Clinical, y = Food, fill = Correlation)) +
+    geom_tile() +
+    scale_fill_gradientn(colors = rev(colorRampPalette(brewer.pal(11, "RdBu"))(100)), 
+                        limits = c(-0.15, 0.15)) +
+    geom_text(aes(label = ifelse(Significant, "*", "")), 
+              color = "black", size = 5) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.text.y = element_text(face = "italic"),
+      axis.title = element_text(face = "bold"),
+      legend.title = element_text(face = "bold")
+    ) +
+    labs(
+      title = paste("Food Correlations with Clinical Variables -", group_name),
+      subtitle = "Adjusted for Gender and Age\n* indicates p < 0.05",
+      x = "Clinical Variables",
+      y = "Food",
+      fill = "Correlation"
+    )
+  
+  # Prepare diabetes plot data
+  diab_df <- data.frame(
+    Food = food_cols,
+    Effect = results$diab_effect,
+    P_value = results$diab_p
+  )
+  diab_df$Significant <- diab_df$P_value < 0.05
+  
+  # Create diabetes plot
+  p2 <- ggplot(diab_df, aes(y = Food, x = Effect)) +
+    geom_bar(stat = "identity", aes(fill = abs(Effect))) +
+    scale_fill_gradient2(low = "white", high = "plum4") +
+    geom_text(aes(label = ifelse(Significant, "*", ""), x = 0), 
+              color = "black", size = 5) +
+    theme_minimal() +
+    theme(
+      axis.text.y = element_text(face = "italic"),
+      axis.title = element_text(face = "bold"),
+      legend.title = element_text(face = "bold")
+    ) +
+    labs(
+      title = paste("Food Associations with Diabetes Status -", group_name),
+      subtitle = "Adjusted for Gender and Age\n* indicates p < 0.05",
+      x = "Effect Size (Eta Squared)",
+      y = NULL,
+      fill = "Absolute\nEffect Size"
+    )
+  
+  list(continuous = p1, diabetes = p2)
+}
+```
+
+
+```{r}
+# Create plots for each ethnic group
+plots_C <- create_plots(results_C, food_cols, continuous_vars, "Chinese")
+plots_I <- create_plots(results_I, food_cols, continuous_vars, "Indian")
+plots_M <- create_plots(results_M, food_cols, continuous_vars, "Malay")
+
+plots_C
+plots_I
+plots_M
+```
+
+
+```{r}
+# Arrange all plots
+# Continuous variables plots on top row, diabetes plots on bottom row
+grid.arrange(
+  plots_C$continuous, plots_I$continuous, plots_M$continuous,
+  plots_C$diabetes, plots_I$diabetes, plots_M$diabetes,
+  ncol = 3, nrow = 2
+)
+
+
+ggsave("figure/ethnic_food_clinical_analysis.pdf",
+       arrangeGrob(plots_C$continuous, plots_I$continuous, plots_M$continuous,
+                  plots_C$diabetes, plots_I$diabetes, plots_M$diabetes,
+                  ncol = 3, nrow = 2),
+       width = 24, height = 16)
+```
+
+## deal with missing value
+```{r}
+results_C
+```
+
+
+
+
+
 
 
 
