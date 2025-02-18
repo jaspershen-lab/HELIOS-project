@@ -464,14 +464,24 @@ melted_cor$Significant <- melted_p$value < 0.05
 # Set factor levels based on clustering
 melted_cor$Species <- factor(melted_cor$Species, levels = species_order)
 melted_cor$Clinical <- factor(melted_cor$Clinical, levels = clinical_order)
-
+#melted_cor$Clinical
 # Create the plot
+clinical_labels <- c(
+  "BMI" = "BMI",
+  "DLAB27_Hba1C_Percent" = "HbaA1C",
+  "DLAB83_CRP" = "CRP",
+  "HOMA_IR" = "HOMA-IR",
+  "HOMA_B" = "HOMA-B"
+)
+
+# Plot with updated x-axis labels
 ggplot(melted_cor, aes(x = Clinical, y = Species, fill = Correlation)) +
   geom_tile() +
   scale_fill_gradientn(colors = rev(colorRampPalette(brewer.pal(11, "RdBu"))(100)), 
                       limits = c(-0.15, 0.15)) +
   geom_text(aes(label = ifelse(Significant, "*", "")), 
             color = "black", size = 5) +
+  scale_x_discrete(labels = clinical_labels) +  # Rename x-axis labels
   theme_minimal() +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1),
@@ -480,14 +490,14 @@ ggplot(melted_cor, aes(x = Clinical, y = Species, fill = Correlation)) +
     legend.title = element_text(face = "bold")
   ) +
   labs(
-    title = "Spearman Correlations between Species and Clinical Variables",
+    title = "Correlations of Species and Clinical Variable",
     subtitle = "Adjusted for Gender, Age, and Ethnicity\n* indicates p < 0.05",
     x = "Clinical Variables",
     y = "Species"
   )
 
 # Save the plot if needed
-ggsave("figure/clinical_species_correlations2.pdf", width = 10, height = 12)
+ggsave("figure/fig6_clinical_species_correlations.pdf", width = 6, height = 11)
 ```
 
 ```{r}

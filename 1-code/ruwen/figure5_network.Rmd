@@ -783,7 +783,7 @@ create_microbiome_knowledge_graph3 <- function(food_data, nutrition_data,
     # Size scale for degree
     scale_size_continuous(
       name = "Node Degree",
-      range = c(3, 7)  # Reduced size range
+      range = c(3, 9)  # Reduced size range
     ) +
     # Other scales remain the same
     scale_edge_width_continuous(range = c(1, 2)) +
@@ -826,14 +826,291 @@ species_filtered3 = subset(species_filtered1, select = -c(`Homo sapiens`))
 #set.seed(456)
 result4 = create_microbiome_knowledge_graph3(food_data, nutrition_data, 
                                                 species_filtered3, metadata,
-                                                species_threshold = 0.13)
+                                                species_threshold = 0.16)
 # View the plot
 
-ggsave("figure/figure5_network10.pdf", result4$plot, width = 24, height = 20)
+ggsave("figure/figure5_network12.pdf", result4$plot, width = 24, height = 20)
 print(result4$plot)
 ```
+# discrete nodes
+```{r}
+create_microbiome_knowledge_graph4 <- function(food_data, nutrition_data, 
+                                            species_data, metadata,
+                                            species_threshold = 0.3) {  
+  # Ensure all datasets have the same participants and in the same order
+  common_participants <- Reduce(intersect, list(
+    food_data$Participant_ID,
+    nutrition_data$Participant_ID,
+    species_data$Participant_ID,
+    metadata$Participant_ID
+  ))
+  
+  # Filter and arrange all datasets
+  food_data <- food_data %>%
+    filter(Participant_ID %in% common_participants) %>%
+    arrange(Participant_ID)
+  
+  nutrition_data <- nutrition_data %>%
+    filter(Participant_ID %in% common_participants) %>%
+    arrange(Participant_ID)
+  
+  species_data <- species_data %>%
+    filter(Participant_ID %in% common_participants) %>%
+    arrange(Participant_ID)
+  
+  metadata <- metadata %>%
+    filter(Participant_ID %in% common_participants) %>%
+    arrange(Participant_ID)
+  
+  # Create dummy variables for ethnicity
+  ethnicity_vars <- metadata %>%
+    transmute(
+      Participant_ID,
+      Chinese = ifelse(FREG5_Ethnic_Group == "C", 1, 0),
+      Indian = ifelse(FREG5_Ethnic_Group == "I", 1, 0),
+      Malay = ifelse(FREG5_Ethnic_Group == "M", 1, 0)
+    )
+  
+  # Get categories
+  food_categories <- setdiff(colnames(food_data), "Participant_ID")
+  nutrition_categories <- setdiff(colnames(nutrition_data), "Participant_ID")
+  species_categories <- setdiff(colnames(species_data), "Participant_ID")
+  ethnicity_categories <- setdiff(colnames(ethnicity_vars), "Participant_ID")
+  
+  # Correlation function for ethnicity with other data
+  calculate_ethnicity_correlations <- function(data1, categories1, data2, categories2) {
+    mat1 <- as.matrix(data1[, categories1])
+    mat2 <- as.matrix(data2[, categories2])
+    
+    rcorr_result <- rcorr(mat1, mat2, type = "pearson")
+    
+    n1 <- ncol(mat1)
+    n2 <- ncol(mat2)
+    cors <- rcorr_result$r[1:n1, (n1+1):(n1+n2)]
+    p_values <- rcorr_result$P[1:n1, (n1+1):(n1+n2)]
+    
+    rownames(cors) <- categories1
+    colnames(cors) <- categories2
+    rownames(p_values) <- categories1
+    colnames(p_values) <- categories2
+    
+    return(list(correlations = cors, p_values = p_values))
+  }
+  
+  ethnicity_food_results <- calculate_ethnicity_correlations(
+    ethnicity_vars, ethnicity_categories,
+    food_data, food_categories
+  )
+  
+  ethnicity_nutrition_results <- calculate_ethnicity_correlations(
+    ethnicity_vars, ethnicity_categories,
+    nutrition_data, nutrition_categories
+  )
+  
+  ethnicity_species_results <- calculate_ethnicity_correlations(
+    ethnicity_vars, ethnicity_categories,
+    species_data, species_categories
+  )
+  
+  # Existing correlation calculations
+  calculate_correlations <- function(data1, categories1, data2, categories2) {
+    mat1 <- as.matrix(data1[, categories1])
+    mat2 <- as.matrix(data2[, categories2])
+    
+    rcorr_result <- rcorr(cbind(mat1, mat2), type = "spearman")
+    
+    n1 <- ncol(mat1)
+    n2 <- ncol(mat2)
+    cors <- rcorr_result$r[1:n1, (n1+1):(n1+n2)]
+    p_values <- rcorr_result$P[1:n1, (n1+1):(n1+n2)]
+    
+    rownames(cors) <- categories1
+    colnames(cors) <- categories2
+    rownames(p_values) <- categories1
+    colnames(p_values) <- categories2
+    
+    return(list(correlations = cors, p_values = p_values))
+  }
+  
+  species_food_results <- calculate_correlations(
+    species_data, species_categories,
+    food_data, food_categories
+  )
+  
+  species_nutrition_results <- calculate_correlations(
+    species_data, species_categories,
+    nutrition_data, nutrition_categories
+  )
+  
+  # Create edges from correlations
+  create_correlation_edges <- function(cor_results, relationship_type) {
+    cors <- cor_results$correlations
+    p_values <- cor_results$p_values
+    edges <- which(p_values <= 0.01 & abs(cors) >= species_threshold, arr.ind = TRUE)
+    
+    if(nrow(edges) > 0) {
+      tibble(
+        from = rownames(cors)[edges[,1]],
+        to = colnames(cors)[edges[,2]],
+        relationship = relationship_type,
+        weight = cors[cbind(edges[,1], edges[,2])],
+        p_value = p_values[cbind(edges[,1], edges[,2])]
+      )
+    } else {
+      tibble(from = character(), to = character(), 
+             relationship = character(), weight = numeric(),
+             p_value = numeric())
+    }
+  }
+  
+  # Define all nodes
+  ethnicity_nodes <- tibble(
+    id = ethnicity_categories,
+    type = "ethnicity",
+    group = "ethnicity",
+    color = "#9180AC",
+    text_size = 10
+  )
+  
+  food_nodes <- tibble(
+    id = food_categories,
+    type = "food",
+    group = "food",
+    color = "#9DD0C7",
+    text_size = 5
+  )
+  
+  nutrition_nodes <- tibble(
+    id = nutrition_categories,
+    type = "nutrition", 
+    group = "nutrition",
+    color = "#D9BDD8",
+    text_size = 4
+  )
+  
+  species_nodes <- tibble(
+    id = species_categories,
+    type = "species",
+    group = "species",
+    color = "#95A5A6",
+    text_size = 3
+  )
+  
+  nodes <- bind_rows(
+    ethnicity_nodes,
+    food_nodes,
+    nutrition_nodes,
+    species_nodes
+  )
+  
+  # Create edges
+  species_food_edges <- create_correlation_edges(species_food_results, "species_food")
+  species_nutrition_edges <- create_correlation_edges(species_nutrition_results, "species_nutrition")
+  ethnicity_food_edges <- create_correlation_edges(ethnicity_food_results, "ethnicity_food")
+  ethnicity_nutrition_edges <- create_correlation_edges(ethnicity_nutrition_results, "ethnicity_nutrition")
+  ethnicity_species_edges <- create_correlation_edges(ethnicity_species_results, "ethnicity_species")
+  
+  edges <- bind_rows(
+    species_food_edges,
+    species_nutrition_edges,
+    ethnicity_food_edges,
+    ethnicity_nutrition_edges,
+    ethnicity_species_edges
+  ) %>%
+    mutate(correlation_direction = ifelse(weight > 0, "positive", "negative"))
+  
+  all_edge_ids <- unique(c(edges$from, edges$to))
+  nodes <- nodes %>%
+    filter(id %in% all_edge_ids)
+  
+  # Create graph
+  graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE) %>%
+    activate(edges) %>%
+    mutate(abs_weight = abs(weight))
+  
+  graph <- graph %>%
+    activate(nodes) %>%
+    mutate(degree = centrality_degree())
+  
+  # Modified visualization part with more discrete nodes
+  p <- ggraph(graph, layout = "fr", weights = abs_weight) +
+    # Edge visualization with reduced prominence
+    geom_edge_link(aes(color = correlation_direction, 
+                      width = abs(weight),
+                      alpha = abs(weight)),
+                   alpha = 0.8) +  # Reduced overall edge opacity
+    # More discrete node visualization
+    geom_node_point(aes(color = color,
+                       shape = group,
+                       size = degree),
+                   stroke = 1.2,        # Increased border thickness
+                   alpha = 1) +       # Slightly transparent nodes
+    geom_node_text(aes(label = id, size = text_size), 
+                 repel = TRUE,
+                 fontface = "plain",
+                 vjust = 2,            # Increased label distance
+                 segment.size = 0.2,    # Thinner repel lines
+                 max.overlaps = 20) +
+    # Modified shape scale for different node types
+    scale_shape_manual(values = c(
+      "food" = 16,      # hollow circle
+      "nutrition" = 23, # hollow diamond
+      "species" = 24,   # hollow triangle
+      "ethnicity" = 15  # hollow square
+    )) +
+    # More discrete size scale
+    scale_size_continuous(
+      name = "Node Degree",
+      range = c(3, 12),    # Reduced size range
+      breaks = function(x) pretty(x, n = 4)
+    ) +
+    # Adjusted scales for more discrete appearance
+    scale_edge_width_continuous(range = c(0.3, 1.5)) + # Thinner edges
+    scale_edge_color_manual(values = c("positive" = alpha("salmon2", 0.6), 
+                                      "negative" = alpha("steelblue2", 0.6))) +
+    scale_edge_alpha(range = c(0.8, 1)) +
+    scale_color_identity() +
+    # Theme customization
+    theme_graph(base_family = "sans") +
+    labs(title = "Microbiome Knowledge Graph",
+         shape = "Node Type",
+         size = "Connections") +
+    theme(
+      legend.position = "right",
+      plot.margin = margin(20, 20, 20, 20),
+      legend.box = "vertical",
+      plot.background = element_rect(fill = "white", color = NA)
+    )
+  
+  return(list(
+    graph = graph,
+    plot = p,
+    nodes = nodes,
+    edges = edges,
+    results = list(
+      species_food = species_food_results,
+      species_nutrition = species_nutrition_results,
+      ethnicity_food = ethnicity_food_results,
+      ethnicity_nutrition = ethnicity_nutrition_results,
+      ethnicity_species = ethnicity_species_results
+    )
+  ))
+}
+```
 
+```{r}
+#1717 717
+set.seed(124)
+species_filtered3 = subset(species_filtered1, select = -c(`Homo sapiens`))
+#set.seed(456)
+result5 = create_microbiome_knowledge_graph4(food_data, nutrition_data, 
+                                                species_filtered3, metadata,
+                                                species_threshold = 0.18)
+# View the plot
 
+ggsave("figure/figure5_network13.pdf", result5$plot, width = 24, height = 20)
+print(result5$plot)
+```
 
 
 
