@@ -71,7 +71,8 @@ helios500$glucose <- ifelse(helios500$DLAB25_Gluf_Mmol_L > 7, "diabetes",
                                    ifelse(helios500$DLAB25_Gluf_Mmol_L >= 5.6 & helios500$DLAB25_Gluf_Mmol_L <= 7, "pre-diabetes",
                                           ifelse(helios500$DLAB25_Gluf_Mmol_L >= 3.9 & helios500$DLAB25_Gluf_Mmol_L <= 5.6, "normal",
                                                  ifelse(helios500$DLAB25_Gluf_Mmol_L < 3.9, "hypoglycemia", NA))))
-helios500$HOMA <- helios500$DLAB81_Insulin * helios500$DLAB25_Gluf_Mmol_L / 22.5
+helios500$HOMA_IR = helios500$DLAB81_Insulin * helios500$DLAB25_Gluf_Mmol_L / 22.5
+helios500$HOMA_B = (20 * helios500$DLAB81_Insulin)/(helios500$DLAB25_Gluf_Mmol_L - 3.5)
 helios500
 #write_xlsx(helios500, "data/helios500_clinical.xlsx")
 ```
