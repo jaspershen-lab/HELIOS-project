@@ -1112,6 +1112,30 @@ ggsave("figure/figure5_network13.pdf", result5$plot, width = 24, height = 20)
 print(result5$plot)
 ```
 
+```{r}
+correlation_matrices <- list(
+  species_food = result5$results$species_food$correlations,
+  species_food_pvalues = result5$results$species_food$p_values,
+  species_nutrition = result5$results$species_nutrition$correlations,
+  species_nutrition_pvalues = result5$results$species_nutrition$p_values,
+  ethnicity_food = result5$results$ethnicity_food$correlations,
+  ethnicity_food_pvalues = result5$results$ethnicity_food$p_values,
+  ethnicity_nutrition = result5$results$ethnicity_nutrition$correlations,
+  ethnicity_nutrition_pvalues = result5$results$ethnicity_nutrition$p_values,
+  ethnicity_species = result5$results$ethnicity_species$correlations,
+  ethnicity_species_pvalues = result5$results$ethnicity_species$p_values
+)
+
+# Convert each matrix to a data frame with rownames as a column
+correlation_dfs <- lapply(correlation_matrices, function(mat) {
+  df <- as.data.frame(mat)
+  df <- cbind(rowname = rownames(df), df)
+  return(df)
+})
+
+correlation_dfs
+write_xlsx(correlation_dfs, "data/microbiome_correlations.xlsx")
+```
 
 
 

@@ -221,8 +221,138 @@ ggplot(melted_data, aes(x = Food, y = Species, fill = Correlation)) +
     y = "Species"
   )
 
-ggsave("figure/figure4_correlation_heatmap_more.png", width = 12, height = 10, dpi = 300)
+ggsave("figure/figure4_correlation_heatmap_more2.png", width = 12, height = 10, dpi = 300)
 ```
+## suplymentary
+```{r}
+melted_cor <- melt(cor_matrix)
+melted_p <- melt(p_matrix)
+colnames(melted_cor) <- c("Species", "Food", "Correlation")
+colnames(melted_p) <- c("Species", "Food", "P_value")
+
+# Combine the melted data as it was done in your original code
+melted_data <- melted_cor %>%
+  mutate(Significant = melted_p$P_value < 0.05)
+
+# Add additional columns for formatting
+melted_data <- melted_data %>%
+  mutate(
+         # Add P_value from melted_p
+         P_value = melted_p$P_value,
+         # Format correlation values with 2 decimal places
+         Correlation_formatted = sprintf("%.2f", Correlation),
+         # Format p-values with scientific notation for small values
+         P_value_formatted = case_when(
+           P_value < 0.001 ~ "<0.001",
+           P_value < 0.01 ~ sprintf("%.3f", P_value),
+           TRUE ~ sprintf("%.2f", P_value)
+         ),
+         # Create a label that combines correlation and p-value
+         label = paste0(Correlation_formatted, "\n(", P_value_formatted, ")"))
+
+# Set the order based on clustering
+melted_data$Species <- factor(melted_data$Species, levels = species_order)
+melted_data$Food <- factor(melted_data$Food, levels = food_order)
+
+# Create custom color palette
+extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
+
+# Create the heatmap with values
+ggplot(melted_data, aes(x = Food, y = Species, fill = Correlation)) +
+  geom_tile(color = "white", linewidth = 0.2) +
+  scale_fill_gradientn(colors = rev(extended_palette), 
+                      limits = c(-0.15, 0.15),
+                      oob = scales::squish) +
+  # Add correlation and p-values as text
+  geom_text(aes(label = label,
+                color = abs(Correlation) > 0.1), # Make text more visible for higher correlations
+            size = 2.8) +
+  scale_color_manual(values = c("black", "white"), guide = "none") +
+  # Add asterisk for significant correlations
+  geom_text(data = subset(melted_data, Significant), 
+            aes(label = "*"), 
+            color = "black", size = 5, vjust = -0.8, hjust = 0.8) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(face = "italic"),  # Italicize species names
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold"),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    title = "Spearman Correlations between Species and Food Groups",
+    subtitle = "Adjusted for Gender, Age, and BMI\n* indicates p < 0.05",
+    x = "Food Groups",
+    y = "Species"
+  )
+
+library(gt)
+
+# Create a wide format table of correlations
+cor_table <- melted_data %>%
+  dplyr::select(Species, Food, Correlation, P_value, Significant) %>%
+  mutate(
+    # Create a formatted value that shows correlation (p-value)
+    formatted_value = paste0(
+      sprintf("%.2f", Correlation),
+      " (", 
+      case_when(
+        P_value < 0.001 ~ "p<0.001",
+        TRUE ~ paste0("p=", sprintf("%.3f", P_value))
+      ),
+      ")"
+    ),
+    # Add asterisk for significant values
+    formatted_value = if_else(Significant, paste0(formatted_value, "*"), formatted_value)
+  ) %>%
+  # Convert to wide format for the table
+  pivot_wider(
+    id_cols = Species,
+    names_from = Food,
+    values_from = formatted_value
+  )
+
+# Create a nice looking table with gt
+cor_table %>%
+  gt() %>%
+  tab_header(
+    title = "Correlation Coefficients and P-values",
+    subtitle = "Spearman correlations between species and food groups (* indicates p < 0.05)"
+  ) %>%
+  fmt_markdown(columns = everything()) %>%
+  tab_style(
+    style = cell_text(style = "italic"),
+    locations = cells_body(columns = Species)
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    table.border.top.style = "hidden",
+    heading.border.bottom.style = "solid"
+  )
+
+# If you want to save both as separate files
+ggsave("figure/correlation_heatmap_table.png", width = 12, height = 10, dpi = 300)
+cor_table %>% 
+  gt() %>% 
+  gtsave("correlation_table.html")
+
+# Alternative: Save as Excel file
+if (!require(writexl)) install.packages("writexl")
+library(writexl)
+
+# Convert back to long format for Excel export
+excel_data <- melted_data %>%
+  dplyr::select(Species, Food, Correlation, P_value, Significant) %>%
+  arrange(Species, Food)
+
+write_xlsx(excel_data, "figure/correlation_data.xlsx")
+```
+
 
 
 ```{r}

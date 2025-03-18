@@ -499,6 +499,14 @@ ggplot(melted_cor, aes(x = Clinical, y = Species, fill = Correlation)) +
 # Save the plot if needed
 ggsave("figure/fig6_clinical_species_correlations.pdf", width = 6, height = 11)
 ```
+```{r}
+melted_cor
+p_matrix
+```
+
+
+
+
 
 ```{r}
 library(gridExtra)
