@@ -159,6 +159,39 @@ significant_food(results_CvsIM)
 significant_food(results_IvsCM)
 significant_food(results_MvsCI)
 ```
+```{r}
+# Chinese vs Non-Chinese volcano plot
+
+ggsave(
+  filename = "figure/figure4/volcano_species_strict_C.pdf",
+  plot = volcano_800_C,
+  width = 11.67,  # Converting from pixels to inches (1400px/120dpi)
+  height = 8.33,  # Converting from pixels to inches (1000px/120dpi)
+  device = cairo_pdf
+)
+
+# Malay vs Non-Malay volcano plot
+
+ggsave(
+  filename = "figure/figure4/volcano_species_strict_M.pdf",
+  plot = volcano_800_I,
+  width = 11.67,
+  height = 8.33,
+  device = cairo_pdf
+)
+
+# Indian vs Non-Indian volcano plot
+ggsave(
+  filename = "figure/figure4/volcano_species_strict_I.pdf",
+  plot = volcano_800_M,
+  width = 11.67,
+  height = 8.33,
+  device = cairo_pdf
+)
+```
+
+
+
 
 ```{r}
 png("figure/volcano_food_C_strict.png", width = 1400, height = 1000, res = 120)

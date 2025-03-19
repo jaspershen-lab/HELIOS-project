@@ -216,12 +216,12 @@ ggplot(melted_data, aes(x = Food, y = Species, fill = Correlation)) +
   ) +
   labs(
     title = "Spearman Correlations between Species and Food Groups",
-    subtitle = "Adjusted for Gender, Age, and BMI\n* indicates p < 0.05",
+    subtitle = "Adjusted for Gender, Age, Ethnicity and BMI\n* indicates p < 0.05",
     x = "Food Groups",
     y = "Species"
   )
 
-ggsave("figure/figure4_correlation_heatmap_more2.png", width = 12, height = 10, dpi = 300)
+ggsave("figure/figure3/figure3_correlation_heatmap_more2.pdf", width = 12, height = 10)
 ```
 ## suplymentary
 ```{r}

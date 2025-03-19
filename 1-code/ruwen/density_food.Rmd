@@ -43,7 +43,7 @@ merged_data <- food_data %>%
 # Filter out the 'O' ethnic group and select relevant columns
 plot_data <- merged_data %>%
   filter(FREG5_Ethnic_Group != "O") %>%
-  select(FREG5_Ethnic_Group, everything(), -Participant_ID)
+  dplyr::select(FREG5_Ethnic_Group, everything(), -Participant_ID)
 
 # Get the names of all food columns
 food_columns <- names(plot_data)[names(plot_data) != "FREG5_Ethnic_Group"]
@@ -268,7 +268,7 @@ for (food_group in names(significant_pairs_list)) {
 
 # Print the plot
 print(p)
-ggsave("figure/boxplot_no_outlier_sig.png", plot = p, width = 10, height = 10, dpi = 300)
+ggsave("figure/figure3/boxplot_no_outlier_sig.pdf", plot = p, width = 10, height = 10)
 ```
 
 

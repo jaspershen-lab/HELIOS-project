@@ -919,11 +919,12 @@ species_filtered2
 
 ## overall analysis for clinical variables
 ```{r}
-
+species_filtered2
 # Match samples and create merged dataset
 merged_data_a <- species_filtered2 %>%
   inner_join(metadata, by = "Participant_ID")
-
+species_cols2 = colnames(species_filtered2[,-1])
+species_cols2
 ```
 
 
@@ -931,7 +932,7 @@ merged_data_a <- species_filtered2 %>%
 # Assuming merged_data is already loaded and contains species and metadata columns
 # Create OTU Table
 merged_data_a$BMI_group <- ifelse(merged_data_a$BMI > 25, "Obese", "Non-Obese")
-OTU <- otu_table(as.matrix(merged_data_a[, species_cols]), taxa_are_rows = FALSE)
+OTU <- otu_table(as.matrix(merged_data_a[, species_cols2]), taxa_are_rows = FALSE)
 merged_data_a
 # Make sure the row names of the OTU table are the Participant IDs
 rownames(OTU) <- merged_data_a$Participant_ID
@@ -943,35 +944,42 @@ rownames(samples_data) <- merged_data_a$Participant_ID
 
 # Create a phyloseq object
 physeq <- phyloseq(OTU, samples_data)
-samples_data
+OTU
 ```
 ##obese alpha beta
 ```{r}
-
-plot_richness(physeq, x = "BMI_group", color = "BMI_group", measures = c("Shannon", "Simpson", "Chao1", "Fisher")) + geom_boxplot() + theme_bw()
+comparisons <- list(c("Obese", "Non-Obese"))
+a1 = plot_richness(physeq, x = "BMI_group", color = "BMI_group", measures = c("Shannon", "Simpson", "Chao1", "Fisher")) + geom_boxplot() + theme_bw()+
+    stat_compare_means(comparisons = comparisons, method = "t.test", label = "p.signif", symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), symbols = c("***", "**", "*", "ns")))
+ggsave(
+  filename = "figure/figure6/obese_alpha.pdf",
+  plot = a1,
+  height = 6, 
+  width = 9,
+  device = cairo_pdf)
 
 ```
 ```{r}
 # Compute alpha diversity measures for the physeq object
-alpha_div <- estimate_richness(physeq, measures = c("Shannon", "Simpson", "Chao1", "Fisher"))
-
-# Add BMI group information to the alpha diversity data
-alpha_div$BMI_group <- sam_data$BMI_group
-
-# Run statistical tests for each diversity measure
-p_values <- data.frame(
-  Measure = c("Shannon", "Simpson", "Chao1", "Fisher"),
-  p_value = c(
-    t.test(alpha_div$Shannon ~ alpha_div$BMI_group)$p.value,
-    t.test(alpha_div$Simpson ~ alpha_div$BMI_group)$p.value,
-    t.test(alpha_div$Chao1 ~ alpha_div$BMI_group)$p.value,
-    t.test(alpha_div$Fisher ~ alpha_div$BMI_group)$p.value
-  )
-)
-
-# Optionally, adjust p-values for multiple comparisons (e.g., using FDR correction)
-p_values$p_adj <- p.adjust(p_values$p_value, method = "fdr")
-print(p_values)
+# alpha_div <- estimate_richness(physeq, measures = c("Shannon", "Simpson", "Chao1", "Fisher"))
+# 
+# # Add BMI group information to the alpha diversity data
+# alpha_div$BMI_group <- sam_data$BMI_group
+# 
+# # Run statistical tests for each diversity measure
+# p_values <- data.frame(
+#   Measure = c("Shannon", "Simpson", "Chao1", "Fisher"),
+#   p_value = c(
+#     t.test(alpha_div$Shannon ~ alpha_div$BMI_group)$p.value,
+#     t.test(alpha_div$Simpson ~ alpha_div$BMI_group)$p.value,
+#     t.test(alpha_div$Chao1 ~ alpha_div$BMI_group)$p.value,
+#     t.test(alpha_div$Fisher ~ alpha_div$BMI_group)$p.value
+#   )
+# )
+# 
+# # Optionally, adjust p-values for multiple comparisons (e.g., using FDR correction)
+# p_values$p_adj <- p.adjust(p_values$p_value, method = "fdr")
+# print(p_values)
 ```
 
 
@@ -980,7 +988,13 @@ print(p_values)
 dist = phyloseq::distance(physeq, method="bray")
 phylo.beta = ordinate(physeq, method="PCoA", distance=dist)
 
-plot_ordination(physeq, phylo.beta, type = "samples", color = "BMI_group") + theme_bw() + stat_ellipse(aes(group=BMI_group))
+b1 = plot_ordination(physeq, phylo.beta, type = "samples", color = "BMI_group") + theme_bw() + stat_ellipse(aes(group=BMI_group))
+ggsave(
+  filename = "figure/figure6/obese_beta.pdf",
+  plot = b1,
+  height = 6, 
+  width = 9,
+  device = cairo_pdf)
 ```
 ```{r}
 library(vegan)
@@ -994,6 +1008,49 @@ dist_matrix <- as.matrix(dist)
 
 # Perform PERMANOVA using adonis2
 permanova <- adonis2(dist_matrix ~ sample_data(physeq)$BMI_group)
+
+# Print the PERMANOVA results
+print(permanova)
+```
+
+##diabete alpha beta
+```{r}
+#comparisons <- list(c("Obese", "Non-Obese"))
+physeq_f <- subset_samples(physeq, !is.na(sample_data(physeq)$diabetes_status))
+a2 = plot_richness(physeq_f, x = "diabetes_status", color = "diabetes_status", measures = c("Shannon", "Simpson", "Chao1", "Fisher")) + geom_boxplot() + theme_bw()
+ggsave(
+  filename = "figure/figure6/diabete_alpha.pdf",
+  plot = a2,
+  height = 6, 
+  width = 9,
+  device = cairo_pdf)
+
+```
+
+```{r}
+dist = phyloseq::distance(physeq_f, method="bray")
+phylo.beta = ordinate(physeq_f, method="PCoA", distance=dist)
+
+b2 = plot_ordination(physeq_f, phylo.beta, type = "samples", color = "diabetes_status") + theme_bw() + stat_ellipse(aes(group=diabetes_status))
+ggsave(
+  filename = "figure/figure6/diabetes_beta.pdf",
+  plot = b2,
+  height = 6, 
+  width = 9,
+  device = cairo_pdf)
+```
+```{r}
+library(vegan)
+sample_data(physeq_f)$diabetes_status <- factor(sample_data(physeq_f)$diabetes_status)
+
+#physeq <- subset_samples(physeq, !is.na(sample_data(physeq)$BMI_group))
+
+# Calculate the distance matrix using the ape package
+dist <- phyloseq::distance(physeq_f, method = "bray")
+dist_matrix <- as.matrix(dist)
+
+# Perform PERMANOVA using adonis2
+permanova <- adonis2(dist_matrix ~ sample_data(physeq_f)$diabetes_status)
 
 # Print the PERMANOVA results
 print(permanova)

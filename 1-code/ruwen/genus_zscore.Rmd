@@ -408,11 +408,14 @@ p <- plot_richness(phyloseq_filtered_no_O, x = "FREG5_Ethnic_Group", color = "FR
     scale_fill_manual(values = ethnicity_colors) +
                         
     stat_compare_means(comparisons = comparisons, method = "t.test", label = "p.signif", symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), symbols = c("***", "**", "*", "ns")))
-print(p)
+#print(p)
+ggsave("figure/figure2/alpha.pdf", plot = p, height = 6, width = 10)
 #p + theme(text = element_text(family = "serif"))
+p
 ```
 ## Beta analysis
 ```{r}
+phyloseq_filtered_no_O@sam_data
 dist = phyloseq::distance(phyloseq_filtered_no_O, method="bray")
 phylo.beta = ordinate(phyloseq_filtered_no_O, method="PCoA", distance=dist)
 sample_data(phyloseq_filtered_no_O)$FREG5_Ethnic_Group <- factor(sample_data(phyloseq_filtered_no_O)$FREG5_Ethnic_Group,
@@ -449,8 +452,82 @@ plot_data <- p$data
 p +
   stat_ellipse(aes(fill = FREG5_Ethnic_Group), geom = "polygon", alpha = 0.2) +
   geom_point(aes(color = FREG5_Ethnic_Group)) +
-  labs(color = "Ethnic Group", fill = "Ethnic Group")
+  labs(color = "Ethnic Group", fill = "Ethnic Group")+
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "C"), color = "#9FDDCA") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "#9EA3F1") +
+  geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "#E17887")
+  #theme(text = element_text(family = "serif"))
 ```
+## after the DA only use the significant species
+```{r}
+sample_data(phyloseq_filtered_no_O)$FREG5_Ethnic_Group <- factor(
+  sample_data(phyloseq_filtered_no_O)$FREG5_Ethnic_Group,
+  levels = c("C", "I", "M")
+)
+
+# Convert phyloseq to DESeq2 format
+deseq_data <- phyloseq_to_deseq2(phyloseq_filtered_no_O, ~ FREG5_Ethnic_Group)
+
+# Run DESeq2 analysis
+deseq_data <- DESeq(deseq_data)
+
+# The contrast parameter needs to be specified correctly
+# For a factor variable, use: contrast = c("factor_name", "level_to_compare", "reference_level")
+# You need to run separate comparisons for each pair of groups you want to compare
+
+# For I vs C comparison:
+res_I_vs_C <- results(deseq_data, contrast = c("FREG5_Ethnic_Group", "I", "C"))
+# For M vs C comparison:
+res_M_vs_C <- results(deseq_data, contrast = c("FREG5_Ethnic_Group", "M", "C"))
+# For M vs I comparison:
+res_M_vs_I <- results(deseq_data, contrast = c("FREG5_Ethnic_Group", "M", "I"))
+
+# Set significance threshold
+alpha <- 0.05
+
+# Get significant taxa from each comparison
+sig_taxa_I_vs_C <- rownames(res_I_vs_C)[which(res_I_vs_C$padj < alpha & !is.na(res_I_vs_C$padj))]
+sig_taxa_M_vs_C <- rownames(res_M_vs_C)[which(res_M_vs_C$padj < alpha & !is.na(res_M_vs_C$padj))]
+sig_taxa_M_vs_I <- rownames(res_M_vs_I)[which(res_M_vs_I$padj < alpha & !is.na(res_M_vs_I$padj))]
+
+# Combine all significant taxa
+all_sig_taxa <- unique(c(sig_taxa_I_vs_C, sig_taxa_M_vs_C, sig_taxa_M_vs_I))
+
+# Print summary information
+cat("Significant taxa (I vs C):", length(sig_taxa_I_vs_C), "\n")
+cat("Significant taxa (M vs C):", length(sig_taxa_M_vs_C), "\n")
+cat("Significant taxa (M vs I):", length(sig_taxa_M_vs_I), "\n")
+cat("Total unique significant taxa:", length(all_sig_taxa), "\n")
+
+# Create phyloseq object with only significant taxa
+phyloseq_significant <- prune_taxa(all_sig_taxa, phyloseq_filtered_no_O)
+
+# Now perform PCoA on the significant taxa
+dist_sig <- phyloseq::distance(phyloseq_significant, method="bray")
+phylo.beta_sig <- ordinate(phyloseq_significant, method="PCoA", distance=dist_sig)
+
+# Create the PCoA plot with only significant taxa
+p_sig <- plot_ordination(phyloseq_significant, phylo.beta_sig, type = "samples", color = "FREG5_Ethnic_Group") +
+  theme_bw() +
+  stat_ellipse(aes(group = FREG5_Ethnic_Group)) +
+  scale_color_manual(values = ethnicity_colors) +
+  scale_fill_manual(values = ethnicity_colors) +
+  labs(title = "PCoA of Significant Taxa Only")
+
+# Extract the data from the plot
+plot_data_sig <- p_sig$data
+
+# Add the points in the desired order
+p_sig_final <- p_sig +
+  geom_point(data = subset(plot_data_sig, FREG5_Ethnic_Group == "C"), color = "#9FDDCA") +
+  geom_point(data = subset(plot_data_sig, FREG5_Ethnic_Group == "I"), color = "#9EA3F1") +
+  geom_point(data = subset(plot_data_sig, FREG5_Ethnic_Group == "M"), color = "#E17887")
+
+# Print the plot
+print(p_sig_final)
+```
+
+
 
 
 ## change line type

@@ -156,49 +156,49 @@ p +
 ```
 # NMDS
 ```{r}
-# Perform NMDS using the Bray-Curtis distance matrix
-nmds_result <- metaMDS(food_df_filtered, distance = "bray", k = 2, trymax = 100)
-
-
-nmds_coords <- as.data.frame(scores(nmds_result, display = "sites"))
-nmds_coords$Ethnic_Group <- meta_df_filtered$FREG5_Ethnic_Group
-
-# Plot NMDS
-p = ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = Ethnic_Group)) +
-  geom_point(size = 2, alpha = 0.7) +
-  stat_ellipse(aes(group = Ethnic_Group), type = "norm", linetype = "solid", size = 1) +
-  scale_color_manual(values = ethnicity_colors) +
-  scale_fill_manual(values = ethnicity_colors) +
-  theme_minimal() +
-  labs(
-    title = "NMDS Plot Food Grouped by Ethnic Group",
-    x = "NMDS1",
-    y = "NMDS2",
-    color = "Ethnic Group"
-  ) +
-  theme(
-    text = element_text(size = 14),
-    legend.position = "right"
-  )
-plot_data <- p$data
-p +
-  geom_point(data = subset(plot_data, Ethnic_Group == "C"), color = "#9FDDCA") +
-  geom_point(data = subset(plot_data, Ethnic_Group == "I"), color = "#9EA3F1") +
-  geom_point(data = subset(plot_data, Ethnic_Group == "M"), color = "#E17887")
-  #theme(text = element_text(family = "serif"))
+# # Perform NMDS using the Bray-Curtis distance matrix
+# nmds_result <- metaMDS(food_df_filtered, distance = "bray", k = 2, trymax = 100)
+# 
+# 
+# nmds_coords <- as.data.frame(scores(nmds_result, display = "sites"))
+# nmds_coords$Ethnic_Group <- meta_df_filtered$FREG5_Ethnic_Group
+# 
+# # Plot NMDS
+# p = ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = Ethnic_Group)) +
+#   geom_point(size = 2, alpha = 0.7) +
+#   stat_ellipse(aes(group = Ethnic_Group), type = "norm", linetype = "solid", size = 1) +
+#   scale_color_manual(values = ethnicity_colors) +
+#   scale_fill_manual(values = ethnicity_colors) +
+#   theme_minimal() +
+#   labs(
+#     title = "NMDS Plot Food Grouped by Ethnic Group",
+#     x = "NMDS1",
+#     y = "NMDS2",
+#     color = "Ethnic Group"
+#   ) +
+#   theme(
+#     text = element_text(size = 14),
+#     legend.position = "right"
+#   )
+# plot_data <- p$data
+# p +
+#   geom_point(data = subset(plot_data, Ethnic_Group == "C"), color = "#9FDDCA") +
+#   geom_point(data = subset(plot_data, Ethnic_Group == "I"), color = "#9EA3F1") +
+#   geom_point(data = subset(plot_data, Ethnic_Group == "M"), color = "#E17887")
+#   #theme(text = element_text(family = "serif"))
 
 ```
 
 ```{r}
 
-nmds_permanova_result <- adonis2(food_dist ~ FREG5_Ethnic_Group, data = meta_df_filtered)
-
-# Display the PERMANOVA result
-nmds_permanova_result
-
-# Extract the p-value
-nmds_p_value <- nmds_permanova_result$`Pr(>F)`[1]
-nmds_p_value
+# nmds_permanova_result <- adonis2(food_dist ~ FREG5_Ethnic_Group, data = meta_df_filtered)
+# 
+# # Display the PERMANOVA result
+# nmds_permanova_result
+# 
+# # Extract the p-value
+# nmds_p_value <- nmds_permanova_result$`Pr(>F)`[1]
+# nmds_p_value
 
 ```
 
@@ -354,12 +354,13 @@ p <- plot_ordination(filtered_phylo_sig, phylo.beta, type = "samples", color = "
 plot_data <- p$data
 # Add the points in the desired order using geom_point()
 #c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
-p +
+p1 = p + 
+  stat_ellipse(aes(fill = FREG5_Ethnic_Group), geom = "polygon", alpha = 0.1) +
   geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "C"), color = "#9FDDCA") +
   geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "#9EA3F1") +
   geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "#E17887")
   #theme(text = element_text(family = "serif"))
-
+ggsave("figure/figure2/beta.pdf", plot = p1, height = 6, width = 9)
 ```
 ```{r}
 permanova_result = adonis2(dist ~ FREG5_Ethnic_Group, data = as(sample_data(filtered_phylo_sig), "data.frame"))

@@ -194,7 +194,7 @@ combined_plot <- plots$ethnicity_plot / plots$age_plot / plots$bmi_plot /
                 plot_layout(heights = rep(1, 9))
 
 # Save the combined plot
-ggsave("figure/combined_plots.png", combined_plot, height = 22, width = 10)
+#ggsave("figure/combined_plots.png", combined_plot, height = 22, width = 10)
 ```
 
 ```{r}
@@ -316,30 +316,30 @@ combined_plot <- plots$ethnicity_plot / plots$age_plot / plots$bmi_plot /
                 plot_layout(heights = rep(1, 9))
 
 # Save the combined plot
-ggsave("figure/combined_plots.png", combined_plot, height = 22, width = 10)
+#ggsave("figure/combined_plots.png", combined_plot, height = 22, width = 10)
 ```
 
 ```{r}
 plot_info <- list(
-  list(name = "ethnicity_plot", filename = "figure/figure1_summary/ethnicity_distribution.png"),
-  list(name = "age_plot", filename = "figure/figure1_summary/age_distribution.png"),
-  list(name = "bmi_plot", filename = "figure/figure1_summary/bmi_distribution.png"),
-  list(name = "waist_plot", filename = "figure/figure1_summary/waist_distribution.png"),
-  list(name = "hip_plot", filename = "figure/figure1_summary/hip_distribution.png"),
-  list(name = "dbp_plot", filename = "figure/figure1_summary/dbp_distribution.png"),
-  list(name = "sbp_plot", filename = "figure/figure1_summary/sbp_distribution.png"),
-  list(name = "hr_plot", filename = "figure/figure1_summary/hr_distribution.png"),
-  list(name = "gender_plot", filename = "figure/figure1_summary/gender_distribution.png")
+  list(name = "ethnicity_plot", filename = "figure/figure1_summary/ethnicity_distribution.pdf"),
+  list(name = "age_plot", filename = "figure/figure1_summary/age_distribution.pdf"),
+  list(name = "bmi_plot", filename = "figure/figure1_summary/bmi_distribution.pdf"),
+  list(name = "waist_plot", filename = "figure/figure1_summary/waist_distribution.pdf"),
+  list(name = "hip_plot", filename = "figure/figure1_summary/hip_distribution.pdf"),
+  list(name = "dbp_plot", filename = "figure/figure1_summary/dbp_distribution.pdf"),
+  list(name = "sbp_plot", filename = "figure/figure1_summary/sbp_distribution.pdf"),
+  list(name = "hr_plot", filename = "figure/figure1_summary/hr_distribution.pdf"),
+  list(name = "gender_plot", filename = "figure/figure1_summary/gender_distribution.pdf")
 )
 
-# Save individual plots
+# Save individual plots as PDF (vector) files
 for (plot_item in plot_info) {
   ggsave(
     filename = plot_item$filename,
     plot = plots[[plot_item$name]],
     width = 10,
     height = 3,
-    dpi = 300
+    device = cairo_pdf  # Explicitly use cairo_pdf for high-quality vector output
   )
 }
 ```
@@ -489,7 +489,7 @@ combined_violin_plots <- plot_bmi + plot_age +  plot_waist +
                         plot_layout(ncol = 7, widths = rep(1, 7))
 
 
-ggsave("figure/combined_violin_plots.png", combined_violin_plots, 
+ggsave("figure/figure1_summary/combined_violin_plots.pdf", combined_violin_plots, 
        width = 15, height = 6)
 ```
 

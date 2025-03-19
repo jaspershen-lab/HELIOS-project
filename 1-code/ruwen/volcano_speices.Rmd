@@ -286,6 +286,36 @@ all_unique_species
 ```
 
 
+```{r}
+p1 <- plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
+ggsave(
+  filename = "figure/figure2/volcano_species_strict_C.pdf",
+  plot = p1,
+  width = 11.67,  # Converting from pixels to inches (1400px/120dpi)
+  height = 8.33,  # Converting from pixels to inches (1000px/120dpi)
+  device = cairo_pdf
+)
+
+# Malay vs Non-Malay volcano plot
+p2 <- plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
+ggsave(
+  filename = "figure/figure2/volcano_species_strict_M.pdf",
+  plot = p2,
+  width = 11.67,
+  height = 8.33,
+  device = cairo_pdf
+)
+
+# Indian vs Non-Indian volcano plot
+p3 <- plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
+ggsave(
+  filename = "figure/figure2/volcano_species_strict_I.pdf",
+  plot = p3,
+  width = 11.67,
+  height = 8.33,
+  device = cairo_pdf
+)
+```
 
 
 
