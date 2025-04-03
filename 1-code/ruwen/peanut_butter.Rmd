@@ -1,0 +1,180 @@
+---
+title: "peanut_butter"
+author: "Ruwen Zhou"
+date: "4/3/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r}
+food_data800 <- read_excel("data/all_food_863.xlsx")
+scfa800 <- read_excel("data/scfa_species800.xlsx")
+species_data_800 = read_excel("data/species_866.xlsx")
+food_data800
+scfa800
+species_data_800
+```
+```{r}
+merge_butyrate_peanut = merge(food_data800[,c("participant_id", "peanut_butter")], species_data_800, by.x = "participant_id", by.y = "FREG1_Barcode", all = FALSE)
+merge_butyrate_peanut
+```
+```{r}
+# Calculate correlations between peanut_butter and all microbiome species
+
+# First, let's check the structure of the dataframe
+#str(merge_butyrate_peanut)
+
+# Get the column names to identify which are the species columns
+species_columns <- colnames(merge_butyrate_peanut)[-(1:2)]  # Excluding participant_id and peanut_butter
+
+# Create an empty dataframe to store results
+correlation_results <- data.frame(
+  species = character(),
+  correlation = numeric(),
+  p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Calculate correlation for each species with peanut_butter
+for (species in species_columns) {
+  # Calculate Pearson correlation and p-value
+  cor_test <- cor.test(merge_butyrate_peanut$peanut_butter, 
+                      merge_butyrate_peanut[[species]], 
+                      method = "spearman")
+  
+  # Add results to the dataframe
+  correlation_results <- rbind(correlation_results, 
+                              data.frame(species = species,
+                                        correlation = cor_test$estimate,
+                                        p_value = cor_test$p.value))
+}
+
+# Sort by absolute correlation (strongest correlations first)
+correlation_results <- correlation_results[order(-abs(correlation_results$correlation)), ]
+
+# Adjust p-values for multiple testing using Benjamini-Hochberg method
+correlation_results$adjusted_p_value <- p.adjust(correlation_results$p_value, method = "BH")
+
+# Filter for significant correlations (adjusted p < 0.05)
+significant_correlations <- correlation_results[correlation_results$adjusted_p_value < 0.05, ]
+
+# Display the top correlations
+head(correlation_results, 20)
+
+# Display significant correlations
+print("Significant correlations after multiple testing correction:")
+significant_correlations
+correlation_results
+```
+```{r}
+# Define genera known to contain butyrate producers
+butyrate_genera <- c(
+  "Faecalibacterium",
+  "Eubacterium",
+  "Roseburia",
+  "Anaerostipes",
+  "Coprococcus",
+  "Butyricicoccus",
+  "Clostridium",
+  "Ruminococcus",
+  "Anaerobutyricum"
+)
+
+# Get all column names from the dataframe (excluding participant_id and peanut_butter)
+all_species_cols <- colnames(merge_butyrate_peanut)[-(1:2)]
+
+# Function to check if a column name contains any of the butyrate genera
+contains_butyrate_genus <- function(column_name) {
+  for(genus in butyrate_genera) {
+    if(grepl(genus, column_name, ignore.case = TRUE)) {
+      return(TRUE)
+    }
+  }
+  return(FALSE)
+}
+
+# Filter for columns that contain butyrate-producing genera
+butyrate_species_cols <- all_species_cols[sapply(all_species_cols, contains_butyrate_genus)]
+
+# Print the identified butyrate-producing species
+cat("Identified butyrate-producing species in the dataset:\n")
+print(butyrate_species_cols)
+cat("\nTotal number of butyrate-producing species found:", length(butyrate_species_cols), "\n\n")
+
+# Now calculate correlations only for these butyrate-producing species
+butyrate_correlations <- data.frame(
+  species = character(),
+  correlation = numeric(),
+  p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Calculate correlation for each butyrate-producing species with peanut_butter
+for (species in butyrate_species_cols) {
+  # Calculate Pearson correlation and p-value
+  cor_test <- cor.test(merge_butyrate_peanut$peanut_butter, 
+                      merge_butyrate_peanut[[species]], 
+                      method = "pearson")
+  
+  # Add results to the dataframe
+  butyrate_correlations <- rbind(butyrate_correlations, 
+                                data.frame(species = species,
+                                          correlation = cor_test$estimate,
+                                          p_value = cor_test$p.value))
+}
+
+# Sort by absolute correlation (strongest correlations first)
+butyrate_correlations <- butyrate_correlations[order(-abs(butyrate_correlations$correlation)), ]
+
+# Adjust p-values for multiple testing using Benjamini-Hochberg method
+butyrate_correlations$adjusted_p_value <- p.adjust(butyrate_correlations$p_value, method = "BH")
+
+# Display all butyrate correlations
+print("Correlations between peanut butter and butyrate-producing species:")
+print(butyrate_correlations)
+```
+```{r}
+library(writexl)
+file_path <- "data/butyrate_peanut_correlations.xlsx"
+
+write_xlsx(butyrate_correlations, file_path)
+```
+
+```{r}
+butyrate_correlations[butyrate_correlations$correlation > 0, ]
+```
+
+
+
+```{r}
+# Filter for significant correlations (adjusted p < 0.05)
+significant_butyrate_correlations <- butyrate_correlations[butyrate_correlations$p_value < 0.05, ]
+
+# Display significant correlations
+if(nrow(significant_butyrate_correlations) > 0) {
+  cat("\nSignificant correlations after multiple testing correction:\n")
+  print(significant_butyrate_correlations)
+} else {
+  cat("\nNo significant correlations found after multiple testing correction.\n")
+}
+
+
+```
+
+
+
+
