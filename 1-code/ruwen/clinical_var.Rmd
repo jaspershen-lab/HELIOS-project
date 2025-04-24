@@ -497,7 +497,7 @@ ggplot(melted_cor, aes(x = Clinical, y = Species, fill = Correlation)) +
   )
 
 # Save the plot if needed
-ggsave("figure/fig6_clinical_species_correlations.pdf", width = 6, height = 11)
+#ggsave("figure/fig6_clinical_species_correlations.pdf", width = 6, height = 11)
 ```
 ```{r}
 melted_cor
@@ -1737,6 +1737,228 @@ library(knitr)
 kable(all_summaries, caption = "Summary of Literature Trends in Microbiome Data")
 
 ```
+
+## microbiome score of obesity
+```{r}
+# Select species present in your dataset
+obesity_enriched_present <- intersect(obesity_enriched, colnames(merged_data_filter))
+obesity_depleted_present <- intersect(obesity_depleted, colnames(merged_data_filter))
+
+# Compute row-wise sums of enriched and depleted species
+enriched_sum <- rowSums(merged_data_filter[, obesity_enriched_present], na.rm = TRUE)
+depleted_sum <- rowSums(merged_data_filter[, obesity_depleted_present], na.rm = TRUE)
+
+# Calculate dysbiosis score with pseudocount to avoid division by 0
+merged_data_filter$dysbiosis_score <- log((enriched_sum + 1e-6) / (depleted_sum + 1e-6))
+
+```
+
+```{r}
+# Boxplot of dysbiosis score
+library(ggplot2)
+ggplot(merged_data_filter, aes(x = factor(obesity_binary), y = dysbiosis_score)) +
+  geom_boxplot() +
+  labs(x = "Obesity Status", y = "Dysbiosis Score", title = "Literature-Based Dysbiosis Score")
+
+# Wilcoxon test
+wilcox.test(dysbiosis_score ~ obesity_binary, data = merged_data_filter)
+
+```
+```{r}
+ggplot(merged_data_filter, aes(x = factor(obesity_binary), y = dysbiosis_score)) +
+  geom_violin(fill = "lightgray", alpha = 0.4) +
+  geom_jitter(width = 0.1, alpha = 0.6, color = "steelblue") +
+  geom_boxplot(width = 0.1, outlier.shape = NA) +
+  labs(x = "Obesity Status", y = "Dysbiosis Score", title = "Dysbiosis Score by Obesity Status")
+
+```
+```{r}
+library(effsize)
+cliff.delta(dysbiosis_score ~ obesity_binary, data = merged_data_filter)
+```
+
+```{r}
+library(pROC)
+roc_obj <- roc(merged_data_filter$obesity_binary, merged_data_filter$dysbiosis_score)
+plot(roc_obj, col = "darkred", print.auc = TRUE)
+
+```
+```{r}
+library(pROC)
+
+roc_obj <- roc(merged_data_filter$obesity_binary, merged_data_filter$dysbiosis_score)
+plot(roc_obj, col = "firebrick", main = "ROC Curve for Dysbiosis Score")
+auc(roc_obj)  # print AUC value
+
+```
+
+```{r}
+merged_data_filter$obesity_binary_numeric <- ifelse(merged_data_filter$obesity_binary == "Obese", 1, 0)
+
+# Now re-run logistic regression
+model <- glm(obesity_binary_numeric ~ dysbiosis_score, data = merged_data_filter, family = "binomial")
+summary(model)
+
+```
+
+```{r}
+# Load needed packages
+library(dplyr)
+library(pROC)
+library(ggplot2)
+
+### 1. FILTER FOR MATCHING SPECIES
+# These are your trend results from earlier
+refined_enriched <- obesity_enriched_trends %>%
+  filter(matches_literature == TRUE) %>%
+  pull(species)
+
+refined_depleted <- obesity_depleted_trends %>%
+  filter(matches_literature == TRUE) %>%
+  pull(species)
+
+# Check which ones exist in your dataset
+refined_enriched_present <- intersect(refined_enriched, colnames(merged_data_filter))
+refined_depleted_present <- intersect(refined_depleted, colnames(merged_data_filter))
+
+### 2. COMPUTE REFINED DYSBIOSIS SCORE
+# Compute row-wise sums of enriched and depleted species
+refined_enriched_sum <- rowSums(merged_data_filter[, refined_enriched_present], na.rm = TRUE)
+refined_depleted_sum <- rowSums(merged_data_filter[, refined_depleted_present], na.rm = TRUE)
+
+# Calculate log-ratio score with pseudocount
+merged_data_filter$refined_dysbiosis_score <- log((refined_enriched_sum + 1e-6) / (refined_depleted_sum + 1e-6))
+
+### 3. COMPARE BETWEEN GROUPS
+# Optional boxplot
+ggplot(merged_data_filter, aes(x = factor(obesity_binary), y = refined_dysbiosis_score)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.6) +
+  labs(x = "Obesity Status", y = "Refined Dysbiosis Score", title = "Refined Score by Obesity")
+
+# Wilcoxon test
+wilcox.test(refined_dysbiosis_score ~ obesity_binary, data = merged_data_filter)
+
+### 4. LOGISTIC REGRESSION
+# Make sure outcome is numeric (0/1)
+merged_data_filter$obesity_binary_numeric <- ifelse(merged_data_filter$obesity_binary == "Obese", 1, 0)
+
+# Logistic model
+model_refined <- glm(obesity_binary_numeric ~ refined_dysbiosis_score, data = merged_data_filter, family = "binomial")
+summary(model_refined)
+
+# Odds ratio
+exp(coef(model_refined))
+
+### 5. ROC & AUC
+roc_refined <- roc(merged_data_filter$obesity_binary_numeric, merged_data_filter$refined_dysbiosis_score)
+plot(roc_refined, col = "darkblue", main = "ROC - Refined Dysbiosis Score", print.auc = TRUE)
+auc(roc_refined)
+
+# Optional: get best cutoff and confusion matrix
+best_cutoff <- coords(roc_refined, "best", "threshold")
+merged_data_filter$refined_predicted_class <- ifelse(merged_data_filter$refined_dysbiosis_score > best_cutoff, 1, 0)
+
+table(Predicted = merged_data_filter$refined_predicted_class,
+      Actual = merged_data_filter$obesity_binary_numeric)
+
+```
+#machine learning score
+```{r}
+# Load libraries
+library(randomForest)
+library(pROC)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+
+### 1. Prepare Data
+
+# Ensure Participant_ID is row identifier
+X <- species_filtered2 %>%
+  column_to_rownames("Participant_ID")
+
+# Match sample order and extract obesity label
+y_df <- merged_data_filter %>%
+  dplyr::select(Participant_ID, obesity_binary_numeric) %>%
+  filter(Participant_ID %in% rownames(X))  # ensure only matching samples
+
+# Align rows between X and y
+X <- X[match(y_df$Participant_ID, rownames(X)), ]
+y <- as.factor(y_df$obesity_binary_numeric)
+
+### 2. Train Random Forest
+set.seed(123)
+rf_model <- randomForest(x = X, y = y, ntree = 500, importance = TRUE)
+
+### 3. Predict Probabilities (Dysbiosis Score)
+rf_scores <- predict(rf_model, X, type = "prob")[, "1"]  # probability of being obese
+
+# Add scores back to merged_data_filter
+merged_data_filter <- merged_data_filter %>%
+  left_join(tibble(Participant_ID = y_df$Participant_ID, rf_dysbiosis_score = rf_scores),
+            by = "Participant_ID")
+
+### 4. Evaluate ROC & AUC
+roc_rf <- roc(y, rf_scores)
+plot(roc_rf, col = "tomato", print.auc = TRUE, main = "Random Forest Dysbiosis Score")
+auc_rf <- auc(roc_rf)
+print(paste("AUC:", round(auc_rf, 3)))
+
+### 5. View Top Important Features
+importance_df <- as.data.frame(importance(rf_model)) %>%
+  rownames_to_column("Species") %>%
+  arrange(desc(MeanDecreaseGini))
+
+head(importance_df, 10)  # Top 10 important species
+
+```
+```{r}
+set.seed(123)
+sample_idx <- sample(1:nrow(X), size = 0.8 * nrow(X))
+X_train <- X[sample_idx, ]
+X_test <- X[-sample_idx, ]
+y_train <- y[sample_idx]
+y_test <- y[-sample_idx]
+
+# Train
+rf_model <- randomForest(x = X_train, y = y_train, ntree = 500, importance = TRUE)
+
+# Predict on test set
+rf_scores_test <- predict(rf_model, X_test, type = "prob")[, "1"]
+
+# Evaluate
+roc_test <- roc(y_test, rf_scores_test)
+plot(roc_test, col = "steelblue", print.auc = TRUE, main = "Random Forest - Test Set")
+auc(roc_test)
+
+```
+```{r}
+library(caret)
+
+# Create a combined dataframe
+rf_input <- data.frame(y = y, X)
+
+# Train with cross-validation
+set.seed(123)
+ctrl <- trainControl(method = "cv", number = 5, classProbs = TRUE, summaryFunction = twoClassSummary)
+
+# y must be labeled with strings, not numeric
+rf_input$y <- ifelse(rf_input$y == 1, "Obese", "NonObese")
+
+rf_cv <- train(y ~ ., data = rf_input,
+               method = "rf",
+               metric = "ROC",
+               trControl = ctrl)
+
+print(rf_cv)
+
+```
+
+
+
+
+
 
 ```{r}
 # Function to create violin plots for species with log transformation
