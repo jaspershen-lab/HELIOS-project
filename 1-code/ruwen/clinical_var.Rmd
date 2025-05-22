@@ -1514,7 +1514,8 @@ species_filtered2
 
 merged_data_filter = species_filtered2 %>%
   inner_join(metadata, by = "Participant_ID")
-merged_data_filter
+
+species_filtered2
 ```
 
 ```{r}
@@ -1600,6 +1601,362 @@ merged_data_filter <- merged_data_filter %>%
 #   theme_minimal() +
 #   theme(legend.position = "none")
 ```
+##GMHI
+```{r}
+# GMHI Calculation adapted for your data format
+# Your data: species_filtered2 with Participant_ID in first column, absolute abundances
+
+library(tidyverse)
+
+# First, let's create the species lists adapted to your naming format
+# (converting from s__Genus_species to "Genus species")
+
+# Health-prevalent species (MH) - 7 species
+MH_species_adapted <- c(
+  "Alistipes senegalensis",
+  "Bacteroidales bacterium ph8", 
+  "Bifidobacterium adolescentis",
+  "Bifidobacterium angulatum", 
+  "Bifidobacterium catenulatum",
+  "Lachnospiraceae bacterium 8 1 57FAA",  # Note: multiple underscores become spaces
+  "Sutterella wadsworthensis"
+)
+
+# Health-scarce species (MN) - 43 species  
+MN_species_adapted <- c(
+  "Anaerotruncus colihominis",
+  "Atopobium parvulum",
+  "Bifidobacterium dentium",
+  "Blautia producta", 
+  "candidate division TM7 single cell isolate TM7c",
+  "Clostridiales bacterium 1 7 47FAA",
+  "Clostridium asparagiforme",
+  "Clostridium bolteae",
+  "Clostridium citroniae", 
+  "Clostridium clostridioforme",
+  "Clostridium hathewayi",
+  "Clostridium nexile",
+  "Clostridium ramosum",
+  "Clostridium symbiosum",
+  "Eggerthella lenta",
+  "Erysipelotrichaceae bacterium 2 2 44A",
+  "Flavonifractor plautii",
+  "Fusobacterium nucleatum", 
+  "Gemella morbillorum",
+  "Gemella sanguinis",
+  "Granulicatella adiacens",
+  "Holdemania filiformis",
+  "Klebsiella pneumoniae",
+  "Lachnospiraceae bacterium 1 4 56FAA",
+  "Lachnospiraceae bacterium 2 1 58FAA", 
+  "Lachnospiraceae bacterium 3 1 57FAA CT1",
+  "Lachnospiraceae bacterium 5 1 57FAA",
+  "Lachnospiraceae bacterium 9 1 43BFAA",
+  "Lactobacillus salivarius",
+  "Peptostreptococcus stomatis",
+  "Ruminococcaceae bacterium D16",
+  "Ruminococcus gnavus", 
+  "Solobacterium moorei",
+  "Streptococcus anginosus",
+  "Streptococcus australis", 
+  "Streptococcus gordonii",
+  "Streptococcus infantis",
+  "Streptococcus mitis oralis pneumoniae", 
+  "Streptococcus sanguinis",
+  "Streptococcus vestibularis",
+  "Subdoligranulum sp 4 3 54A2FAA",
+  "Subdoligranulum variabile",
+  "Veillonella atypica"
+)
+
+# Function to calculate GMHI
+calculate_GMHI <- function(species_data) {
+  
+  # Step 0: Debug - check data structure
+  print("Data structure:")
+  print(str(species_data))
+  print("First few columns:")
+  print(head(species_data[, 1:min(5, ncol(species_data))]))
+  
+  # Step 1: Prepare data - set Participant_ID as rownames
+  rownames(species_data) <- species_data$Participant_ID
+  species_data <- species_data[, -1]  # Remove Participant_ID column
+  
+  # Step 1.5: Convert all columns to numeric (handle any character columns)
+  # Check which columns are not numeric
+  non_numeric_cols <- sapply(species_data, function(x) !is.numeric(x))
+  if(any(non_numeric_cols)) {
+    print("Non-numeric columns found:")
+    print(names(species_data)[non_numeric_cols])
+    print("Converting to numeric...")
+    
+    # Convert to numeric, coercing characters to NA, then NA to 0
+    species_data[non_numeric_cols] <- lapply(species_data[non_numeric_cols], function(x) {
+      numeric_x <- as.numeric(as.character(x))
+      numeric_x[is.na(numeric_x)] <- 0
+      return(numeric_x)
+    })
+  }
+  
+  # Check for any remaining issues
+  print("Data summary after conversion:")
+  print(summary(species_data[, 1:min(3, ncol(species_data))]))
+  
+  # Step 2: Convert to relative abundances (normalize by row sums)
+  row_sums <- rowSums(species_data, na.rm = TRUE)
+  print(paste("Row sums range:", min(row_sums), "to", max(row_sums)))
+  
+  # Avoid division by zero
+  row_sums[row_sums == 0] <- 1
+  species_profile <- sweep(species_data, 1, row_sums, `/`)
+  
+  # Step 3: Remove very low abundances and transpose for processing
+  species_profile[species_profile < 0.00001] <- 0
+  species_profile_t <- data.frame(t(species_profile), check.names = FALSE)
+  
+  # Step 4: Extract MH and MN species present in your data
+  # Check which species names match (you may need to adjust these)
+  available_species <- rownames(species_profile_t)
+  
+  # Find matching MH species
+  MH_matches <- available_species[available_species %in% MH_species_adapted]
+  MN_matches <- available_species[available_species %in% MN_species_adapted]
+  
+  print(paste("Found", length(MH_matches), "MH species out of 7"))
+  print(paste("Found", length(MN_matches), "MN species out of 43"))
+  if(length(MH_matches) > 0) {
+    print(paste("MH species found:", paste(MH_matches, collapse = ", ")))
+  } else {
+    print("No MH species found in data")
+  }
+  if(length(MN_matches) > 0) {
+    print(paste("MN species found:", paste(MN_matches, collapse = ", ")))
+  } else {
+    print("No MN species found in data")
+  }
+  
+  # Extract the matching species data
+  if(length(MH_matches) > 0) {
+    MH_species_data <- species_profile_t[MH_matches, , drop = FALSE]
+  } else {
+    MH_species_data <- data.frame(matrix(0, nrow = 1, ncol = ncol(species_profile_t)))
+    colnames(MH_species_data) <- colnames(species_profile_t)
+  }
+  
+  if(length(MN_matches) > 0) {
+    MN_species_data <- species_profile_t[MN_matches, , drop = FALSE]  
+  } else {
+    MN_species_data <- data.frame(matrix(0, nrow = 1, ncol = ncol(species_profile_t)))
+    colnames(MN_species_data) <- colnames(species_profile_t)
+  }
+  
+  # Step 5: Calculate Shannon diversity
+  alpha <- function(x) {
+    x_pos <- x[x > 0]
+    if(length(x_pos) == 0) return(0)
+    sum(log(x_pos) * x_pos) * (-1)
+  }
+  
+  MH_shannon <- apply(MH_species_data, 2, alpha)
+  MN_shannon <- apply(MN_species_data, 2, alpha)
+  
+  # Step 6: Calculate richness
+  R_MH <- apply(MH_species_data, 2, function(x) sum(x > 0))
+  R_MN <- apply(MN_species_data, 2, function(x) sum(x > 0))
+  
+  # Step 7: Calculate collective abundances
+  MH_prime <- 7   # Total possible MH species
+  MN_prime <- 31  # Reference value from original study
+  
+  psi_MH <- (R_MH / MH_prime) * MH_shannon
+  psi_MN <- (R_MN / MN_prime) * MN_shannon
+  
+  # Step 8: Calculate GMHI
+  GMHI <- log10((psi_MH + 0.00001) / (psi_MN + 0.00001))
+  
+  # Return results with original participant IDs
+  results <- data.frame(
+    Participant_ID = rownames(species_data),  # This should preserve your original IDs
+    GMHI = as.numeric(GMHI),
+    R_MH = R_MH,
+    R_MN = R_MN,
+    MH_shannon = MH_shannon,
+    MN_shannon = MN_shannon,
+    stringsAsFactors = FALSE
+  )
+  
+  return(results)
+}
+
+```
+
+
+```{r}
+
+# Calculate GMHI for your data
+GMHI_results <- calculate_GMHI(species_filtered2)
+GMHI_results$Participant_ID <- species_filtered2$Participant_ID
+# View results
+print(GMHI_results)
+
+# Save results
+#write.csv(GMHI_results, "GMHI_results.csv", row.names = FALSE)
+```
+```{r}
+GMHI_results
+```
+
+```{r}
+merged_data_filter_GMHI <- inner_join(GMHI_results, metadata, by = "Participant_ID")
+
+# Step 2: Create diabetes status grouping
+merged_data_filter_GMHI <- merged_data_filter_GMHI %>%
+  mutate(diabetes_group = case_when(
+    diabetes_status == "diabetes" ~ "diabetes",
+    diabetes_status %in% c("pre-diabetes", "normal") ~ "non_diabetes",
+    TRUE ~ NA_character_  # Handle any other values
+  ))
+
+# Step 3: Create detailed obesity status classification
+merged_data_filter_GMHI <- merged_data_filter_GMHI %>%
+  mutate(obesity_status = case_when(
+    BMI < 18.5 ~ "Underweight",
+    BMI >= 18.5 & BMI < 23 ~ "Normal",
+    BMI >= 23 & BMI < 25 ~ "Overweight", 
+    BMI >= 25 & BMI < 30 ~ "Obese Class I",
+    BMI >= 30 ~ "Obese Class II",
+    TRUE ~ NA_character_  # For any missing or invalid BMI values
+  ))
+
+# Step 4: Create binary obesity classification
+merged_data_filter_GMHI <- merged_data_filter_GMHI %>%
+  mutate(obesity_binary = case_when(
+    BMI < 25 ~ "Non-obese",
+    BMI >= 25 ~ "Obese", 
+    TRUE ~ NA_character_
+  ))
+merged_data_filter_GMHI
+```
+### test gmhi with obesity
+```{r}
+obesity_summary <- merged_data_filter_GMHI %>%
+  filter(!is.na(obesity_binary) & !is.na(GMHI)) %>%
+  group_by(obesity_binary) %>%
+  summarise(
+    n = n(),
+    mean_GMHI = round(mean(GMHI), 3),
+    sd_GMHI = round(sd(GMHI), 3),
+    median_GMHI = round(median(GMHI), 3),
+    min_GMHI = round(min(GMHI), 3),
+    max_GMHI = round(max(GMHI), 3),
+    mean_BMI = round(mean(BMI, na.rm = TRUE), 1),
+    .groups = 'drop'
+  )
+print(obesity_summary)
+
+# Detailed obesity categories
+print("\nGMHI by Detailed Obesity Categories:")
+detailed_summary <- merged_data_filter_GMHI %>%
+  filter(!is.na(obesity_status) & !is.na(GMHI)) %>%
+  group_by(obesity_status) %>%
+  summarise(
+    n = n(),
+    mean_GMHI = round(mean(GMHI), 3),
+    sd_GMHI = round(sd(GMHI), 3),
+    median_GMHI = round(median(GMHI), 3),
+    mean_BMI = round(mean(BMI, na.rm = TRUE), 1),
+    .groups = 'drop'
+  ) %>%
+  arrange(mean_BMI)
+print(detailed_summary)
+```
+### t test
+```{r}
+valid_data <- merged_data_filter_GMHI %>% 
+  filter(!is.na(obesity_binary) & !is.na(GMHI))
+
+if(nrow(valid_data) > 0 && length(unique(valid_data$obesity_binary)) == 2) {
+  ttest_result <- t.test(GMHI ~ obesity_binary, data = valid_data)
+  print("T-test (Non-obese vs Obese):")
+  print(paste("Mean difference:", round(ttest_result$estimate[1] - ttest_result$estimate[2], 4)))
+  print(paste("P-value:", round(ttest_result$p.value, 4)))
+  print(paste("95% CI for difference:", round(ttest_result$conf.int[1], 4), "to", round(ttest_result$conf.int[2], 4)))
+  
+  # Effect size (Cohen's d)
+  pooled_sd <- sqrt(((sum(!is.na(valid_data$GMHI[valid_data$obesity_binary == unique(valid_data$obesity_binary)[1]])) - 1) * 
+                     var(valid_data$GMHI[valid_data$obesity_binary == unique(valid_data$obesity_binary)[1]], na.rm = TRUE) +
+                     (sum(!is.na(valid_data$GMHI[valid_data$obesity_binary == unique(valid_data$obesity_binary)[2]])) - 1) * 
+                     var(valid_data$GMHI[valid_data$obesity_binary == unique(valid_data$obesity_binary)[2]], na.rm = TRUE)) /
+                    (sum(!is.na(valid_data$GMHI)) - 2))
+  cohens_d <- (ttest_result$estimate[1] - ttest_result$estimate[2]) / pooled_sd
+  print(paste("Cohen's d (effect size):", round(cohens_d, 3)))
+}
+
+# ANOVA for detailed obesity categories
+valid_detailed <- merged_data_filter_GMHI %>% 
+  filter(!is.na(obesity_status) & !is.na(GMHI))
+
+if(nrow(valid_detailed) > 0 && length(unique(valid_detailed$obesity_status)) > 2) {
+  anova_result <- aov(GMHI ~ obesity_status, data = valid_detailed)
+  print("\nANOVA (Detailed Obesity Categories):")
+  print(summary(anova_result))
+  
+  # Post-hoc test if ANOVA is significant
+  anova_p <- summary(anova_result)[[1]][["Pr(>F)"]][1]
+  if(anova_p < 0.05) {
+    print("\nPost-hoc Tukey HSD test:")
+    tukey_result <- TukeyHSD(anova_result)
+    print(tukey_result)
+  }
+}
+```
+```{r}
+p2 <- ggplot(merged_data_filter_GMHI %>% filter(!is.na(obesity_binary)), 
+             aes(x = obesity_binary, y = GMHI, fill = obesity_binary)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white") +
+  labs(title = "GMHI by Obesity Status (Binary)",
+       x = "Obesity Status",
+       y = "Gut Microbiome Health Index (GMHI)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold")) +
+  scale_fill_manual(values = c("Non-obese" = "lightblue", "Obese" = "salmon"))
+p2
+
+```
+```{r}
+p3 <- ggplot(merged_data_filter_GMHI %>% filter(!is.na(obesity_status)), 
+             aes(x = reorder(obesity_status, BMI, FUN = median, na.rm = TRUE), 
+                 y = GMHI, fill = obesity_status)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white") +
+  labs(title = "GMHI by Detailed Obesity Categories",
+       x = "Obesity Category",
+       y = "Gut Microbiome Health Index (GMHI)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold")) +
+  scale_fill_brewer(type = "qual", palette = "Set3")
+p3
+```
+### linear regression
+```{r}
+lm_model <- lm(GMHI ~ BMI, data = merged_data_filter_GMHI)
+print("Linear Regression Summary (GMHI ~ BMI):")
+print(summary(lm_model))
+
+# Extract key metrics
+r_squared <- summary(lm_model)$r.squared
+adj_r_squared <- summary(lm_model)$adj.r.squared
+print(paste("R-squared:", round(r_squared, 4)))
+print(paste("Adjusted R-squared:", round(adj_r_squared, 4)))
+
+```
+
 
 
 ## literature species
@@ -1739,6 +2096,7 @@ kable(all_summaries, caption = "Summary of Literature Trends in Microbiome Data"
 ```
 
 ## microbiome score of obesity
+## dysbiosis score
 ```{r}
 # Select species present in your dataset
 obesity_enriched_present <- intersect(obesity_enriched, colnames(merged_data_filter))
@@ -1752,6 +2110,313 @@ depleted_sum <- rowSums(merged_data_filter[, obesity_depleted_present], na.rm = 
 merged_data_filter$dysbiosis_score <- log((enriched_sum + 1e-6) / (depleted_sum + 1e-6))
 
 ```
+## imflamatrory score
+```{r}
+# Calculate inflammatory score for each participant
+
+# Define inflammatory weights for each food category
+# Positive values = pro-inflammatory
+# Negative values = anti-inflammatory
+inflammatory_weights <- c(
+  Fish = -0.5,             # Anti-inflammatory (omega-3)
+  Crustacean = 0.1,        # Slightly pro-inflammatory
+  Mollusk = 0.1,           # Slightly pro-inflammatory
+  Poultry = 0.2,           # Slightly pro-inflammatory
+  Red_meat = 0.8,          # Pro-inflammatory
+  Processed_meat = 1.0,    # Strongly pro-inflammatory
+  Dairy = 0.3,             # Moderately pro-inflammatory for some people
+  Cruciferous_veg = -0.7,  # Strongly anti-inflammatory
+  Legumes = -0.6,          # Anti-inflammatory
+  Mushrooms = -0.4,        # Anti-inflammatory
+  Fruits = -0.6,           # Anti-inflammatory
+  Papaya = -0.8,           # Strongly anti-inflammatory
+  Orange = -0.7,           # Anti-inflammatory (vitamin C)
+  Wholegrain = -0.5,       # Anti-inflammatory
+  Chapati = -0.3,          # Slightly anti-inflammatory (depends on grain)
+  Idli_Thosai = -0.2,      # Slightly anti-inflammatory (fermented)
+  Noodle_dishes = 0.4,     # Moderately pro-inflammatory (refined carbs)
+  Deep_fried = 0.9,        # Strongly pro-inflammatory
+  Coffee = -0.3,           # Slightly anti-inflammatory
+  Tea = -0.4,              # Anti-inflammatory (polyphenols)
+  Lontong = 0.1,           # Slightly pro-inflammatory
+  Pork = 0.7,              # Pro-inflammatory
+  Rice = 0.2               # Slightly pro-inflammatory (refined carbs)
+)
+
+# Calculate inflammatory score for each participant
+food_data$inflammatory_score <- 0
+
+for (food in names(inflammatory_weights)) {
+  if (food %in% colnames(food_data)) {
+    food_data$inflammatory_score <- food_data$inflammatory_score + 
+      food_data[[food]] * inflammatory_weights[food]
+  }
+}
+
+
+# Summary statistics
+summary(food_data$inflammatory_score)
+#merged_data_filter
+```
+```{r}
+metadata
+```
+
+## combine 3 scores
+```{r}
+combined_data <- merge(food_data, 
+                       merged_data_filter[, c("Participant_ID", "dysbiosis_score", "obesity_binary", "FREG5_Ethnic_Group", "FREG7_Gender","diabetes_status")],
+                       by = "Participant_ID", 
+                       all.x = FALSE,  # Keep only matching participants
+                       all.y = FALSE)
+
+# Check the structure of the combined data
+str(combined_data)
+
+# Basic summary statistics
+summary(combined_data[, c("inflammatory_score", "dysbiosis_score", "obesity_binary")])
+
+# Examine correlations between inflammatory score and dysbiosis score
+correlation <- cor.test(combined_data$inflammatory_score, combined_data$dysbiosis_score)
+print(correlation)
+
+# Compare inflammatory scores between obese and non-obese individuals
+# Convert obesity_binary to factor if it isn't already
+combined_data$obesity_binary <- as.factor(combined_data$obesity_binary)
+
+# T-test to compare inflammatory scores by obesity status
+t_test_result <- t.test(inflammatory_score ~ obesity_binary, data = combined_data)
+print(t_test_result)
+
+# Visualize the relationships
+# Load ggplot2 for better visualizations
+library(ggplot2)
+
+# 1. Scatterplot of inflammatory score vs dysbiosis score, colored by obesity status
+ggplot(combined_data, aes(x = inflammatory_score, y = dysbiosis_score, color = FREG5_Ethnic_Group)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(title = "Relationship between Inflammatory Score and Dysbiosis Score",
+       x = "Dietary Inflammatory Score",
+       y = "Gut Microbiome Dysbiosis Score",
+       color = "Obesity Status") +
+  theme_minimal()
+
+# 2. Boxplots comparing scores by obesity status
+# For inflammatory score
+p1 <- ggplot(combined_data, aes(x = obesity_binary, y = inflammatory_score, fill = obesity_binary)) +
+  geom_boxplot() +
+  labs(title = "Inflammatory Score by Obesity Status",
+       x = "Obesity Status",
+       y = "Dietary Inflammatory Score") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# For dysbiosis score
+p2 <- ggplot(combined_data, aes(x = obesity_binary, y = dysbiosis_score, fill = obesity_binary)) +
+  geom_boxplot() +
+  labs(title = "Dysbiosis Score by Obesity Status",
+       x = "Obesity Status",
+       y = "Gut Microbiome Dysbiosis Score") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+```{r}
+# Load required libraries
+library(ggplot2)
+library(ggrepel)  # For non-overlapping text labels
+library(viridis)  # For colorblind-friendly palettes
+
+# Create an integrated visualization showing relationships between all three variables
+# This creates a scatter plot with inflammatory score vs dysbiosis score
+# with point size representing obesity status and color representing the combined risk
+
+# First, let's calculate a combined score to use for coloring
+# Standardize both scores to put them on the same scale
+combined_data$inflammatory_z <- scale(combined_data$inflammatory_score)
+combined_data$dysbiosis_z <- scale(combined_data$dysbiosis_score)
+
+# Calculate a combined risk score (sum of z-scores)
+combined_data$combined_risk <- combined_data$inflammatory_z + combined_data$dysbiosis_z
+
+# Create a factor for obesity (for better labeling)
+combined_data$obesity_status <- ifelse(combined_data$obesity_binary == 1, "Obese", "Non-obese")
+
+# Create the integrated plot
+integrated_plot <- ggplot(combined_data, 
+                         aes(x = inflammatory_score, 
+                             y = dysbiosis_score, 
+                             size = obesity_status,
+                             color = combined_risk)) +
+  # Add points
+  geom_point(alpha = 0.7) +
+  
+  # Add contour lines to show density (optional)
+  stat_density_2d(linewidth = 0.5, color = "gray30", alpha = 0.5) +
+  
+  # Add correlation line
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 0.5) +
+  
+  # Use a color scale that transitions from blue (low risk) to red (high risk)
+  scale_color_viridis(option = "plasma", name = "Combined Risk\n(Inflammatory + Dysbiosis)") +
+  
+  # Set point sizes for obesity status
+  scale_size_manual(values = c("Non-obese" = 2, "Obese" = 4), name = "Obesity Status") +
+  
+  # Add quadrant lines at median values
+  geom_hline(yintercept = median(combined_data$dysbiosis_score), 
+             linetype = "dashed", color = "gray50", alpha = 0.7) +
+  geom_vline(xintercept = median(combined_data$inflammatory_score), 
+             linetype = "dashed", color = "gray50", alpha = 0.7) +
+  
+  # Add quadrant labels
+  annotate("text", 
+           x = c(min(combined_data$inflammatory_score) + 0.1 * diff(range(combined_data$inflammatory_score)),
+                 max(combined_data$inflammatory_score) - 0.1 * diff(range(combined_data$inflammatory_score)),
+                 min(combined_data$inflammatory_score) + 0.1 * diff(range(combined_data$inflammatory_score)),
+                 max(combined_data$inflammatory_score) - 0.1 * diff(range(combined_data$inflammatory_score))),
+           y = c(max(combined_data$dysbiosis_score) - 0.1 * diff(range(combined_data$dysbiosis_score)),
+                 max(combined_data$dysbiosis_score) - 0.1 * diff(range(combined_data$dysbiosis_score)),
+                 min(combined_data$dysbiosis_score) + 0.1 * diff(range(combined_data$dysbiosis_score)),
+                 min(combined_data$dysbiosis_score) + 0.1 * diff(range(combined_data$dysbiosis_score))),
+           label = c("Low Inflammatory\nHigh Dysbiosis", 
+                     "High Inflammatory\nHigh Dysbiosis", 
+                     "Low Inflammatory\nLow Dysbiosis", 
+                     "High Inflammatory\nLow Dysbiosis"),
+           size = 3, fontface = "bold", color = "gray20") +
+  
+  # Add labels and title
+  labs(title = "Relationship between Dietary Inflammation, Gut Dysbiosis, and Obesity",
+       subtitle = paste("Correlation: r =", round(cor(combined_data$inflammatory_score, 
+                                                     combined_data$dysbiosis_score, 
+                                                     use = "complete.obs"), 2)),
+       x = "Dietary Inflammatory Score",
+       y = "Gut Microbiome Dysbiosis Score",
+       caption = "Dashed lines represent median values. Color indicates combined risk score.") +
+  
+  # Use a clean theme
+  theme_minimal() +
+  theme(legend.position = "right",
+        plot.title = element_text(face = "bold"),
+        plot.subtitle = element_text(color = "gray40"),
+        panel.grid.minor = element_blank())
+
+# Add marginal plots to show distributions by obesity status (optional)
+# This requires the 'ggExtra' package
+# library(ggExtra)
+# integrated_plot_with_marginals <- ggMarginal(integrated_plot, 
+#                                            type = "density", 
+#                                            groupFill = TRUE,
+#                                            groupColour = TRUE)
+
+# Display the plot
+print(integrated_plot)
+
+# Save the plot
+ggsave("inflammatory_dysbiosis_obesity_relationship.png", integrated_plot, 
+       width = 10, height = 8, dpi = 300)
+
+# Optional: Generate summary statistics for the figure caption
+obesity_summary <- aggregate(cbind(inflammatory_score, dysbiosis_score) ~ obesity_status, 
+                            data = combined_data, 
+                            FUN = function(x) c(mean = mean(x), sd = sd(x)))
+print(obesity_summary)
+
+# Calculate percentage of obese participants in each quadrant
+combined_data$quadrant <- with(combined_data, 
+                              paste0(ifelse(inflammatory_score > median(inflammatory_score), 
+                                           "High", "Low"), 
+                                    " Inflammatory / ",
+                                    ifelse(dysbiosis_score > median(dysbiosis_score), 
+                                           "High", "Low"), 
+                                    " Dysbiosis"))
+quadrant_summary <- table(combined_data$quadrant, combined_data$obesity_status)
+quadrant_percentages <- prop.table(quadrant_summary, 1) * 100
+print(quadrant_percentages)
+```
+```{r}
+combined_data$obesity_status <- factor(ifelse(combined_data$obesity_binary == 1, "Obese", "Non-obese"))
+
+# Create the integrated plot with clearer obesity differentiation
+improved_plot <- ggplot(combined_data, 
+                       aes(x = inflammatory_score, 
+                           y = dysbiosis_score, 
+                           shape = obesity_status,  # Use shape instead of just size
+                           size = obesity_status,   # Keep size difference too
+                           color = combined_risk)) +
+  # Add points with higher alpha for better visibility
+  geom_point(alpha = 0.8) +
+  
+  # Add contour lines to show density
+  stat_density_2d(linewidth = 0.5, color = "gray30", alpha = 0.4) +
+  
+  # Add correlation line
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 0.5) +
+  
+  # Color scale
+  scale_color_viridis(option = "plasma", name = "Combined Risk\n(Inflammatory + Dysbiosis)") +
+  
+  # Set point sizes AND shapes for obesity status (this is the key improvement)
+  scale_size_manual(values = c("Non-obese" = 2, "Obese" = 4), name = "Obesity Status") +
+  scale_shape_manual(values = c("Non-obese" = 16, "Obese" = 18), name = "Obesity Status") +
+  
+  # Quadrant lines and other elements as before
+  geom_hline(yintercept = median(combined_data$dysbiosis_score), 
+             linetype = "dashed", color = "gray50", alpha = 0.7) +
+  geom_vline(xintercept = median(combined_data$inflammatory_score), 
+             linetype = "dashed", color = "gray50", alpha = 0.7) +
+  
+  # Other elements from original plot...
+  labs(title = "Relationship between Dietary Inflammation, Gut Dysbiosis, and Obesity",
+       subtitle = paste("Correlation: r =", 
+                        round(cor(combined_data$inflammatory_score, combined_data$dysbiosis_score, 
+                                 use = "complete.obs"), 2)),
+       x = "Dietary Inflammatory Score",
+       y = "Gut Microbiome Dysbiosis Score",
+       caption = "Dashed lines represent median values. Color indicates combined risk score.\nObese participants shown as larger diamond symbols.") +
+  theme_minimal() +
+  # Make legend more prominent
+  theme(legend.position = "right",
+        legend.key.size = unit(1, "cm"),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 11, face = "bold"),
+        plot.title = element_text(face = "bold"),
+        plot.subtitle = element_text(color = "gray40"))
+
+# Display the improved plot
+print(improved_plot)
+
+# Save the improved plot
+ggsave("improved_inflammatory_dysbiosis_obesity_relationship.png", improved_plot, 
+       width = 10, height = 8, dpi = 300)
+
+# Additional analysis to help interpretation
+# Calculate mean values by obesity status
+obesity_means <- aggregate(cbind(inflammatory_score, dysbiosis_score) ~ obesity_status, 
+                          data = combined_data, 
+                          FUN = mean)
+print(obesity_means)
+
+# Count participants in each quadrant by obesity status
+combined_data$quadrant <- paste0(
+  ifelse(combined_data$inflammatory_score > median(combined_data$inflammatory_score), 
+         "High", "Low"), 
+  " Inflammatory / ",
+  ifelse(combined_data$dysbiosis_score > median(combined_data$dysbiosis_score), 
+         "High", "Low"), 
+  " Dysbiosis")
+
+# Create a contingency table
+quadrant_obesity_table <- table(combined_data$quadrant, combined_data$obesity_status)
+print(quadrant_obesity_table)
+
+# Calculate percentages
+quadrant_percentages <- prop.table(quadrant_obesity_table, 1) * 100
+print(quadrant_percentages)
+```
+
+
 
 ```{r}
 # Boxplot of dysbiosis score
@@ -1772,6 +2437,8 @@ ggplot(merged_data_filter, aes(x = factor(obesity_binary), y = dysbiosis_score))
   labs(x = "Obesity Status", y = "Dysbiosis Score", title = "Dysbiosis Score by Obesity Status")
 
 ```
+
+
 ```{r}
 library(effsize)
 cliff.delta(dysbiosis_score ~ obesity_binary, data = merged_data_filter)
