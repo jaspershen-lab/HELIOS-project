@@ -1957,6 +1957,940 @@ print(paste("Adjusted R-squared:", round(adj_r_squared, 4)))
 
 ```
 
+## bifido in obese and in indian
+```{r}
+species_names <- colnames(species_filtered2)[-1]  # excluding Participant_ID
+
+# Find Bifidobacterium species
+bifido_species <- species_names[grepl("Bifidobacterium", species_names, ignore.case = TRUE)]
+print(paste("Found", length(bifido_species), "Bifidobacterium species:"))
+print(bifido_species)
+
+if(length(bifido_species) == 0) {
+  # Try alternative patterns
+  bifido_species <- species_names[grepl("Bifido", species_names, ignore.case = TRUE)]
+  print("Trying 'Bifido' pattern:")
+  print(bifido_species)
+}
+
+# Step 2: Calculate total Bifidobacterium abundance for each participant
+print("\n2. CALCULATING BIFIDOBACTERIUM ABUNDANCES")
+print("----------------------------------------")
+
+if(length(bifido_species) > 0) {
+  # Extract Bifidobacterium data
+  bifido_data <- species_filtered2 %>%
+    dplyr::select(Participant_ID, all_of(bifido_species))
+  
+  # Calculate total Bifidobacterium abundance
+  bifido_data$Total_Bifidobacterium <- rowSums(bifido_data[, -1], na.rm = TRUE)
+  
+  # Calculate total abundance across all species for relative abundance
+  total_abundance <- rowSums(species_filtered2[, -1], na.rm = TRUE)
+  bifido_data$Relative_Bifidobacterium <- (bifido_data$Total_Bifidobacterium / total_abundance) * 100
+  
+  # Add individual species relative abundances
+  for(species in bifido_species) {
+    rel_col_name <- paste0("Rel_", gsub(" ", "_", species))
+    bifido_data[[rel_col_name]] <- (species_filtered2[[species]] / total_abundance) * 100
+  }
+  
+  print("Bifidobacterium abundance summary:")
+  print(summary(bifido_data$Total_Bifidobacterium))
+  print("Relative abundance (%) summary:")
+  print(summary(bifido_data$Relative_Bifidobacterium))
+  
+} else {
+  print("No Bifidobacterium species found! Please check species names.")
+  print("First 20 species in your dataset:")
+  print(head(species_names, 20))
+  stop("Cannot proceed without Bifidobacterium data")
+}
+```
+```{r}
+if(length(bifido_species) > 0) {
+  # Extract Bifidobacterium data
+  bifido_data <- species_filtered2 %>%
+    dplyr::select(Participant_ID, all_of(bifido_species))
+  
+  # Calculate total Bifidobacterium abundance
+  bifido_data$Total_Bifidobacterium <- rowSums(bifido_data[, -1], na.rm = TRUE)
+  
+  # Calculate total abundance across all species for relative abundance
+  total_abundance <- rowSums(species_filtered2[, -1], na.rm = TRUE)
+  bifido_data$Relative_Bifidobacterium <- (bifido_data$Total_Bifidobacterium / total_abundance) * 100
+  
+  # Add individual species relative abundances
+  for(species in bifido_species) {
+    rel_col_name <- paste0("Rel_", gsub(" ", "_", species))
+    bifido_data[[rel_col_name]] <- (species_filtered2[[species]] / total_abundance) * 100
+  }
+  
+  print("Bifidobacterium abundance summary:")
+  print(summary(bifido_data$Total_Bifidobacterium))
+  print("Relative abundance (%) summary:")
+  print(summary(bifido_data$Relative_Bifidobacterium))
+  
+} else {
+  print("No Bifidobacterium species found! Please check species names.")
+  print("First 20 species in your dataset:")
+  print(head(species_names, 20))
+  stop("Cannot proceed without Bifidobacterium data")
+}
+bifido_data
+```
+```{r}
+merged_data_filter_GMHI
+```
+
+```{r}
+library(ggpubr)
+bifido_merged <- inner_join(bifido_data, merged_data_filter_GMHI, by = "Participant_ID")
+valid_data <- bifido_merged %>% 
+  filter(!is.na(obesity_binary) & !is.na(Relative_Bifidobacterium))
+
+print(paste("Valid data for analysis:", nrow(valid_data), "participants"))
+
+# T-test for relative abundance
+if(nrow(valid_data) > 0 && length(unique(valid_data$obesity_binary)) == 2) {
+  ttest_rel <- t.test(Relative_Bifidobacterium ~ obesity_binary, data = valid_data)
+  
+  print("T-test Results:")
+  print(paste("Non-obese mean:", round(ttest_rel$estimate[1], 3), "%"))
+  print(paste("Obese mean:", round(ttest_rel$estimate[2], 3), "%"))
+  print(paste("Difference:", round(ttest_rel$estimate[1] - ttest_rel$estimate[2], 3), "%"))
+  print(paste("P-value:", round(ttest_rel$p.value, 6)))
+  
+  # Determine significance level for stars
+  p_value <- ttest_rel$p.value
+  if(p_value < 0.001) {
+    sig_star <- "***"
+    sig_text <- "p < 0.001"
+  } else if(p_value < 0.01) {
+    sig_star <- "**"
+    sig_text <- paste("p =", round(p_value, 3))
+  } else if(p_value < 0.05) {
+    sig_star <- "*"
+    sig_text <- paste("p =", round(p_value, 3))
+  } else {
+    sig_star <- "ns"
+    sig_text <- paste("p =", round(p_value, 3))
+  }
+  
+  print(paste("Significance:", sig_star, "-", sig_text))
+} else {
+  print("Cannot perform t-test - insufficient data or groups")
+  sig_star <- "ns"
+  sig_text <- "Cannot test"
+  p_value <- 1
+}
+
+# Step 4: Create summary statistics for the plot
+summary_stats <- valid_data %>%
+  group_by(obesity_binary) %>%
+  summarise(
+    n = n(),
+    mean = round(mean(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    sd = round(sd(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    median = round(median(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    q25 = quantile(Relative_Bifidobacterium, 0.25, na.rm = TRUE),
+    q75 = quantile(Relative_Bifidobacterium, 0.75, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+print("\nSummary Statistics:")
+print(summary_stats)
+
+# Step 5: Create the box plot with significance stars
+print("\nCreating Box Plot...")
+
+# Calculate position for significance annotation
+y_max <- max(valid_data$Relative_Bifidobacterium, na.rm = TRUE)
+y_position <- y_max * 1.1
+
+# Create the main box plot
+p1 <- ggplot(valid_data, aes(x = obesity_binary, y = Relative_Bifidobacterium, fill = obesity_binary)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.6) +
+  geom_jitter(width = 0.2, alpha = 0.5, size = 1.5) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white", stroke = 1) +
+  
+  # Add significance annotation
+  annotate("segment", x = 1, xend = 2, y = y_position, yend = y_position, color = "black") +
+  annotate("segment", x = 1, xend = 1, y = y_position, yend = y_position * 0.95, color = "black") +
+  annotate("segment", x = 2, xend = 2, y = y_position, yend = y_position * 0.95, color = "black") +
+  annotate("text", x = 1.5, y = y_position * 1.05, label = sig_star, size = 6, fontface = "bold") +
+  
+  # Labels and styling
+  labs(
+    title = "Bifidobacterium Relative Abundance by Obesity Status",
+    subtitle = paste("T-test:", sig_text, "| n =", nrow(valid_data)),
+    x = "Obesity Status",
+    y = "Bifidobacterium Relative Abundance (%)",
+    caption = paste("* p < 0.05, ** p < 0.01, *** p < 0.001, ns = not significant")
+  ) +
+  
+  # Theme and colors
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 11),
+    legend.position = "none",
+    panel.grid.minor = element_blank()
+  ) +
+  scale_fill_manual(values = c("Non-obese" = "lightblue", "Obese" = "salmon")) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15)))  # Extra space on top for annotation
+
+# Display the plot
+print(p1)
+
+# Step 6: Alternative plot with ggpubr for automatic significance
+print("\nCreating Alternative Plot with ggpubr...")
+
+# Using ggpubr for automatic significance testing
+p2 <- ggboxplot(valid_data, 
+                x = "obesity_binary", 
+                y = "Relative_Bifidobacterium",
+                fill = "obesity_binary",
+                palette = c("lightblue", "salmon"),
+                add = "jitter",
+                add.params = list(alpha = 0.5)) +
+  
+  stat_compare_means(method = "t.test", 
+                     label = "p.signif",
+                     label.y = y_position,
+                     size = 6) +
+  
+  labs(
+    title = "Bifidobacterium Relative Abundance by Obesity Status",
+    subtitle = paste("Automatic significance testing | n =", nrow(valid_data)),
+    x = "Obesity Status",
+    y = "Bifidobacterium Relative Abundance (%)"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 11),
+    legend.position = "none"
+  )
+
+print(p2)
+```
+```{r}
+valid_diabetes_data <- bifido_merged %>% 
+  filter(!is.na(diabetes_status) & !is.na(Relative_Bifidobacterium) & 
+         diabetes_status %in% c("pre-diabetes", "diabetes", "normal"))
+
+print(paste("Valid data for diabetes analysis:", nrow(valid_diabetes_data), "participants"))
+print("Distribution by diabetes status:")
+print(table(valid_diabetes_data$diabetes_status))
+
+# Step 3: Statistical tests for diabetes groups
+print("\nStatistical Tests:")
+print("==================")
+
+# ANOVA test for overall differences
+if(nrow(valid_diabetes_data) > 0 && length(unique(valid_diabetes_data$diabetes_status)) >= 2) {
+  anova_result <- aov(Relative_Bifidobacterium ~ diabetes_status, data = valid_diabetes_data)
+  anova_summary <- summary(anova_result)
+  anova_p <- anova_summary[[1]][["Pr(>F)"]][1]
+  
+  print("ANOVA Results:")
+  print(anova_summary)
+  print(paste("Overall ANOVA p-value:", round(anova_p, 6)))
+  
+  # Determine overall significance
+  if(anova_p < 0.001) {
+    overall_sig <- "***"
+  } else if(anova_p < 0.01) {
+    overall_sig <- "**"
+  } else if(anova_p < 0.05) {
+    overall_sig <- "*"
+  } else {
+    overall_sig <- "ns"
+  }
+  
+  print(paste("Overall significance:", overall_sig))
+  
+  # Post-hoc pairwise comparisons if ANOVA is significant
+  if(anova_p < 0.05) {
+    print("\nPost-hoc Pairwise Comparisons (Tukey HSD):")
+    tukey_result <- TukeyHSD(anova_result)
+    print(tukey_result)
+    
+    # Extract pairwise p-values for plotting
+    pairwise_p <- tukey_result$diabetes_status[, "p adj"]
+    pairwise_comparisons <- data.frame(
+      comparison = names(pairwise_p),
+      p_value = pairwise_p,
+      stringsAsFactors = FALSE
+    )
+    
+    # Add significance stars for each comparison
+    pairwise_comparisons$sig_star <- sapply(pairwise_comparisons$p_value, function(p) {
+      if(p < 0.001) "***"
+      else if(p < 0.01) "**" 
+      else if(p < 0.05) "*"
+      else "ns"
+    })
+    
+    print("Pairwise significance:")
+    print(pairwise_comparisons)
+  } else {
+    pairwise_comparisons <- NULL
+  }
+} else {
+  print("Cannot perform ANOVA - insufficient data or groups")
+  overall_sig <- "ns"
+  anova_p <- 1
+  pairwise_comparisons <- NULL
+}
+
+# Step 4: Summary statistics by diabetes status
+summary_diabetes <- valid_diabetes_data %>%
+  group_by(diabetes_status) %>%
+  summarise(
+    n = n(),
+    mean = round(mean(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    sd = round(sd(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    median = round(median(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    q25 = round(quantile(Relative_Bifidobacterium, 0.25, na.rm = TRUE), 3),
+    q75 = round(quantile(Relative_Bifidobacterium, 0.75, na.rm = TRUE), 3),
+    .groups = 'drop'
+  ) %>%
+  arrange(match(diabetes_status, c("normal", "pre-diabetes", "diabetes")))
+
+print("\nSummary Statistics by Diabetes Status:")
+print(summary_diabetes)
+
+# Step 5: Create the main box plot
+print("\nCreating Box Plot...")
+
+# Order the diabetes status for logical progression
+valid_diabetes_data$diabetes_status <- factor(valid_diabetes_data$diabetes_status, 
+                                             levels = c("normal", "pre-diabetes", "diabetes"))
+
+# Calculate y-position for significance annotations
+y_max <- max(valid_diabetes_data$Relative_Bifidobacterium, na.rm = TRUE)
+y_positions <- c(y_max * 1.1, y_max * 1.2, y_max * 1.3)
+
+# Create the main box plot
+p1 <- ggplot(valid_diabetes_data, aes(x = diabetes_status, y = Relative_Bifidobacterium, fill = diabetes_status)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.6) +
+  geom_jitter(width = 0.2, alpha = 0.5, size = 1.5) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white", stroke = 1) +
+  
+  # Labels and styling
+  labs(
+    title = "Bifidobacterium Relative Abundance by Diabetes Status",
+    subtitle = paste("ANOVA:", overall_sig, "| p =", round(anova_p, 4), "| n =", nrow(valid_diabetes_data)),
+    x = "Diabetes Status",
+    y = "Bifidobacterium Relative Abundance (%)",
+    caption = "* p < 0.05, ** p < 0.01, *** p < 0.001, ns = not significant"
+  ) +
+  
+  # Theme and colors
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 11),
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    legend.position = "none",
+    panel.grid.minor = element_blank()
+  ) +
+  scale_fill_manual(values = c("normal" = "lightgreen", "pre-diabetes" = "orange", "diabetes" = "red")) +
+  scale_x_discrete(labels = c("normal" = "Normal", "pre-diabetes" = "Pre-diabetes", "diabetes" = "Diabetes")) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2)))  # Extra space on top for annotations
+
+# Add pairwise significance annotations if available
+if(!is.null(pairwise_comparisons) && nrow(pairwise_comparisons) > 0) {
+  # Add significance bars for significant comparisons
+  sig_comparisons <- pairwise_comparisons[pairwise_comparisons$sig_star != "ns", ]
+  
+  if(nrow(sig_comparisons) > 0) {
+    for(i in 1:nrow(sig_comparisons)) {
+      comp <- sig_comparisons$comparison[i]
+      sig <- sig_comparisons$sig_star[i]
+      
+      # Parse comparison (e.g., "diabetes-normal")
+      groups <- unlist(strsplit(comp, "-"))
+      group1 <- groups[1]
+      group2 <- groups[2]
+      
+      # Get x positions
+      x1 <- which(levels(valid_diabetes_data$diabetes_status) == group1)
+      x2 <- which(levels(valid_diabetes_data$diabetes_status) == group2)
+      
+      y_pos <- y_positions[i]
+      
+      # Add significance annotation
+      p1 <- p1 + 
+        annotate("segment", x = x1, xend = x2, y = y_pos, yend = y_pos, color = "black") +
+        annotate("segment", x = x1, xend = x1, y = y_pos, yend = y_pos * 0.98, color = "black") +
+        annotate("segment", x = x2, xend = x2, y = y_pos, yend = y_pos * 0.98, color = "black") +
+        annotate("text", x = (x1 + x2)/2, y = y_pos * 1.02, label = sig, size = 5, fontface = "bold")
+    }
+  }
+}
+
+print(p1)
+```
+
+
+### combine
+```{r}
+library(gridExtra)  # For combining plots
+library(grid)
+valid_ethnic_data <- bifido_merged %>%
+  filter(!is.na(FREG5_Ethnic_Group) & 
+         !is.na(Relative_Bifidobacterium) &
+         FREG5_Ethnic_Group %in% c("C", "I", "M"))
+
+print(paste("Participants with valid ethnic and Bifidobacterium data:", nrow(valid_ethnic_data)))
+
+# Check sample sizes by ethnic group
+ethnic_counts <- table(valid_ethnic_data$FREG5_Ethnic_Group)
+print("Sample sizes by ethnic group:")
+print(ethnic_counts)
+
+# Step 2: Create ethnic group labels
+ethnic_labels <- c("C" = "Chinese", "I" = "Indian", "M" = "Malay")
+valid_ethnic_data$Ethnic_Group_Label <- ethnic_labels[valid_ethnic_data$FREG5_Ethnic_Group]
+
+# ===============================================
+# DIABETES ANALYSIS BY ETHNICITY
+# ===============================================
+
+# Filter for diabetes analysis
+diabetes_ethnic_data <- valid_ethnic_data %>%
+  filter(!is.na(diabetes_status) & 
+         diabetes_status %in% c("normal", "pre-diabetes", "diabetes"))
+
+print(paste("Participants for diabetes analysis:", nrow(diabetes_ethnic_data)))
+
+# Sample sizes by ethnic group and diabetes status
+print("Sample sizes by ethnic group and diabetes status:")
+diabetes_ethnic_table <- table(diabetes_ethnic_data$FREG5_Ethnic_Group, 
+                              diabetes_ethnic_data$diabetes_status)
+print(diabetes_ethnic_table)
+
+# Summary statistics by ethnicity and diabetes
+diabetes_ethnic_summary <- diabetes_ethnic_data %>%
+  group_by(FREG5_Ethnic_Group, Ethnic_Group_Label, diabetes_status) %>%
+  summarise(
+    n = n(),
+    mean = round(mean(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    sd = round(sd(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    median = round(median(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    .groups = 'drop'
+  ) %>%
+  arrange(FREG5_Ethnic_Group, diabetes_status)
+
+print("Summary statistics:")
+print(diabetes_ethnic_summary)
+
+# Statistical tests within each ethnic group
+print("\nStatistical tests within each ethnic group (ANOVA):")
+for(ethnic in c("C", "I", "M")) {
+  ethnic_subset <- diabetes_ethnic_data %>% 
+    filter(FREG5_Ethnic_Group == ethnic)
+  
+  if(nrow(ethnic_subset) > 0 && length(unique(ethnic_subset$diabetes_status)) >= 2) {
+    anova_ethnic <- aov(Relative_Bifidobacterium ~ diabetes_status, data = ethnic_subset)
+    anova_p <- summary(anova_ethnic)[[1]][["Pr(>F)"]][1]
+    
+    print(paste(ethnic_labels[ethnic], "- ANOVA p-value:", round(anova_p, 4)))
+    
+    if(anova_p < 0.05 && length(unique(ethnic_subset$diabetes_status)) > 2) {
+      tukey_ethnic <- TukeyHSD(anova_ethnic)
+      print(paste("  Significant differences found - Tukey HSD:"))
+      print(tukey_ethnic$diabetes_status)
+    }
+  } else {
+    print(paste(ethnic_labels[ethnic], "- Insufficient data for ANOVA"))
+  }
+}
+
+# Create diabetes box plots by ethnicity with significance lines
+diabetes_ethnic_data$diabetes_status <- factor(diabetes_ethnic_data$diabetes_status,
+                                              levels = c("normal", "pre-diabetes", "diabetes"))
+
+# Create separate plots for each ethnicity to add significance properly
+diabetes_plots <- list()
+
+for(ethnic in c("C", "I", "M")) {
+  ethnic_subset <- diabetes_ethnic_data %>% 
+    filter(FREG5_Ethnic_Group == ethnic)
+  
+  if(nrow(ethnic_subset) > 0) {
+    # Perform statistical tests for this ethnicity
+    comparisons_list <- list(c("normal", "pre-diabetes"), 
+                           c("normal", "diabetes"), 
+                           c("pre-diabetes", "diabetes"))
+    
+    # Filter comparisons to only include groups that exist
+    available_groups <- unique(ethnic_subset$diabetes_status)
+    valid_comparisons <- comparisons_list[sapply(comparisons_list, function(x) all(x %in% available_groups))]
+    
+    if(length(valid_comparisons) > 0 && length(available_groups) >= 2) {
+      p_ethnic <- ggboxplot(ethnic_subset,
+                           x = "diabetes_status", 
+                           y = "Relative_Bifidobacterium",
+                           fill = "diabetes_status",
+                           palette = c("lightgreen", "orange", "red"),
+                           add = "jitter",
+                           add.params = list(alpha = 0.5, size = 1)) +
+        
+        stat_compare_means(comparisons = valid_comparisons,
+                          method = "t.test",
+                          label = "p.signif",
+                          step.increase = 0.1,
+                          tip.length = 0.02) +
+        
+        labs(
+          title = paste(ethnic_labels[ethnic]),
+          x = "Diabetes Status",
+          y = if(ethnic == "C") "Bifidobacterium Relative Abundance (%)" else ""
+        ) +
+        
+        theme_minimal() +
+        theme(
+          plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+          axis.title = element_text(size = 10),
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+          axis.text.y = element_text(size = 9),
+          legend.position = "none"
+        ) +
+        scale_x_discrete(labels = c("normal" = "Normal", "pre-diabetes" = "Pre-diabetes", "diabetes" = "Diabetes"))
+      
+    } else {
+      # Create basic plot without significance if insufficient groups
+      p_ethnic <- ggplot(ethnic_subset, aes(x = diabetes_status, y = Relative_Bifidobacterium, fill = diabetes_status)) +
+        geom_boxplot(alpha = 0.7) +
+        geom_jitter(width = 0.2, alpha = 0.5, size = 1) +
+        labs(
+          title = paste(ethnic_labels[ethnic]),
+          x = "Diabetes Status",
+          y = if(ethnic == "C") "Bifidobacterium Relative Abundance (%)" else ""
+        ) +
+        theme_minimal() +
+        theme(
+          plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+          axis.title = element_text(size = 10),
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+          axis.text.y = element_text(size = 9),
+          legend.position = "none"
+        ) +
+        scale_fill_manual(values = c("normal" = "lightgreen", "pre-diabetes" = "orange", "diabetes" = "red")) +
+        scale_x_discrete(labels = c("normal" = "Normal", "pre-diabetes" = "Pre-diabetes", "diabetes" = "Diabetes"))
+    }
+    
+    diabetes_plots[[ethnic]] <- p_ethnic
+  }
+}
+
+# Combine plots
+if(length(diabetes_plots) > 0) {
+  p_diabetes_ethnic <- grid.arrange(grobs = diabetes_plots, ncol = 3,
+                                   top = textGrob("Bifidobacterium by Diabetes Status - Stratified by Ethnicity", 
+                                                 gp = gpar(fontsize = 14, fontface = "bold")))
+} else {
+  # Fallback to original plot style
+  p_diabetes_ethnic <- ggplot(diabetes_ethnic_data, 
+                             aes(x = diabetes_status, y = Relative_Bifidobacterium, fill = diabetes_status)) +
+    geom_boxplot(alpha = 0.7) +
+    geom_jitter(width = 0.2, alpha = 0.5, size = 1) +
+    facet_wrap(~Ethnic_Group_Label, scales = "free_y") +
+    labs(
+      title = "Bifidobacterium by Diabetes Status - Stratified by Ethnicity",
+      x = "Diabetes Status",
+      y = "Bifidobacterium Relative Abundance (%)"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 11),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none",
+      strip.text = element_text(size = 11, face = "bold")
+    ) +
+    scale_fill_manual(values = c("normal" = "lightgreen", "pre-diabetes" = "orange", "diabetes" = "red")) +
+    scale_x_discrete(labels = c("normal" = "Normal", "pre-diabetes" = "Pre-diabetes", "diabetes" = "Diabetes"))
+}
+
+print(p_diabetes_ethnic)
+
+# ===============================================
+# OBESITY ANALYSIS BY ETHNICITY
+# ===============================================
+
+
+
+# Filter for obesity analysis
+obesity_ethnic_data <- valid_ethnic_data %>%
+  filter(!is.na(obesity_binary))
+
+print(paste("Participants for obesity analysis:", nrow(obesity_ethnic_data)))
+
+# Sample sizes by ethnic group and obesity status
+print("Sample sizes by ethnic group and obesity status:")
+obesity_ethnic_table <- table(obesity_ethnic_data$FREG5_Ethnic_Group, 
+                             obesity_ethnic_data$obesity_binary)
+print(obesity_ethnic_table)
+
+# Summary statistics by ethnicity and obesity
+obesity_ethnic_summary <- obesity_ethnic_data %>%
+  group_by(FREG5_Ethnic_Group, Ethnic_Group_Label, obesity_binary) %>%
+  summarise(
+    n = n(),
+    mean = round(mean(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    sd = round(sd(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    median = round(median(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    .groups = 'drop'
+  ) %>%
+  arrange(FREG5_Ethnic_Group, obesity_binary)
+
+print("Summary statistics:")
+print(obesity_ethnic_summary)
+
+# Statistical tests within each ethnic group (t-tests)
+print("\nStatistical tests within each ethnic group (t-tests):")
+ttest_results <- data.frame()
+
+for(ethnic in c("C", "I", "M")) {
+  ethnic_subset <- obesity_ethnic_data %>% 
+    filter(FREG5_Ethnic_Group == ethnic)
+  
+  if(nrow(ethnic_subset) > 0 && length(unique(ethnic_subset$obesity_binary)) == 2) {
+    ttest_ethnic <- t.test(Relative_Bifidobacterium ~ obesity_binary, data = ethnic_subset)
+    
+    # Determine significance
+    p_val <- ttest_ethnic$p.value
+    if(p_val < 0.001) sig_star <- "***"
+    else if(p_val < 0.01) sig_star <- "**"
+    else if(p_val < 0.05) sig_star <- "*"
+    else sig_star <- "ns"
+    
+    print(paste(ethnic_labels[ethnic], ":"))
+    print(paste("  Non-obese mean:", round(ttest_ethnic$estimate[1], 3)))
+    print(paste("  Obese mean:", round(ttest_ethnic$estimate[2], 3)))
+    print(paste("  Difference:", round(ttest_ethnic$estimate[1] - ttest_ethnic$estimate[2], 3)))
+    print(paste("  P-value:", round(p_val, 4), "(", sig_star, ")"))
+    
+    # Store results for plotting
+    ttest_results <- rbind(ttest_results, data.frame(
+      Ethnic_Group = ethnic,
+      Ethnic_Label = ethnic_labels[ethnic],
+      p_value = p_val,
+      sig_star = sig_star,
+      stringsAsFactors = FALSE
+    ))
+  } else {
+    print(paste(ethnic_labels[ethnic], "- Insufficient data for t-test"))
+  }
+}
+
+# Create obesity box plots by ethnicity with significance lines
+obesity_plots <- list()
+
+for(ethnic in c("C", "I", "M")) {
+  ethnic_subset <- obesity_ethnic_data %>% 
+    filter(FREG5_Ethnic_Group == ethnic)
+  
+  if(nrow(ethnic_subset) > 0 && length(unique(ethnic_subset$obesity_binary)) == 2) {
+    # Get significance result for this ethnicity
+    ttest_result <- ttest_results %>% filter(Ethnic_Group == ethnic)
+    
+    if(nrow(ttest_result) > 0) {
+      p_ethnic <- ggboxplot(ethnic_subset,
+                           x = "obesity_binary", 
+                           y = "Relative_Bifidobacterium",
+                           fill = "obesity_binary",
+                           palette = c("lightblue", "salmon"),
+                           add = "jitter",
+                           add.params = list(alpha = 0.5, size = 1)) +
+        
+        stat_compare_means(method = "t.test",
+                          label = "p.signif",
+                          comparisons = list(c("Non-obese", "Obese")),
+                          tip.length = 0.02) +
+        
+        labs(
+          title = paste(ethnic_labels[ethnic]),
+          x = "Obesity Status",
+          y = if(ethnic == "C") "Bifidobacterium Relative Abundance (%)" else ""
+        ) +
+        
+        theme_minimal() +
+        theme(
+          plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+          axis.title = element_text(size = 10),
+          axis.text = element_text(size = 9),
+          legend.position = "none"
+        )
+      
+    } else {
+      # Create basic plot without significance
+      p_ethnic <- ggplot(ethnic_subset, aes(x = obesity_binary, y = Relative_Bifidobacterium, fill = obesity_binary)) +
+        geom_boxplot(alpha = 0.7) +
+        geom_jitter(width = 0.2, alpha = 0.5, size = 1) +
+        labs(
+          title = paste(ethnic_labels[ethnic]),
+          x = "Obesity Status",
+          y = if(ethnic == "C") "Bifidobacterium Relative Abundance (%)" else ""
+        ) +
+        theme_minimal() +
+        theme(
+          plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+          axis.title = element_text(size = 10),
+          axis.text = element_text(size = 9),
+          legend.position = "none"
+        ) +
+        scale_fill_manual(values = c("Non-obese" = "lightblue", "Obese" = "salmon"))
+    }
+    
+    obesity_plots[[ethnic]] <- p_ethnic
+  }
+}
+
+# Combine obesity plots
+if(length(obesity_plots) > 0) {
+  p_obesity_ethnic <- grid.arrange(grobs = obesity_plots, ncol = 3,
+                                  top = textGrob("Bifidobacterium by Obesity Status - Stratified by Ethnicity", 
+                                                gp = gpar(fontsize = 14, fontface = "bold")))
+} else {
+  # Fallback plot
+  p_obesity_ethnic <- ggplot(obesity_ethnic_data, 
+                            aes(x = obesity_binary, y = Relative_Bifidobacterium, fill = obesity_binary)) +
+    geom_boxplot(alpha = 0.7) +
+    geom_jitter(width = 0.2, alpha = 0.5, size = 1) +
+    facet_wrap(~Ethnic_Group_Label, scales = "free_y") +
+    labs(
+      title = "Bifidobacterium by Obesity Status - Stratified by Ethnicity",
+      x = "Obesity Status", 
+      y = "Bifidobacterium Relative Abundance (%)"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 11),
+      axis.text = element_text(size = 10),
+      legend.position = "none",
+      strip.text = element_text(size = 11, face = "bold")
+    ) +
+    scale_fill_manual(values = c("Non-obese" = "lightblue", "Obese" = "salmon"))
+}
+
+print(p_obesity_ethnic)
+
+# ===============================================
+# COMBINED ANALYSIS
+# ===============================================
+
+
+
+# Create combined dataset with both diabetes and obesity info
+combined_data <- valid_ethnic_data %>%
+  filter(!is.na(diabetes_status) & diabetes_status %in% c("normal", "pre-diabetes", "diabetes") &
+         !is.na(obesity_binary))
+
+print(paste("Participants with both diabetes and obesity data:", nrow(combined_data)))
+
+# Create interaction plots
+print("\nCreating interaction plots...")
+
+# 1. Diabetes by ethnicity with obesity as color
+p_diabetes_obesity <- ggplot(combined_data, 
+                            aes(x = diabetes_status, y = Relative_Bifidobacterium, 
+                                fill = obesity_binary)) +
+  geom_boxplot(alpha = 0.7, position = position_dodge(0.8)) +
+  facet_wrap(~Ethnic_Group_Label) +
+  
+  labs(
+    title = "Bifidobacterium by Diabetes Status and Obesity - Stratified by Ethnicity",
+    x = "Diabetes Status",
+    y = "Bifidobacterium Relative Abundance (%)",
+    fill = "Obesity Status"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 13, face = "bold", hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(size = 11, face = "bold")
+  ) +
+  scale_fill_manual(values = c("Non-obese" = "lightblue", "Obese" = "salmon")) +
+  scale_x_discrete(labels = c("normal" = "Normal", "pre-diabetes" = "Pre-diabetes", "diabetes" = "Diabetes"))
+
+print(p_diabetes_obesity)
+
+# 2. Statistical summary table for all combinations
+print("\nComprehensive summary table:")
+comprehensive_summary <- combined_data %>%
+  group_by(Ethnic_Group_Label, diabetes_status, obesity_binary) %>%
+  summarise(
+    n = n(),
+    mean = round(mean(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    sd = round(sd(Relative_Bifidobacterium, na.rm = TRUE), 3),
+    .groups = 'drop'
+  ) %>%
+  arrange(Ethnic_Group_Label, diabetes_status, obesity_binary)
+
+print(comprehensive_summary)
+```
+## each bifido
+```{r}
+bifido_species_cols <- colnames(species_filtered2)[grepl("Bifidobacterium", colnames(species_filtered2), ignore.case = TRUE)]
+bifido_species_cols
+```
+```{r}
+species_long <- valid_ethnic_data %>%
+  dplyr::select(Participant_ID, obesity_binary, all_of(bifido_species_cols)) %>%
+  pivot_longer(cols = all_of(bifido_species_cols),
+               names_to = "Species",
+               values_to = "Abundance") %>%
+  mutate(
+    Species = gsub("_", " ", Species),  # Replace underscores with spaces
+    Species = str_to_title(Species)     # Capitalize first letter of each word
+  ) %>%
+  filter(!is.na(obesity_binary))  # Remove any missing obesity data
+
+
+
+
+species_test_results <- data.frame()
+
+for(species in unique(species_long$Species)) {
+  species_data <- species_long %>% filter(Species == species)
+  
+  if(nrow(species_data) > 0 && length(unique(species_data$obesity_binary)) == 2) {
+    # Perform t-test
+    ttest_result <- t.test(Abundance ~ obesity_binary, data = species_data)
+    
+    # Calculate summary statistics
+    summary_stats <- species_data %>%
+      group_by(obesity_binary) %>%
+      summarise(
+        mean = mean(Abundance, na.rm = TRUE),
+        median = median(Abundance, na.rm = TRUE),
+        n = n(),
+        .groups = 'drop'
+      )
+    
+    # Determine significance
+    p_val <- ttest_result$p.value
+    if(p_val < 0.001) sig_star <- "***"
+    else if(p_val < 0.01) sig_star <- "**"
+    else if(p_val < 0.05) sig_star <- "*"
+    else sig_star <- "ns"
+    
+    # Store results
+    non_obese_mean <- ifelse(nrow(summary_stats %>% filter(obesity_binary == "Non-obese")) > 0,
+                            summary_stats$mean[summary_stats$obesity_binary == "Non-obese"], NA)
+    obese_mean <- ifelse(nrow(summary_stats %>% filter(obesity_binary == "Obese")) > 0,
+                        summary_stats$mean[summary_stats$obesity_binary == "Obese"], NA)
+    
+    species_test_results <- rbind(species_test_results, data.frame(
+      Species = species,
+      Non_obese_mean = non_obese_mean,
+      Obese_mean = obese_mean,
+      Difference = ttest_result$estimate[1] - ttest_result$estimate[2],
+      p_value = p_val,
+      sig_star = sig_star,
+      stringsAsFactors = FALSE
+    ))
+    
+    print(paste(species, ":"))
+    print(paste("  Non-obese mean:", round(ttest_result$estimate[1], 2)))
+    print(paste("  Obese mean:", round(ttest_result$estimate[2], 2)))
+    print(paste("  Difference:", round(ttest_result$estimate[1] - ttest_result$estimate[2], 2)))
+    print(paste("  P-value:", round(p_val, 6), "(", sig_star, ")"))
+  }
+}
+
+print("\nSpecies test results summary:")
+print(species_test_results)
+write.csv(species_test_results, "figure/bifido.csv")
+# Step 5: Create stacked box plot
+print("\nCreating stacked box plot...")
+
+# Order species by mean abundance for better visualization
+species_order <- species_long %>%
+  group_by(Species) %>%
+  summarise(mean_abundance = mean(Abundance, na.rm = TRUE), .groups = 'drop') %>%
+  arrange(desc(mean_abundance)) %>%
+  pull(Species)
+
+species_long$Species <- factor(species_long$Species, levels = species_order)
+
+# Create the main stacked box plot
+p_species_stacked <- ggplot(species_long, aes(x = Species, y = Abundance, fill = obesity_binary)) +
+  geom_boxplot(alpha = 0.7, position = position_dodge(0.8), outlier.alpha = 0.6) +
+  
+  # Add individual points
+  geom_point(position = position_jitterdodge(dodge.width = 0.8, jitter.width = 0.2), 
+             alpha = 0.4, size = 0.8) +
+  
+  labs(
+    title = "Individual Bifidobacterium Species Abundance by Obesity Status",
+    x = "Bifidobacterium Species",
+    y = "Absolute Abundance (counts)",
+    fill = "Obesity Status"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    legend.position = "bottom",
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10),
+    panel.grid.minor = element_blank()
+  ) +
+  
+  scale_fill_manual(values = c("Non-obese" = "lightblue", "Obese" = "salmon")) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15)))  # Extra space for significance annotations
+
+# Add significance annotations
+if(nrow(species_test_results) > 0) {
+  for(i in 1:nrow(species_test_results)) {
+    species_name <- species_test_results$Species[i]
+    sig_star <- species_test_results$sig_star[i]
+    
+    if(sig_star != "ns") {
+      # Get max y value for this species
+      species_max_y <- max(species_long$Abundance[species_long$Species == species_name], na.rm = TRUE)
+      y_position <- species_max_y * 1.1
+      
+      # Get x position (species index)
+      x_position <- which(levels(species_long$Species) == species_name)
+      
+      # Add significance annotation
+      p_species_stacked <- p_species_stacked +
+        annotate("segment", x = x_position - 0.2, xend = x_position + 0.2, 
+                y = y_position, yend = y_position, color = "black", size = 0.5) +
+        annotate("segment", x = x_position - 0.2, xend = x_position - 0.2, 
+                y = y_position, yend = y_position * 0.98, color = "black", size = 0.5) +
+        annotate("segment", x = x_position + 0.2, xend = x_position + 0.2, 
+                y = y_position, yend = y_position * 0.98, color = "black", size = 0.5) +
+        annotate("text", x = x_position, y = y_position * 1.03, 
+                label = sig_star, size = 4, fontface = "bold")
+    }
+  }
+}
+
+print(p_species_stacked)
+
+```
+
 
 
 ## literature species
