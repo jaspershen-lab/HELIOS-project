@@ -360,11 +360,57 @@ p1 = p +
   geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "I"), color = "#9EA3F1") +
   geom_point(data = subset(plot_data, FREG5_Ethnic_Group == "M"), color = "#E17887")
   #theme(text = element_text(family = "serif"))
-ggsave("figure/figure2/beta.pdf", plot = p1, height = 6, width = 9)
+#ggsave("figure/figure2/beta.pdf", plot = p1, height = 6, width = 9)
 ```
 ```{r}
 permanova_result = adonis2(dist ~ FREG5_Ethnic_Group, data = as(sample_data(filtered_phylo_sig), "data.frame"))
 print(permanova_result)
+```
+
+## within and between group distance
+```{r}
+# Ensure sample names are character, not factors
+sample_ids <- as.character(rownames(as(sample_data(filtered_phylo_sig), "data.frame")))
+
+# Create all pairwise combinations of sample IDs
+pairs <- expand.grid(Sample1 = sample_ids, Sample2 = sample_ids, stringsAsFactors = FALSE)
+
+# Remove self-pairs and duplicates (keep upper triangle only)
+pairs <- pairs[pairs$Sample1 < pairs$Sample2, ]
+
+# Compute Bray-Curtis distance matrix
+dist_matrix <- as.matrix(dist)
+
+# Add distance values to the pairs
+pairs$Distance <- mapply(function(x, y) dist_matrix[x, y], pairs$Sample1, pairs$Sample2)
+
+# Add ethnic group labels from metadata
+metadata <- as(sample_data(filtered_phylo_sig), "data.frame")
+pairs$Group1 <- metadata[pairs$Sample1, "FREG5_Ethnic_Group"]
+pairs$Group2 <- metadata[pairs$Sample2, "FREG5_Ethnic_Group"]
+
+# Classify as within-group or between-group
+pairs$Comparison <- ifelse(pairs$Group1 == pairs$Group2, "Within", "Between")
+
+# Add ethnic group name for within-group comparisons (optional)
+pairs$EthnicGroup <- ifelse(pairs$Comparison == "Within", pairs$Group1, "Between")
+
+# Make sure Distance is numeric
+pairs$Distance <- as.numeric(pairs$Distance)
+
+# Summary statistics
+library(dplyr)
+summary_stats <- pairs %>%
+  group_by(Comparison) %>%
+  summarise(
+    Mean_Distance = mean(Distance, na.rm = TRUE),
+    SD_Distance = sd(Distance, na.rm = TRUE),
+    N = n()
+  )
+
+# Print result
+print(summary_stats)
+
 ```
 
 

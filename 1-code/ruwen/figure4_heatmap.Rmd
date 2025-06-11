@@ -74,6 +74,7 @@ nutrition_data[is.na(nutrition_data)] <- 0
 
 
 ```{r}
+library(dyplyr)
 unique_species <- read.csv("figure/unique_significant_species.csv")
 unique_species
 sig_species <- species %>%
