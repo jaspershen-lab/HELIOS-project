@@ -51,3 +51,5 @@ po/*~
 rsconnect/
 vignettes/*.html
 vignettes/*.pdf
+# Ruwen figures (local only)
+1-code/ruwen/figure/
