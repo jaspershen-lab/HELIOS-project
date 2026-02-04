@@ -354,23 +354,23 @@ mean of all samples
 
 ```{r fig.width=8, fig.height=5}
 # extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
-# pheatmap(z_score_matrix_new, 
-#          cluster_rows = TRUE, 
+# pheatmap(z_score_matrix_new,
+#          cluster_rows = TRUE,
 #          cluster_cols = FALSE, # Set to FALSE to maintain the custom order
 #          scale = "none",
 #          annotation_col = annotation_data,
-#          color = rev(extended_palette), 
+#          color = rev(extended_palette),
 #          breaks = seq(-1, 1, length.out = 101),
 #          show_rownames = TRUE,
 #          show_colnames = FALSE,
 #          fontsize_row = 14)
 # 
-# pheatmap(z_score_matrix_new, 
-#          cluster_rows = TRUE, 
+# pheatmap(z_score_matrix_new,
+#          cluster_rows = TRUE,
 #          cluster_cols = TRUE, # Set to FALSE to maintain the custom order
 #          scale = "none",
 #          annotation_col = annotation_data,
-#          color = rev(extended_palette), 
+#          color = rev(extended_palette),
 #          breaks = seq(-1, 1, length.out = 101),
 #          show_rownames = TRUE,
 #          show_colnames = FALSE,
@@ -409,7 +409,7 @@ p <- plot_richness(phyloseq_filtered_no_O, x = "FREG5_Ethnic_Group", color = "FR
                         
     stat_compare_means(comparisons = comparisons, method = "t.test", label = "p.signif", symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), symbols = c("***", "**", "*", "ns")))
 #print(p)
-ggsave("figure/figure2/alpha.pdf", plot = p, height = 6, width = 10)
+#ggsave("figure/figure2/alpha.pdf", plot = p, height = 6, width = 10)
 #p + theme(text = element_text(family = "serif"))
 p
 ```

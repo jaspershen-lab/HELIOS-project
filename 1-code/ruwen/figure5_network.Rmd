@@ -31,13 +31,13 @@ library(tidygraph)
 
 #demographic
 ```{r}
-food_data = read_xlsx("data/FFQA862.xlsx")
+food_data = read_xlsx("data/FFQA862_new.xlsx")
 nutrition_data = read_xlsx("data/FFQB800.xlsx")
 species = read_xlsx("data/species_866.xlsx")
 metadata = read_xlsx("data/ethnicity_866.xlsx")
 
 food_data <- food_data %>%
-  mutate(across(c("Mushrooms", "Papaya", "Orange", "Chapati"), as.numeric))
+  mutate(across(c("Mushrooms","Chapati"), as.numeric))
 food_data
 nutrition_data
 species
@@ -829,14 +829,14 @@ result4 = create_microbiome_knowledge_graph3(food_data, nutrition_data,
                                                 species_threshold = 0.16)
 # View the plot
 
-ggsave("figure/figure5_network12.pdf", result4$plot, width = 24, height = 20)
+#ggsave("figure/figure5_network12.pdf", result4$plot, width = 24, height = 20)
 print(result4$plot)
 ```
 # discrete nodes
 ```{r}
 create_microbiome_knowledge_graph4 <- function(food_data, nutrition_data, 
                                             species_data, metadata,
-                                            species_threshold = 0.3) {  
+                                            species_threshold) {  
   # Ensure all datasets have the same participants and in the same order
   common_participants <- Reduce(intersect, list(
     food_data$Participant_ID,
@@ -1099,17 +1099,25 @@ create_microbiome_knowledge_graph4 <- function(food_data, nutrition_data,
 ```
 
 ```{r}
+
+```
+
+
+```{r}
 #1717 717
 set.seed(124)
 species_filtered3 = subset(species_filtered1, select = -c(`Homo sapiens`))
 #set.seed(456)
 result5 = create_microbiome_knowledge_graph4(food_data, nutrition_data, 
                                                 species_filtered3, metadata,
-                                                species_threshold = 0.18)
+                                                species_threshold = 0.16)
 # View the plot
 
-ggsave("figure/figure5_network13.pdf", result5$plot, width = 24, height = 20)
+ggsave("figure/figure5_network15.pdf", result5$plot, width = 24, height = 20)
 print(result5$plot)
+```
+```{r}
+food_data
 ```
 
 ```{r}
@@ -1134,7 +1142,7 @@ correlation_dfs <- lapply(correlation_matrices, function(mat) {
 })
 
 correlation_dfs
-write_xlsx(correlation_dfs, "data/microbiome_correlations.xlsx")
+#write_xlsx(correlation_dfs, "data/microbiome_correlations.xlsx")
 ```
 
 

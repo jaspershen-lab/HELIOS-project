@@ -58,15 +58,161 @@ helios_new800
 ```
 
 
+
 ```{r}
 helios_new800$bmi = helios_new800$dbi14_weight/(helios_new800$dbi13_height*0.01)^2
-helios_new800$bmi_groups <- cut(helios_new800$bmi, breaks = c(0,18.5,23,25,Inf),
+helios_new800$bmi_groups <- cut(helios_new800$bmi, breaks = c(0,18.5,23,27.5,Inf),
                   labels = c("Underweight", "Normal", "Overweight", "Obese"),
                   include.lowest = TRUE, right = FALSE)
 helios_new800
 #write_xlsx(helios_new800, "data/summary_800.xlsx")
+helios2 <- helios_new800 %>%
+  dplyr::filter(freg5_ethnic_group != "O")
+table(helios2$bmi_groups)
+table(helios2$freg5_ethnic_group)
+helios_new800
+```
+#demographic table stratified by ethnic
+```{r}
+cont_summary <- helios_new800 %>%
+  dplyr::filter(freg5_ethnic_group != "O") %>%
+  dplyr::group_by(freg5_ethnic_group) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    age_mean = mean(freg8_age, na.rm = TRUE),
+    age_sd   = sd(freg8_age, na.rm = TRUE),
+    bmi_mean = mean(bmi, na.rm = TRUE),
+    bmi_sd   = sd(bmi, na.rm = TRUE),
+    waist_mean = mean(fwh16_waist1, na.rm = TRUE),
+    waist_sd   = sd(fwh16_waist1, na.rm = TRUE),
+    hip_mean = mean(fwh19_hip1, na.rm = TRUE),
+    hip_sd = sd(fwh19_hip1, na.rm = TRUE),
+    sbp_mean = mean(dbp9_sbp_1, na.rm = TRUE),
+    sbp_sd = sd(dbp9_sbp_1, na.rm = TRUE),
+    dbp_mean = mean(dbp12_dbp_1, na.rm = TRUE),
+    dbp_sd = sd(dbp12_dbp_1, na.rm = TRUE),
+    hr_mean = mean(dbp15_hr_1, na.rm = TRUE),
+    hr_sd = sd(dbp15_hr_1, na.rm = TRUE),
+    height_mean = mean(dbi13_height, na.rm = TRUE),
+    height_sd = sd(dbi13_height, na.rm = TRUE),
+    weight_mean = mean(dbi14_weight, na.rm = TRUE),
+    weight_sd = sd(dbi14_weight, na.rm = TRUE),
+    .groups = "drop"
+  )
+cont_summary
+bmi_group_summary <- helios_new800 %>%
+  dplyr::filter(freg5_ethnic_group != "O") %>%
+  dplyr::count(freg5_ethnic_group, bmi_groups, name = "n") %>%
+  dplyr::group_by(freg5_ethnic_group) %>%
+  dplyr::mutate(
+    percent = round(100 * n / sum(n), 1),
+    n_pct = paste0(n, " (", percent, "%)")
+  ) %>%
+  dplyr::ungroup()
+
+bmi_group_summary
 
 ```
+```{r}
+library(dplyr)
+library(tidyr)
+
+bmi_group_wide <- bmi_group_summary %>%
+  select(freg5_ethnic_group, bmi_groups, n_pct) %>%
+  pivot_wider(
+    names_from  = freg5_ethnic_group,
+    values_from = n_pct
+  ) %>%
+  mutate(Variable = paste0("BMI group: ", bmi_groups)) %>%
+  select(Variable, everything(), -bmi_groups)
+
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(writexl)
+
+## -------------------------
+## 1) Continuous table (mean ± SD) + N
+## -------------------------
+
+# N row
+n_table <- cont_summary %>%
+  select(freg5_ethnic_group, n) %>%
+  mutate(Variable = "N") %>%
+  select(Variable, freg5_ethnic_group, n) %>%
+  pivot_wider(names_from = freg5_ethnic_group, values_from = n)
+
+# mean ± SD rows
+cont_table <- cont_summary %>%
+  select(-n) %>%  # remove n so it doesn't break mean/sd pairing
+  pivot_longer(
+    cols = -freg5_ethnic_group,
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    var  = sub("_(mean|sd)$", "", metric),
+    stat = ifelse(grepl("_mean$", metric), "mean", "sd")
+  ) %>%
+  select(-metric) %>%
+  pivot_wider(names_from = stat, values_from = value) %>%
+  mutate(cell = sprintf("%.2f ± %.2f", mean, sd)) %>%
+  select(freg5_ethnic_group, var, cell) %>%
+  pivot_wider(names_from = freg5_ethnic_group, values_from = cell) %>%
+  mutate(
+    Variable = dplyr::recode(
+      var,
+      age    = "Age (years)",
+      bmi    = "BMI (kg/m²)",
+      waist  = "Waist circumference",
+      hip    = "Hip circumference",
+      sbp    = "Systolic BP",
+      dbp    = "Diastolic BP",
+      hr     = "Heart rate",
+      height = "Height",
+      weight = "Weight",
+      .default = var
+    )
+  ) %>%
+  select(Variable, everything(), -var)
+
+## -------------------------
+## 2) BMI groups table (n (%))
+## -------------------------
+bmi_table <- bmi_group_summary %>%
+  select(freg5_ethnic_group, bmi_groups, n_pct) %>%
+  pivot_wider(names_from = freg5_ethnic_group, values_from = n_pct) %>%
+  mutate(Variable = paste0("BMI group: ", bmi_groups)) %>%
+  select(Variable, everything(), -bmi_groups)
+
+## -------------------------
+## 3) Final combined table
+## -------------------------
+n_table_chr <- n_table %>%
+  mutate(across(-Variable, as.character))
+
+supp_table <- dplyr::bind_rows(
+  n_table_chr,
+  cont_table,
+  bmi_table
+)
+
+# Optional: enforce column order if your ethnic labels are C/I/M
+supp_table <- supp_table %>%
+  select(Variable, C, I, M, everything())
+supp_table
+## -------------------------
+## 4) Export to Excel
+## -------------------------
+write_xlsx(
+  x = list("Supp_Table" = supp_table),
+  path = "Supplementary_Table_1_Ethnicity_Summary.xlsx"
+)
+
+```
+
 
 ```{r}
 # Load required libraries
@@ -591,6 +737,414 @@ ggplot(plot_data_smoking, aes(fill = fbp17_smoking, ymax = ymax, ymin = ymin, xm
   theme(legend.position = "bottom")
 ```
 
+## sumary table
+```{r}
+# Load required libraries
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(tidyr)
+
+# Function to create summary statistics
+create_summary_table <- function(df) {
+  
+  # Ensure df is a data frame
+  if(!is.data.frame(df)) {
+    if(is.list(df)) {
+      df <- as.data.frame(df)
+    } else {
+      stop("Input must be a data frame or convertible to one")
+    }
+  }
+  
+  cat("Working with data frame of dimensions:", dim(df), "\n")
+  
+  # Categorical variables summary
+  cat_summary <- list()
+  
+  # Gender summary (F/M)
+  if("freg7_gender" %in% names(df)) {
+    cat("Processing gender data...\n")
+    gender_table <- table(df$freg7_gender, useNA = "ifany")
+    gender_summary <- data.frame(
+      Category = names(gender_table),
+      Count = as.numeric(gender_table),
+      Percentage = round(as.numeric(gender_table)/sum(gender_table)*100, 1)
+    )
+    cat_summary[["Gender"]] <- gender_summary
+  }
+  
+  # Ethnic group summary (C/I/M/O)
+  if("freg5_ethnic_group" %in% names(df)) {
+    cat("Processing ethnicity data...\n")
+    ethnic_table <- table(df$freg5_ethnic_group, useNA = "ifany")
+    ethnic_summary <- data.frame(
+      Category = names(ethnic_table),
+      Count = as.numeric(ethnic_table),
+      Percentage = round(as.numeric(ethnic_table)/sum(ethnic_table)*100, 1)
+    )
+    cat_summary[["Ethnic Group"]] <- ethnic_summary
+  }
+  
+  # BMI groups summary (Normal, Overweight, Obese, Underweight)
+  if("bmi_groups" %in% names(df)) {
+    cat("Processing BMI groups data...\n")
+    bmi_table <- table(df$bmi_groups, useNA = "ifany")
+    bmi_summary <- data.frame(
+      Category = names(bmi_table),
+      Count = as.numeric(bmi_table),
+      Percentage = round(as.numeric(bmi_table)/sum(bmi_table)*100, 1)
+    )
+    # Reorder if possible
+    bmi_order <- c("Underweight", "Normal", "Overweight", "Obese")
+    bmi_summary$Category <- factor(bmi_summary$Category, levels = bmi_order)
+    bmi_summary <- bmi_summary[order(bmi_summary$Category), ]
+    cat_summary[["BMI Groups"]] <- bmi_summary
+  }
+  
+  # Caffeine consumption summary
+  if("fbp16_caffeine" %in% names(df)) {
+    cat("Processing caffeine data...\n")
+    caffeine_table <- table(df$fbp16_caffeine, useNA = "ifany")
+    caffeine_summary <- data.frame(
+      Category = names(caffeine_table),
+      Count = as.numeric(caffeine_table),
+      Percentage = round(as.numeric(caffeine_table)/sum(caffeine_table)*100, 1)
+    )
+    cat_summary[["Caffeine Consumption"]] <- caffeine_summary
+  }
+  
+  # Smoking status summary
+  if("fbp17_smoking" %in% names(df)) {
+    cat("Processing smoking data...\n")
+    smoking_table <- table(df$fbp17_smoking, useNA = "ifany")
+    smoking_summary <- data.frame(
+      Category = names(smoking_table),
+      Count = as.numeric(smoking_table),
+      Percentage = round(as.numeric(smoking_table)/sum(smoking_table)*100, 1)
+    )
+    cat_summary[["Smoking Status"]] <- smoking_summary
+  }
+  
+  # Numerical variables summary using base R
+  numeric_vars <- c("freg8_age", "dbi13_height", "dbi14_weight", "fwh16_waist1", 
+                    "fwh19_hip1", "dbp9_sbp_1", "dbp12_dbp_1", "dbp15_hr_1", "bmi")
+  
+  # Select only numeric variables that exist in the data
+  existing_numeric_vars <- numeric_vars[numeric_vars %in% names(df)]
+  
+  if(length(existing_numeric_vars) > 0) {
+    cat("Processing numerical variables...\n")
+    numeric_summary <- data.frame(
+      Variable = existing_numeric_vars,
+      Mean = round(sapply(df[existing_numeric_vars], function(x) mean(x, na.rm = TRUE)), 2),
+      Median = round(sapply(df[existing_numeric_vars], function(x) median(x, na.rm = TRUE)), 2),
+      SD = round(sapply(df[existing_numeric_vars], function(x) sd(x, na.rm = TRUE)), 2),
+      Min = round(sapply(df[existing_numeric_vars], function(x) min(x, na.rm = TRUE)), 2),
+      Max = round(sapply(df[existing_numeric_vars], function(x) max(x, na.rm = TRUE)), 2),
+      Missing = sapply(df[existing_numeric_vars], function(x) sum(is.na(x)))
+    )
+    rownames(numeric_summary) <- NULL
+  } else {
+    numeric_summary <- data.frame(Message = "No numeric variables found")
+  }
+  
+  return(list(categorical = cat_summary, numerical = numeric_summary))
+}
+
+# Check the data structure first
+cat("Checking data structure...\n")
+cat("Class of helios_new800:", class(helios_new800), "\n")
+cat("Dimensions:", dim(helios_new800), "\n")
+cat("Column names:", names(helios_new800), "\n\n")
+
+# Convert to data frame if needed
+if(is.list(helios_new800) && !is.data.frame(helios_new800)) {
+  helios_new800 <- as.data.frame(helios_new800)
+  cat("Converted to data frame\n")
+}
+
+# Create the summary
+summary_results <- create_summary_table(helios_new800)
+
+# Print categorical summaries
+cat("=== CATEGORICAL VARIABLES SUMMARY ===\n\n")
+for(var_name in names(summary_results$categorical)) {
+  cat(paste("**", var_name, "**\n"))
+  print(kable(summary_results$categorical[[var_name]], 
+              caption = paste(var_name, "Distribution")))
+  cat("\n")
+}
+
+# Print numerical summary
+cat("=== NUMERICAL VARIABLES SUMMARY ===\n")
+print(kable(summary_results$numerical, 
+            caption = "Descriptive Statistics for Numerical Variables",
+            digits = 2))
+
+# Alternative: Create a more compact summary table using base R
+cat("\n=== COMPACT SUMMARY TABLE ===\n")
+compact_summary <- data.frame(
+  Statistic = c("Total_N", "Male_n", "Male_pct", "Female_n", "Female_pct", 
+                "Age_mean", "Age_sd", "BMI_mean", "BMI_sd", "SBP_mean", "DBP_mean"),
+  Value = c(
+    nrow(helios_new800),
+    sum(helios_new800$freg7_gender == "M", na.rm = TRUE),
+    round(sum(helios_new800$freg7_gender == "M", na.rm = TRUE)/nrow(helios_new800)*100, 1),
+    sum(helios_new800$freg7_gender == "F", na.rm = TRUE),
+    round(sum(helios_new800$freg7_gender == "F", na.rm = TRUE)/nrow(helios_new800)*100, 1),
+    round(mean(helios_new800$freg8_age, na.rm = TRUE), 1),
+    round(sd(helios_new800$freg8_age, na.rm = TRUE), 1),
+    round(mean(helios_new800$bmi, na.rm = TRUE), 1),
+    round(sd(helios_new800$bmi, na.rm = TRUE), 1),
+    round(mean(helios_new800$dbp9_sbp_1, na.rm = TRUE), 1),
+    round(mean(helios_new800$dbp12_dbp_1, na.rm = TRUE), 1)
+  )
+)
+
+print(kable(compact_summary, caption = "Overall Dataset Summary"))
+
+# Create a publication-ready table using base R
+cat("\n=== PUBLICATION-READY TABLE ===\n")
+pub_table <- data.frame(
+  Characteristic = c(
+    "Total Participants",
+    "Age, years (mean ± SD)",
+    "Male, n (%)",
+    "Female, n (%)",
+    "BMI, kg/m² (mean ± SD)",
+    "SBP, mmHg (mean ± SD)",
+    "DBP, mmHg (mean ± SD)"
+  ),
+  Value = c(
+    nrow(helios_new800),
+    paste0(round(mean(helios_new800$freg8_age, na.rm = TRUE), 1), 
+           " ± ", round(sd(helios_new800$freg8_age, na.rm = TRUE), 1)),
+    paste0(sum(helios_new800$freg7_gender == "M", na.rm = TRUE), 
+           " (", round(sum(helios_new800$freg7_gender == "M", na.rm = TRUE)/nrow(helios_new800)*100, 1), ")"),
+    paste0(sum(helios_new800$freg7_gender == "F", na.rm = TRUE), 
+           " (", round(sum(helios_new800$freg7_gender == "F", na.rm = TRUE)/nrow(helios_new800)*100, 1), ")"),
+    paste0(round(mean(helios_new800$bmi, na.rm = TRUE), 1), 
+           " ± ", round(sd(helios_new800$bmi, na.rm = TRUE), 1)),
+    paste0(round(mean(helios_new800$dbp9_sbp_1, na.rm = TRUE), 1), 
+           " ± ", round(sd(helios_new800$dbp9_sbp_1, na.rm = TRUE), 1)),
+    paste0(round(mean(helios_new800$dbp12_dbp_1, na.rm = TRUE), 1), 
+           " ± ", round(sd(helios_new800$dbp12_dbp_1, na.rm = TRUE), 1))
+  )
+)
+
+print(kable(pub_table, caption = "Participant Characteristics"))
+```
+```{r}
+# Export Summary Tables to Excel for Research Publication
+# Install required packages if you don't have them:
+# install.packages(c("openxlsx", "writexl"))
+
+library(openxlsx)
+
+# Run your summary function first
+summary_results <- create_summary_table(helios_new800)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# ============================================================
+# Sheet 1: Publication-Ready Table (Main Table for Paper)
+# ============================================================
+
+# Create the main publication table
+pub_table <- data.frame(
+  Characteristic = c(
+    "Total Participants, n",
+    "Age, years (mean ± SD)",
+    "Gender, n (%)",
+    "  Male",
+    "  Female",
+    "Ethnicity, n (%)",
+    "  Chinese",
+    "  Indian", 
+    "  Malay",
+    "  Others",
+    "BMI, kg/m² (mean ± SD)",
+    "BMI Categories, n (%)",
+    "  Underweight",
+    "  Normal",
+    "  Overweight", 
+    "  Obese",
+    "Clinical Measurements (mean ± SD)",
+    "  Systolic BP, mmHg",
+    "  Diastolic BP, mmHg",
+    "  Heart Rate, bpm",
+    "  Height, cm",
+    "  Weight, kg",
+    "  Waist circumference, cm",
+    "  Hip circumference, cm"
+  ),
+  Value = character(24)
+)
+
+# Fill in the values
+pub_table$Value[1] <- as.character(nrow(helios_new800))
+pub_table$Value[2] <- paste0(round(mean(helios_new800$freg8_age, na.rm = TRUE), 1), 
+                             " ± ", round(sd(helios_new800$freg8_age, na.rm = TRUE), 1))
+
+# Gender
+male_n <- sum(helios_new800$freg7_gender == "M", na.rm = TRUE)
+female_n <- sum(helios_new800$freg7_gender == "F", na.rm = TRUE)
+total_gender <- male_n + female_n
+pub_table$Value[4] <- paste0(male_n, " (", round(male_n/total_gender*100, 1), ")")
+pub_table$Value[5] <- paste0(female_n, " (", round(female_n/total_gender*100, 1), ")")
+
+# Ethnicity (if available)
+if("freg5_ethnic_group" %in% names(helios_new800)) {
+  eth_table <- table(helios_new800$freg5_ethnic_group, useNA = "no")
+  total_eth <- sum(eth_table)
+  if("C" %in% names(eth_table)) pub_table$Value[7] <- paste0(eth_table["C"], " (", round(eth_table["C"]/total_eth*100, 1), ")")
+  if("I" %in% names(eth_table)) pub_table$Value[8] <- paste0(eth_table["I"], " (", round(eth_table["I"]/total_eth*100, 1), ")")
+  if("M" %in% names(eth_table)) pub_table$Value[9] <- paste0(eth_table["M"], " (", round(eth_table["M"]/total_eth*100, 1), ")")
+  if("O" %in% names(eth_table)) pub_table$Value[10] <- paste0(eth_table["O"], " (", round(eth_table["O"]/total_eth*100, 1), ")")
+}
+
+# BMI
+pub_table$Value[11] <- paste0(round(mean(helios_new800$bmi, na.rm = TRUE), 1), 
+                              " ± ", round(sd(helios_new800$bmi, na.rm = TRUE), 1))
+
+# BMI Categories (if available)
+if("bmi_groups" %in% names(helios_new800)) {
+  bmi_table <- table(helios_new800$bmi_groups, useNA = "no")
+  total_bmi <- sum(bmi_table)
+  if("Underweight" %in% names(bmi_table)) pub_table$Value[13] <- paste0(bmi_table["Underweight"], " (", round(bmi_table["Underweight"]/total_bmi*100, 1), ")")
+  if("Normal" %in% names(bmi_table)) pub_table$Value[14] <- paste0(bmi_table["Normal"], " (", round(bmi_table["Normal"]/total_bmi*100, 1), ")")
+  if("Overweight" %in% names(bmi_table)) pub_table$Value[15] <- paste0(bmi_table["Overweight"], " (", round(bmi_table["Overweight"]/total_bmi*100, 1), ")")
+  if("Obese" %in% names(bmi_table)) pub_table$Value[16] <- paste0(bmi_table["Obese"], " (", round(bmi_table["Obese"]/total_bmi*100, 1), ")")
+}
+
+# Clinical measurements
+pub_table$Value[18] <- paste0(round(mean(helios_new800$dbp9_sbp_1, na.rm = TRUE), 1), 
+                              " ± ", round(sd(helios_new800$dbp9_sbp_1, na.rm = TRUE), 1))
+pub_table$Value[19] <- paste0(round(mean(helios_new800$dbp12_dbp_1, na.rm = TRUE), 1), 
+                              " ± ", round(sd(helios_new800$dbp12_dbp_1, na.rm = TRUE), 1))
+pub_table$Value[20] <- paste0(round(mean(helios_new800$dbp15_hr_1, na.rm = TRUE), 1), 
+                              " ± ", round(sd(helios_new800$dbp15_hr_1, na.rm = TRUE), 1))
+pub_table$Value[21] <- paste0(round(mean(helios_new800$dbi13_height, na.rm = TRUE), 1), 
+                              " ± ", round(sd(helios_new800$dbi13_height, na.rm = TRUE), 1))
+pub_table$Value[22] <- paste0(round(mean(helios_new800$dbi14_weight, na.rm = TRUE), 1), 
+                              " ± ", round(sd(helios_new800$dbi14_weight, na.rm = TRUE), 1))
+pub_table$Value[23] <- paste0(round(mean(helios_new800$fwh16_waist1, na.rm = TRUE), 1), 
+                              " ± ", round(sd(helios_new800$fwh16_waist1, na.rm = TRUE), 1))
+pub_table$Value[24] <- paste0(round(mean(helios_new800$fwh19_hip1, na.rm = TRUE), 1), 
+                              " ± ", round(sd(helios_new800$fwh19_hip1, na.rm = TRUE), 1))
+
+# Add the main publication table
+addWorksheet(wb, "Table1_Baseline_Characteristics")
+writeData(wb, "Table1_Baseline_Characteristics", pub_table)
+
+# Format the publication table
+addStyle(wb, "Table1_Baseline_Characteristics", 
+         style = createStyle(textDecoration = "bold"), 
+         rows = 1, cols = 1:2)
+
+# Add indentation for subcategories
+indent_rows <- c(4, 5, 7, 8, 9, 10, 13, 14, 15, 16, 18, 19, 20, 21, 22, 23, 24)
+addStyle(wb, "Table1_Baseline_Characteristics", 
+         style = createStyle(indent = 1), 
+         rows = indent_rows + 1, cols = 1)
+
+# ============================================================
+# Sheet 2: Detailed Categorical Variables
+# ============================================================
+addWorksheet(wb, "Categorical_Variables")
+
+# Combine all categorical summaries
+all_categorical <- data.frame()
+for(var_name in names(summary_results$categorical)) {
+  temp_df <- summary_results$categorical[[var_name]]
+  temp_df$Variable <- var_name
+  temp_df <- temp_df[, c("Variable", "Category", "Count", "Percentage")]
+  all_categorical <- rbind(all_categorical, temp_df)
+}
+
+writeData(wb, "Categorical_Variables", all_categorical)
+addStyle(wb, "Categorical_Variables", 
+         style = createStyle(textDecoration = "bold"), 
+         rows = 1, cols = 1:4)
+
+# ============================================================
+# Sheet 3: Numerical Variables Summary
+# ============================================================
+addWorksheet(wb, "Numerical_Variables")
+writeData(wb, "Numerical_Variables", summary_results$numerical)
+addStyle(wb, "Numerical_Variables", 
+         style = createStyle(textDecoration = "bold"), 
+         rows = 1, cols = 1:ncol(summary_results$numerical))
+
+# ============================================================
+# Sheet 4: Raw Data Summary (for reference)
+# ============================================================
+addWorksheet(wb, "Data_Overview")
+
+# Create overview table
+overview <- data.frame(
+  Metric = c("Dataset Name", "Total Observations", "Total Variables", 
+             "Missing Data Present", "Date Generated"),
+  Value = c("helios_new800", 
+            nrow(helios_new800), 
+            ncol(helios_new800),
+            ifelse(any(is.na(helios_new800)), "Yes", "No"),
+            Sys.Date())
+)
+
+writeData(wb, "Data_Overview", overview)
+addStyle(wb, "Data_Overview", 
+         style = createStyle(textDecoration = "bold"), 
+         rows = 1, cols = 1:2)
+
+# Add variable list
+writeData(wb, "Data_Overview", data.frame(Variable = names(helios_new800)), 
+          startRow = 8, startCol = 1)
+writeData(wb, "Data_Overview", "Variable List:", startRow = 7, startCol = 1)
+
+# ============================================================
+# Sheet 5: Missing Data Analysis (if needed)
+# ============================================================
+addWorksheet(wb, "Missing_Data")
+
+# Create missing data summary
+missing_summary <- data.frame(
+  Variable = names(helios_new800),
+  Missing_Count = sapply(helios_new800, function(x) sum(is.na(x))),
+  Missing_Percentage = round(sapply(helios_new800, function(x) sum(is.na(x))/length(x)*100), 2),
+  Complete_Cases = sapply(helios_new800, function(x) sum(!is.na(x)))
+)
+missing_summary$Total_N <- nrow(helios_new800)
+
+writeData(wb, "Missing_Data", missing_summary)
+addStyle(wb, "Missing_Data", 
+         style = createStyle(textDecoration = "bold"), 
+         rows = 1, cols = 1:5)
+
+# ============================================================
+# Save the Excel file
+# ============================================================
+saveWorkbook(wb, "Helios_Research_Tables.xlsx", overwrite = TRUE)
+
+cat("✅ Excel file 'Helios_Research_Tables.xlsx' created successfully!\n\n")
+cat("📊 The file contains 5 sheets:\n")
+cat("   1. Table1_Baseline_Characteristics - Main table for your paper\n")
+cat("   2. Categorical_Variables - Detailed breakdowns\n") 
+cat("   3. Numerical_Variables - Descriptive statistics\n")
+cat("   4. Data_Overview - Dataset information\n")
+cat("   5. Missing_Data - Missing data analysis\n\n")
+cat("📝 Sheet 1 is formatted for direct use in your research paper!\n")
+cat("📍 File saved in your working directory: ", getwd(), "\n")
+
+# Optional: Open the file automatically (Windows)
+# shell.exec("Helios_Research_Tables.xlsx")
+
+# Display quick preview of the main table
+cat("\n📋 Preview of Publication Table (Table 1):\n")
+print(head(pub_table, 10))
+```
 
 
 

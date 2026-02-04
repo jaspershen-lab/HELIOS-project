@@ -1,0 +1,1931 @@
+---
+title: "dii_with_species"
+author: "Ruwen Zhou"
+date: "8/7/2025"
+output: html_document
+---
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggraph)
+library(igraph)
+library(Hmisc)
+library(writexl)
+
+library(tidygraph)
+```
+
+
+
+#demographic
+```{r}
+food_data = read_xlsx("data/FFQA862.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
+
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms", "Papaya", "Orange", "Chapati"), as.numeric))
+food_data
+nutrition_data
+species
+metadata
+```
+
+
+```{r}
+colnames(species)[1] = "Participant_ID"
+colnames(metadata)[1] = "Participant_ID"
+threshold <- nrow(species) * 0.5
+
+species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+species_filtered1
+species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+#species_filtered2
+species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "Homo sapiens")]
+#species_filtered2$`Homo sapiens`
+#species_filtered2
+#food_data[is.na(food_data)] <- 0
+#food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
+nutrition_data[is.na(nutrition_data)] <- 0
+```
+
+```{r}
+food_data
+nutrition_data
+species_filtered2
+species_filtered1
+metadata
+```
+
+
+Updated_HELIOS_FFQA_with_DII_v2.xlsx
+```{r}
+DII = read_xlsx("data/Updated_HELIOS_FFQA_with_DII_v2.xlsx")
+DII
+participant_df = read_xlsx("data/all_food_863.xlsx")
+participant_df
+
+
+```
+```{r}
+DII_filtered <- DII %>%
+  semi_join(participant_df, by = "freg0_pid") %>%  # keep only matching rows
+  left_join(select(participant_df, freg0_pid, participant_id), by = "freg0_pid")  # add participant_id
+DII_filtered
+species_filtered1
+```
+```{r}
+DII_score <- DII_filtered %>%
+  select(participant_id, Inflammatory_Score)
+# Step 2: Merge with species data
+merged_df <- species_filtered1 %>%
+  inner_join(DII_score, by = c("Participant_ID" = "participant_id"))
+
+species_cols <- setdiff(colnames(merged_df), c("Participant_ID", "Inflammatory_Score"))
+species_cols
+```
+```{r}
+cor_results <- lapply(species_cols, function(species) {
+  cor_test <- cor.test(merged_df[[species]], merged_df$Inflammatory_Score, method = "spearman")
+  data.frame(
+    Species = species,
+    Correlation = cor_test$estimate,
+    p_value = cor_test$p.value
+  )
+}) %>% bind_rows()
+
+# Step 5: Adjust p-values for multiple testing
+cor_results <- cor_results %>%
+  mutate(p_adj = p.adjust(p_value, method = "fdr"))
+sig_cor_results <- cor_results %>%
+  filter(p_adj < 0.05)
+sig_cor_results 
+```
+```{r}
+sig_cor_results <- sig_cor_results %>%
+  arrange(desc(Correlation))  # or use abs(Correlation) if you prefer strongest
+
+
+ggplot(sig_cor_results, aes(x = reorder(Species, Correlation), y = Correlation)) +
+  geom_segment(aes(xend = Species, y = 0, yend = Correlation), color = "gray") +
+  geom_point(aes(color = Correlation), size = 4) +
+  scale_color_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  coord_flip() +
+  theme_minimal() +
+  labs(y = "Spearman Correlation", x = "Species",
+       title = "Species Significantly Correlated with Inflammatory Score") +
+  theme(legend.position = "none")
+
+```
+
+## some new analysis
+```{r}
+# Advanced Microbiome-Diet Analysis Pipeline in R
+# Load required libraries
+library(tidyverse)
+library(randomForest)
+library(glmnet)
+library(caret)
+library(corrplot)
+library(vegan)
+library(factoextra)
+library(cluster)
+library(pheatmap)
+library(ggplot2)
+library(gridExtra)
+library(reshape2)
+
+# Main Analysis Class
+MicrobiomeDietAnalyzer <- setRefClass("MicrobiomeDietAnalyzer",
+  fields = list(
+    participant_data = "data.frame",
+    species_data = "data.frame",
+    merged_data = "data.frame",
+    food_columns = "character",
+    species_columns = "character",
+    results = "list"
+  ),
+  
+  methods = list(
+    
+    # Initialize with data
+    initialize = function(participant_df, species_df) {
+      participant_data <<- participant_df
+      species_data <<- species_df
+      results <<- list()
+      
+      cat("MicrobiomeDietAnalyzer initialized\n")
+      cat("Participant data dimensions:", dim(participant_df), "\n")
+      cat("Species data dimensions:", dim(species_df), "\n")
+    },
+    
+    # Prepare and merge datasets
+    prepare_data = function() {
+      # Standardize column names
+      if("Participant_ID" %in% colnames(species_data)) {
+        colnames(species_data)[colnames(species_data) == "Participant_ID"] <- "participant_id"
+      }
+      
+      # Get food and species columns
+      exclude_cols <- c("participant_id", "freq0_pid")
+      food_columns_temp <- setdiff(colnames(participant_data), exclude_cols)
+      species_columns_temp <- setdiff(colnames(species_data), "participant_id")
+      
+      # Merge datasets
+      merged_data <<- merge(participant_data, species_data, by = "participant_id")
+      
+      # Clean and convert food data to numeric
+      cat("Cleaning food data...\n")
+      food_data_clean <- merged_data[, food_columns_temp, drop = FALSE]
+      
+      # Convert to numeric and handle non-numeric values
+      numeric_columns <- c()
+      for(col in food_columns_temp) {
+        # Try to convert to numeric
+        numeric_values <- suppressWarnings(as.numeric(as.character(food_data_clean[[col]])))
+        
+        # Check if conversion was successful (not all NA)
+        if(sum(!is.na(numeric_values)) > 0.5 * length(numeric_values)) {
+          merged_data[[col]] <<- numeric_values
+          numeric_columns <- c(numeric_columns, col)
+        } else {
+          cat("Removing non-numeric column:", col, "\n")
+        }
+      }
+      
+      # Update food columns to only numeric ones
+      food_columns <<- numeric_columns
+      
+      # Clean and convert species data to numeric
+      cat("Cleaning species data...\n")
+      species_data_clean <- merged_data[, species_columns_temp, drop = FALSE]
+      
+      numeric_species <- c()
+      for(col in species_columns_temp) {
+        # Try to convert to numeric
+        numeric_values <- suppressWarnings(as.numeric(as.character(species_data_clean[[col]])))
+        
+        # Check if conversion was successful
+        if(sum(!is.na(numeric_values)) > 0.5 * length(numeric_values)) {
+          merged_data[[col]] <<- numeric_values
+          numeric_species <- c(numeric_species, col)
+        } else {
+          cat("Removing non-numeric species column:", col, "\n")
+        }
+      }
+      
+      # Update species columns to only numeric ones
+      species_columns <<- numeric_species
+      
+      cat("Data preparation completed:\n")
+      cat("- Merged dataset dimensions:", dim(merged_data), "\n")
+      cat("- Number of numeric food items:", length(food_columns), "\n")
+      cat("- Number of numeric species:", length(species_columns), "\n")
+      
+      # Check for any remaining issues
+      if(length(food_columns) == 0) {
+        stop("No numeric food columns found! Please check your data.")
+      }
+      if(length(species_columns) == 0) {
+        stop("No numeric species columns found! Please check your data.")
+      }
+      
+      return(merged_data)
+    },
+    
+    # Create dietary patterns using PCA
+    create_dietary_patterns = function(n_patterns = 5) {
+      # Extract and clean food data
+      food_data <- merged_data[, food_columns, drop = FALSE]
+      
+      # Ensure all columns are numeric
+      for(col in food_columns) {
+        food_data[[col]] <- as.numeric(as.character(food_data[[col]]))
+      }
+      
+      # Replace NA with 0
+      food_data[is.na(food_data)] <- 0
+      
+      # Check for zero variance columns
+      zero_var_cols <- sapply(food_data, function(x) var(x, na.rm = TRUE) == 0)
+      if(any(zero_var_cols)) {
+        cat("Removing zero variance columns:", names(zero_var_cols)[zero_var_cols], "\n")
+        food_data <- food_data[, !zero_var_cols, drop = FALSE]
+        food_columns <<- food_columns[!zero_var_cols]
+      }
+      
+      # Check if we have enough columns left
+      if(ncol(food_data) < n_patterns) {
+        n_patterns <- ncol(food_data)
+        cat("Reducing n_patterns to", n_patterns, "due to limited food columns\n")
+      }
+      
+      # Standardize food data
+      food_scaled <- scale(food_data)
+      
+      # PCA analysis
+      pca_result <- prcomp(food_scaled, center = FALSE, scale. = FALSE)
+      
+      # Extract patterns
+      dietary_patterns <- pca_result$x[, 1:n_patterns]
+      colnames(dietary_patterns) <- paste0("Dietary_Pattern_", 1:n_patterns)
+      
+      # Add patterns to merged data
+      merged_data[, paste0("Dietary_Pattern_", 1:n_patterns)] <<- dietary_patterns
+      
+      # Print explained variance
+      var_explained <- summary(pca_result)$importance[2, 1:n_patterns]
+      cat("PCA Explained Variance:\n")
+      for(i in 1:n_patterns) {
+        cat("Pattern", i, ":", round(var_explained[i] * 100, 2), "%\n")
+      }
+      
+      # Show top foods for each pattern
+      loadings <- pca_result$rotation[, 1:n_patterns]
+      
+      cat("\nTop foods for each dietary pattern:\n")
+      for(i in 1:n_patterns) {
+        cat("\nPattern", i, ":\n")
+        top_foods <- head(order(abs(loadings[, i]), decreasing = TRUE), 10)
+        for(j in top_foods) {
+          direction <- ifelse(loadings[j, i] > 0, "+", "-")
+          cat("  ", direction, rownames(loadings)[j], ": ", 
+              round(abs(loadings[j, i]), 3), "\n")
+        }
+      }
+      
+      results$dietary_patterns <<- list(
+        patterns = dietary_patterns,
+        pca_result = pca_result,
+        loadings = loadings,
+        var_explained = var_explained
+      )
+      
+      return(pca_result)
+    },
+    
+    # Create microbiome diversity-based diet score
+    microbiome_diversity_score = function(method = "random_forest") {
+      # Calculate Shannon diversity for each participant
+      species_data_clean <- merged_data[, species_columns, drop = FALSE]
+      species_data_clean[is.na(species_data_clean)] <- 0
+      species_data_clean <- species_data_clean + 1e-10  # Add small constant
+      
+      # Calculate Shannon diversity
+      shannon_diversity <- vegan::diversity(species_data_clean, index = "shannon")
+      
+      # Prepare food data
+      food_data <- merged_data[, food_columns, drop = FALSE]
+      food_data[is.na(food_data)] <- 0
+      
+      # Split data for training and testing
+      set.seed(42)
+      train_idx <- sample(nrow(food_data), 0.7 * nrow(food_data))
+      
+      X_train <- food_data[train_idx, ]
+      X_test <- food_data[-train_idx, ]
+      y_train <- shannon_diversity[train_idx]
+      y_test <- shannon_diversity[-train_idx]
+      
+      if(method == "random_forest") {
+        # Random Forest model
+        rf_model <- randomForest(x = X_train, y = y_train, 
+                                ntree = 100, importance = TRUE)
+        
+        # Predictions
+        y_pred <- predict(rf_model, X_test)
+        
+        # Calculate scores for all participants
+        diversity_scores <- predict(rf_model, food_data)
+        
+        # Model performance
+        r2 <- cor(y_test, y_pred)^2
+        rmse <- sqrt(mean((y_test - y_pred)^2))
+        
+        cat("Random Forest Model Performance:\n")
+        cat("R² Score:", round(r2, 3), "\n")
+        cat("RMSE:", round(rmse, 3), "\n")
+        
+        # Feature importance
+        importance_df <- data.frame(
+          Food = rownames(rf_model$importance),
+          Importance = rf_model$importance[, "%IncMSE"],
+          stringsAsFactors = FALSE
+        ) %>%
+          arrange(desc(Importance))
+        
+        cat("\nTop 15 foods predicting microbiome diversity:\n")
+        print(head(importance_df, 15))
+        
+        results$diversity_analysis <<- list(
+          model = rf_model,
+          scores = diversity_scores,
+          importance = importance_df,
+          performance = list(r2 = r2, rmse = rmse)
+        )
+        
+      } else if(method == "elastic_net") {
+        # Elastic Net model
+        X_train_matrix <- as.matrix(X_train)
+        X_test_matrix <- as.matrix(X_test)
+        
+        cv_model <- cv.glmnet(X_train_matrix, y_train, alpha = 0.5)
+        
+        # Predictions
+        y_pred <- predict(cv_model, X_test_matrix, s = "lambda.min")
+        
+        # Calculate scores for all participants
+        diversity_scores <- predict(cv_model, as.matrix(food_data), s = "lambda.min")
+        
+        # Model performance
+        r2 <- cor(y_test, y_pred)^2
+        rmse <- sqrt(mean((y_test - y_pred)^2))
+        
+        cat("Elastic Net Model Performance:\n")
+        cat("R² Score:", round(r2, 3), "\n")
+        cat("RMSE:", round(rmse, 3), "\n")
+        
+        # Get coefficients
+        coef_matrix <- coef(cv_model, s = "lambda.min")
+        importance_df <- data.frame(
+          Food = rownames(coef_matrix)[-1],  # Remove intercept
+          Coefficient = as.numeric(coef_matrix[-1, 1]),
+          stringsAsFactors = FALSE
+        ) %>%
+          filter(Coefficient != 0) %>%
+          mutate(Importance = abs(Coefficient)) %>%
+          arrange(desc(Importance))
+        
+        cat("\nTop foods predicting microbiome diversity (Elastic Net):\n")
+        print(head(importance_df, 15))
+        
+        results$diversity_analysis <<- list(
+          model = cv_model,
+          scores = as.numeric(diversity_scores),
+          importance = importance_df,
+          performance = list(r2 = r2, rmse = rmse)
+        )
+      }
+      
+      # Add scores to merged data
+      merged_data$Microbiome_Diversity_Score <<- diversity_scores
+      merged_data$Shannon_Diversity <<- shannon_diversity
+      
+      return(diversity_scores)
+    },
+    
+    # Multi-species analysis
+    multi_species_analysis = function(top_n_species = 10) {
+      # Select top species by mean abundance
+      species_data_clean <- merged_data[, species_columns, drop = FALSE]
+      species_data_clean[is.na(species_data_clean)] <- 0
+      
+      mean_abundance <- colMeans(species_data_clean)
+      top_species <- names(sort(mean_abundance, decreasing = TRUE)[1:top_n_species])
+      
+      species_results <- list()
+      
+      for(species in top_species) {
+        cat("\nAnalyzing", species, "...\n")
+        
+        # Prepare data
+        food_data <- merged_data[, food_columns, drop = FALSE]
+        food_data[is.na(food_data)] <- 0
+        target <- merged_data[[species]]
+        
+        # Split data
+        set.seed(42)
+        train_idx <- sample(nrow(food_data), 0.7 * nrow(food_data))
+        
+        X_train <- food_data[train_idx, ]
+        X_test <- food_data[-train_idx, ]
+        y_train <- target[train_idx]
+        y_test <- target[-train_idx]
+        
+        # Random Forest model
+        rf_model <- randomForest(x = X_train, y = y_train, 
+                                ntree = 100, importance = TRUE)
+        
+        # Predictions and performance
+        y_pred <- predict(rf_model, X_test)
+        r2 <- cor(y_test, y_pred)^2
+        
+        # Feature importance
+        importance_df <- data.frame(
+          Food = rownames(rf_model$importance),
+          Importance = rf_model$importance[, "%IncMSE"],
+          stringsAsFactors = FALSE
+        ) %>%
+          arrange(desc(Importance))
+        
+        # Calculate diet scores
+        diet_scores <- predict(rf_model, food_data)
+        merged_data[[paste0(species, "_Diet_Score")]] <<- diet_scores
+        
+        species_results[[species]] <- list(
+          model = rf_model,
+          importance = importance_df,
+          scores = diet_scores,
+          r2 = r2
+        )
+        
+        cat("R² Score:", round(r2, 3), "\n")
+        cat("Top 5 predictive foods:\n")
+        print(head(importance_df, 5))
+      }
+      
+      results$species_analysis <<- species_results
+      return(species_results)
+    },
+    
+    # Create inflammatory vs anti-inflammatory scores
+    create_inflammatory_scores = function(inflammatory_patterns = NULL, 
+                                        anti_inflammatory_patterns = NULL) {
+      
+      # Default patterns (adapt to your actual food names)
+      if(is.null(inflammatory_patterns)) {
+        inflammatory_patterns <- c(
+          "sugar", "refined", "processed", "fried", "saturated", 
+          "trans", "alcohol", "red_meat", "fast_food"
+        )
+      }
+      
+      if(is.null(anti_inflammatory_patterns)) {
+        anti_inflammatory_patterns <- c(
+          "omega", "fruit", "vegetable", "whole", "nuts", "olive", 
+          "fish", "berries", "leafy", "fiber", "antioxidant"
+        )
+      }
+      
+      # Find matching food columns
+      inflammatory_foods <- food_columns[sapply(food_columns, function(x) {
+        any(sapply(inflammatory_patterns, function(pattern) {
+          grepl(pattern, x, ignore.case = TRUE)
+        }))
+      })]
+      
+      anti_inflammatory_foods <- food_columns[sapply(food_columns, function(x) {
+        any(sapply(anti_inflammatory_patterns, function(pattern) {
+          grepl(pattern, x, ignore.case = TRUE)
+        }))
+      })]
+      
+      cat("Found inflammatory foods:", length(inflammatory_foods), "\n")
+      cat("Found anti-inflammatory foods:", length(anti_inflammatory_foods), "\n")
+      
+      if(length(inflammatory_foods) > 0) {
+        print(inflammatory_foods)
+      }
+      if(length(anti_inflammatory_foods) > 0) {
+        print(anti_inflammatory_foods)
+      }
+      
+      # Calculate scores
+      if(length(inflammatory_foods) > 0) {
+        merged_data$Inflammatory_Score <<- rowSums(merged_data[, inflammatory_foods, drop = FALSE], na.rm = TRUE)
+      } else {
+        merged_data$Inflammatory_Score <<- 0
+      }
+      
+      if(length(anti_inflammatory_foods) > 0) {
+        merged_data$AntiInflammatory_Score <<- rowSums(merged_data[, anti_inflammatory_foods, drop = FALSE], na.rm = TRUE)
+      } else {
+        merged_data$AntiInflammatory_Score <<- 0
+      }
+      
+      merged_data$Net_Inflammatory_Index <<- merged_data$Inflammatory_Score - merged_data$AntiInflammatory_Score
+      
+      results$inflammatory_analysis <<- list(
+        inflammatory_foods = inflammatory_foods,
+        anti_inflammatory_foods = anti_inflammatory_foods
+      )
+      
+      return(list(
+        inflammatory_foods = inflammatory_foods,
+        anti_inflammatory_foods = anti_inflammatory_foods
+      ))
+    },
+    
+    # Food network analysis
+    food_network_analysis = function() {
+      food_data <- merged_data[, food_columns, drop = FALSE]
+      food_data[is.na(food_data)] <- 0
+      
+      # Calculate correlation matrix
+      food_corr <- cor(food_data, method = "spearman")
+      
+      # Hierarchical clustering
+      dist_matrix <- as.dist(1 - abs(food_corr))
+      hc <- hclust(dist_matrix, method = "ward.D2")
+      
+      # Plot dendrogram
+      plot(hc, main = "Food Co-consumption Clustering", 
+           xlab = "Foods", ylab = "Distance", cex = 0.7)
+      
+      # Create correlation heatmap (top correlations only)
+      high_corr_idx <- which(abs(food_corr) > 0.3 & food_corr != 1, arr.ind = TRUE)
+      if(nrow(high_corr_idx) > 0) {
+        # Select subset of highly correlated foods
+        unique_foods <- unique(c(high_corr_idx[,1], high_corr_idx[,2]))
+        subset_corr <- food_corr[unique_foods, unique_foods]
+        
+        pheatmap(subset_corr, 
+                main = "Food Co-consumption Network (|r| > 0.3)",
+                display_numbers = TRUE,
+                number_format = "%.2f")
+      }
+      
+      results$network_analysis <<- list(
+        correlation_matrix = food_corr,
+        hierarchical_clustering = hc
+      )
+      
+      return(food_corr)
+    },
+    
+    # Comprehensive analysis
+    run_comprehensive_analysis = function() {
+      cat("=" %R% 60, "\n")
+      cat("COMPREHENSIVE MICROBIOME-DIET ANALYSIS REPORT\n")
+      cat("=" %R% 60, "\n")
+      
+      # 1. Data preparation
+      cat("\n1. DATA PREPARATION\n")
+      cat("-" %R% 30, "\n")
+      prepare_data()
+      
+      # 2. Dietary patterns
+      cat("\n2. DIETARY PATTERNS ANALYSIS\n")
+      cat("-" %R% 30, "\n")
+      create_dietary_patterns()
+      
+      # 3. Microbiome diversity score
+      cat("\n3. MICROBIOME DIVERSITY-BASED DIET SCORE\n")
+      cat("-" %R% 30, "\n")
+      microbiome_diversity_score()
+      
+      # 4. Multi-species analysis
+      cat("\n4. MULTI-SPECIES ANALYSIS\n")
+      cat("-" %R% 30, "\n")
+      multi_species_analysis()
+      
+      # 5. Inflammatory scores
+      cat("\n5. INFLAMMATORY FOOD ANALYSIS\n")
+      cat("-" %R% 30, "\n")
+      create_inflammatory_scores()
+      
+      # 6. Network analysis
+      cat("\n6. FOOD NETWORK ANALYSIS\n")
+      cat("-" %R% 30, "\n")
+      food_network_analysis()
+      
+      return(results)
+    },
+    
+    # Plot results
+    plot_results = function() {
+      # Plot 1: Dietary patterns
+      if("dietary_patterns" %in% names(results)) {
+        fviz_pca_biplot(results$dietary_patterns$pca_result, 
+                       title = "Dietary Patterns PCA",
+                       repel = TRUE)
+      }
+      
+      # Plot 2: Feature importance for diversity
+      if("diversity_analysis" %in% names(results)) {
+        importance_data <- head(results$diversity_analysis$importance, 20)
+        
+        p1 <- ggplot(importance_data, aes(x = reorder(Food, Importance), y = Importance)) +
+          geom_bar(stat = "identity", fill = "steelblue") +
+          coord_flip() +
+          labs(title = "Top Foods Predicting Microbiome Diversity",
+               x = "Food Items", y = "Importance") +
+          theme_minimal()
+        
+        print(p1)
+      }
+      
+      # Plot 3: Score distributions
+      if("Shannon_Diversity" %in% colnames(merged_data)) {
+        score_data <- merged_data %>%
+          select(Shannon_Diversity, Microbiome_Diversity_Score) %>%
+          gather(key = "Score_Type", value = "Score")
+        
+        p2 <- ggplot(score_data, aes(x = Score)) +
+          geom_histogram(bins = 30, fill = "lightblue", alpha = 0.7) +
+          facet_wrap(~Score_Type, scales = "free") +
+          labs(title = "Distribution of Microbiome Scores") +
+          theme_minimal()
+        
+        print(p2)
+      }
+    }
+  )
+)
+
+# Helper function for string repetition
+`%R%` <- function(x, times) {
+  paste(rep(x, times), collapse = "")
+}
+
+
+```
+
+
+```{r}
+
+
+# Initialize analyzer
+analyzer <- MicrobiomeDietAnalyzer$new(participant_df, species_filtered1)
+
+# Run comprehensive analysis  
+results <- analyzer$run_comprehensive_analysis()
+
+# Plot results
+analyzer$plot_results()
+
+# Access processed data with new scores
+processed_data <- analyzer$merged_data
+
+# Access specific results
+diversity_importance <- results$diversity_analysis$importance
+species_results <- results$species_analysis
+
+# Create custom inflammatory scores with your food patterns
+analyzer$create_inflammatory_scores(
+  inflammatory_patterns = c('sugar', 'processed', 'fried'),
+  anti_inflammatory_patterns = c('vegetable', 'fruit', 'omega')
+)
+
+
+```
+
+# some new score
+```{r}
+# Custom Food Scoring Systems for Asian Diet-Microbiome Analysis
+
+# Function to create multiple food scores based on your specific foods
+create_custom_food_scores <- function(merged_data, food_columns) {
+  
+  # 1. INFLAMMATORY vs ANTI-INFLAMMATORY SCORE
+  inflammatory_foods <- c(
+    # Processed meats and fried foods
+    "poultry_ham", "poultry_processed", "cured_pork", "burger",
+    "poultry_deep_fried", "seafood_deep_fried", "meat_deep_fried", "veg_deep_fried",
+    "french_fries", "fried_chips", "sweet_snack_deepfried",
+    
+    # Refined carbs and sugary items
+    "white_bread", "plain_rice_type_white", "flav_porr_type_white", "fried_rice_type_white",
+    "cereal_flav_not_wg", "cereal_mix_not_wg", "cereal_plain_not_wg", "pasta_type_not_wholemeal",
+    "noodle_type_instant",
+    
+    # High sugar foods and drinks
+    "sweet_biscuits", "biscuits_with_filling", "pastry", "cake", "chocolate", "ice_cream",
+    "coffee_3in1", "tea_3in1", "malted_drink_3in1", "carb_soft_drinks_regular",
+    "other_sweet_drinks", "milkshake",
+    
+    # High fat processed foods
+    "butter", "margarine", "kaya", "pasta_sauce_creamy", "desserts_kueh_coconut",
+    "desserts_in_soup_coconut", "puffs_and_pies"
+  )
+  
+  anti_inflammatory_foods <- c(
+    # Whole grains
+    "wholemeal_bread", "plain_rice_type_unpolished", "flav_porr_type_unpolished", 
+    "fried_rice_type_unpolished", "noodle_type_brown_rice", "pasta_type_wholemeal",
+    "oats", "cereal_plain_wg", "cereal_mix_wg", "cereal_flav_wg",
+    
+    # Fish and seafood (omega-3 rich)
+    "raw_fish", "oily_fish", "white_fish", "prawn", "crab", "squid", "oysters",
+    "seafood_boiled", "seafood_stewed", "seafood_roasted",
+    
+    # Vegetables and legumes
+    "broccoli", "chye_sim", "kailan", "kang_kong", "spinach", "cauliflower", "eggplant",
+    "mushrooms", "carrot", "capsicum", "dhal", "peas", "long_beans", "other_beans",
+    "tofu", "corn", "pumpkin", "lettuce", "cucumber", "raw_tomato", "seaweed",
+    
+    # Fruits
+    "apple", "avocado", "banana", "blueberries", "dragonfruit", "grape", "guava",
+    "kiwi", "mango", "melon", "orange", "papaya", "pear", "pineapple", "strawberries",
+    
+    # Nuts and seeds
+    "nuts", "seeds", "peanut_butter", "hazelnut",
+    
+    # Healthy cooking methods
+    "poultry_boiled", "poultry_stewed", "meat_boiled", "meat_stewed", "veg_boiled", "veg_stewed"
+  )
+  
+  # 2. ULTRA-PROCESSED FOOD SCORE
+  ultra_processed_foods <- c(
+    "poultry_ham", "poultry_processed", "cured_pork", "burger", "noodle_type_instant",
+    "cereal_3in1", "coffee_3in1", "tea_3in1", "malted_drink_3in1", 
+    "carb_soft_drinks_regular", "carb_soft_drinks_sugar_free", "other_sweet_drinks",
+    "sports_drinks", "bottled_tea", "bottled_coffee", "milkshake", "nutrition_drink",
+    "sweet_biscuits", "biscuits_with_filling", "pastry", "cake", "chocolate", 
+    "ice_cream", "puffs_and_pies", "fried_chips", "sweet_snack_deepfried"
+  )
+  
+  # 3. MEDITERRANEAN-STYLE SCORE (adapted for Asian foods)
+  mediterranean_positive <- c(
+    # Fish and seafood
+    "raw_fish", "oily_fish", "white_fish", "prawn", "crab", "squid",
+    "seafood_boiled", "seafood_stewed", "seafood_roasted",
+    
+    # Vegetables and legumes
+    "broccoli", "chye_sim", "kailan", "kang_kong", "spinach", "cauliflower", "eggplant",
+    "mushrooms", "carrot", "capsicum", "dhal", "peas", "long_beans", "other_beans",
+    "tofu", "lettuce", "cucumber", "raw_tomato",
+    
+    # Fruits
+    "apple", "avocado", "banana", "grape", "orange", "papaya", "pear",
+    
+    # Nuts and whole grains
+    "nuts", "seeds", "wholemeal_bread", "oats", "pasta_type_wholemeal"
+  )
+  
+  mediterranean_negative <- c(
+    "poultry_processed", "cured_pork", "burger", "poultry_deep_fried", 
+    "meat_deep_fried", "french_fries", "sweet_biscuits", "pastry", "cake"
+  )
+  
+  # 4. PLANT-BASED SCORE
+  plant_foods <- c(
+    # All vegetables
+    "broccoli", "chye_sim", "kailan", "kang_kong", "spinach", "white_cabbage",
+    "beansprouts", "cauliflower", "eggplant", "gourd", "celery", "okra", "mushrooms",
+    "carrot", "capsicum", "dhal", "peas", "long_beans", "other_beans", "lotus_root",
+    "pumpkin", "tofu", "corn", "yam", "potato", "lettuce", "cucumber", "raw_tomato", "seaweed",
+    
+    # All fruits
+    "apple", "avocado", "banana", "blueberries", "dragonfruit", "durian", "grape",
+    "guava", "kiwi", "mango", "melon", "orange", "papaya", "pear", "pineapple", 
+    "strawberries", "dried_fruit",
+    
+    # Nuts, seeds, and plant proteins
+    "nuts", "seeds", "peanut_butter", "hazelnut",
+    
+    # Whole grains
+    "wholemeal_bread", "plain_rice_type_unpolished", "oats", "pasta_type_wholemeal"
+  )
+  
+  animal_foods <- c(
+    "poultry_ham", "poultry_processed", "poultry_skin_removed", "poultry_curry_coconut",
+    "poultry_curry_no_coconut", "poultry_stir_fried", "poultry_deep_fried", 
+    "poultry_stewed", "poultry_roasted", "poultry_boiled",
+    "raw_fish", "ngiri", "dried_fish", "canned_fish", "white_fish", "oily_fish",
+    "prawn", "crab", "squid", "oysters", "organs", "cured_pork", "pork_fresh_fat",
+    "pork_fresh_lean", "burger", "beef_fresh_fat", "beef_fresh_lean", "mutton_fat", "mutton_lean",
+    "egg_mix_pork", "egg_mix_chicken", "egg_mix_seafood", "egg_scrambled", "egg_steamed",
+    "milk_non_fat", "milk_low_fat", "milk_whole", "yoghurt_regular_fat", "yoghurt_reduced_fat",
+    "cheese_regular_fat", "cheese_reduced_fat", "butter"
+  )
+  
+  # 5. FIBER-RICH SCORE
+  high_fiber_foods <- c(
+    "wholemeal_bread", "dried_fruit_bread", "plain_rice_type_unpolished", 
+    "flav_porr_type_unpolished", "fried_rice_type_unpolished", "pasta_type_wholemeal",
+    "oats", "cereal_plain_wg", "cereal_mix_wg",
+    
+    # Vegetables
+    "broccoli", "chye_sim", "kailan", "kang_kong", "spinach", "white_cabbage",
+    "beansprouts", "cauliflower", "eggplant", "gourd", "celery", "okra", "mushrooms",
+    "carrot", "capsicum", "dhal", "peas", "long_beans", "other_beans", "lotus_root",
+    "pumpkin", "corn", "lettuce", "seaweed",
+    
+    # Fruits with skin
+    "apple", "pear", "guava", "dried_fruit",
+    
+    # Nuts and seeds
+    "nuts", "seeds"
+  )
+  
+  # 6. HEALTHY COOKING METHODS SCORE
+  healthy_cooking <- c(
+    "poultry_boiled", "poultry_stewed", "poultry_roasted",
+    "seafood_boiled", "seafood_stewed", "seafood_roasted",
+    "meat_boiled", "meat_stewed", "meat_roasted",
+    "veg_boiled", "veg_stewed", "veg_roasted", "veg_stir_fried",
+    "egg_steamed", "raw_fish", "raw_tomato", "lettuce", "cucumber"
+  )
+  
+  unhealthy_cooking <- c(
+    "poultry_deep_fried", "seafood_deep_fried", "meat_deep_fried", "veg_deep_fried",
+    "french_fries", "fried_chips", "sweet_snack_deepfried", "fried_onion"
+  )
+  
+  # Function to calculate scores
+  calculate_food_score <- function(data, positive_foods, negative_foods = NULL, weight_positive = 1, weight_negative = 1) {
+    # Find available foods in the dataset
+    available_positive <- intersect(positive_foods, food_columns)
+    available_negative <- if(!is.null(negative_foods)) intersect(negative_foods, food_columns) else character(0)
+    
+    # Calculate positive score
+    if(length(available_positive) > 0) {
+      positive_score <- rowSums(data[, available_positive, drop = FALSE], na.rm = TRUE) * weight_positive
+    } else {
+      positive_score <- 0
+    }
+    
+    # Calculate negative score
+    if(length(available_negative) > 0) {
+      negative_score <- rowSums(data[, available_negative, drop = FALSE], na.rm = TRUE) * weight_negative
+    } else {
+      negative_score <- 0
+    }
+    
+    return(positive_score - negative_score)
+  }
+  
+  # Calculate all scores
+  cat("Calculating custom food scores...\n")
+  
+  # 1. Anti-Inflammatory Index (higher = more anti-inflammatory)
+  merged_data$Anti_Inflammatory_Index <- calculate_food_score(merged_data, anti_inflammatory_foods, inflammatory_foods)
+  
+  # 2. Ultra-Processed Food Score (higher = more ultra-processed)
+  merged_data$Ultra_Processed_Score <- calculate_food_score(merged_data, ultra_processed_foods)
+  
+  # 3. Mediterranean-Style Score (higher = more Mediterranean-like)
+  merged_data$Mediterranean_Score <- calculate_food_score(merged_data, mediterranean_positive, mediterranean_negative)
+  
+  # 4. Plant-Based Score (higher = more plant-based)
+  merged_data$Plant_Based_Score <- calculate_food_score(merged_data, plant_foods, animal_foods, 1, 0.5)
+  
+  # 5. Fiber Score (higher = more fiber-rich foods)
+  merged_data$Fiber_Score <- calculate_food_score(merged_data, high_fiber_foods)
+  
+  # 6. Healthy Cooking Score (higher = healthier cooking methods)
+  merged_data$Healthy_Cooking_Score <- calculate_food_score(merged_data, healthy_cooking, unhealthy_cooking)
+  
+  # Print summary of available foods for each score
+  cat("\n=== FOOD SCORE SUMMARY ===\n")
+  
+  cat("\nAnti-Inflammatory Foods Found:", length(intersect(anti_inflammatory_foods, food_columns)))
+  cat("\nPro-Inflammatory Foods Found:", length(intersect(inflammatory_foods, food_columns)))
+  
+  cat("\nUltra-Processed Foods Found:", length(intersect(ultra_processed_foods, food_columns)))
+  
+  cat("\nMediterranean Positive Foods Found:", length(intersect(mediterranean_positive, food_columns)))
+  cat("\nMediterranean Negative Foods Found:", length(intersect(mediterranean_negative, food_columns)))
+  
+  cat("\nPlant Foods Found:", length(intersect(plant_foods, food_columns)))
+  cat("\nAnimal Foods Found:", length(intersect(animal_foods, food_columns)))
+  
+  cat("\nHigh Fiber Foods Found:", length(intersect(high_fiber_foods, food_columns)))
+  
+  cat("\nHealthy Cooking Methods Found:", length(intersect(healthy_cooking, food_columns)))
+  cat("\nUnhealthy Cooking Methods Found:", length(intersect(unhealthy_cooking, food_columns)))
+  
+  # Show score distributions
+  cat("\n\n=== SCORE DISTRIBUTIONS ===\n")
+  score_columns <- c("Anti_Inflammatory_Index", "Ultra_Processed_Score", "Mediterranean_Score", 
+                     "Plant_Based_Score", "Fiber_Score", "Healthy_Cooking_Score")
+  
+  for(score in score_columns) {
+    cat("\n", score, ":\n")
+    cat("  Mean:", round(mean(merged_data[[score]], na.rm = TRUE), 2))
+    cat("  SD:", round(sd(merged_data[[score]], na.rm = TRUE), 2))
+    cat("  Range:", round(min(merged_data[[score]], na.rm = TRUE), 2), "to", 
+        round(max(merged_data[[score]], na.rm = TRUE), 2), "\n")
+  }
+  
+  return(merged_data)
+}
+
+# Additional function to create Asian-specific dietary pattern scores
+create_asian_dietary_patterns <- function(merged_data, food_columns) {
+  
+  # 1. TRADITIONAL ASIAN PATTERN
+  traditional_asian <- c(
+    "plain_rice_type_white", "plain_rice_type_unpolished", "plain_porr_type_white",
+    "plain_porr_type_unpolished", "thosai", "roti", "chapati", "idli",
+    "raw_fish", "oily_fish", "white_fish", "prawn", "crab", "squid",
+    "broccoli", "chye_sim", "kailan", "kang_kong", "spinach", "mushrooms",
+    "tofu", "dhal", "peas", "long_beans", "seaweed",
+    "tea_no_milk", "tea_whole_milk", "soya_milk_low_sugar"
+  )
+  
+  # 2. WESTERNIZED PATTERN
+  westernized_pattern <- c(
+    "white_bread", "pizza", "french_fries", "burger", "pasta_type_not_wholemeal",
+    "pasta_sauce_creamy", "cereal_flav_not_wg", "beef_fresh_fat", "beef_fresh_lean",
+    "cheese_regular_fat", "cheese_reduced_fat", "milk_whole", "milk_low_fat",
+    "coffee_whole_milk", "coffee_3in1", "carb_soft_drinks_regular",
+    "sweet_biscuits", "cake", "chocolate", "ice_cream"
+  )
+  
+  # 3. STREET FOOD/HAWKER PATTERN
+  street_food_pattern <- c(
+    "murtabak", "puri", "sweet_filled_buns", "savoury_filled_buns",
+    "fried_rice_with_veg", "fried_rice_without_veg", "fried_noodle",
+    "noodle_in_gravy", "noodle_in_soup", "lontong",
+    "poultry_deep_fried", "seafood_deep_fried", "meat_deep_fried",
+    "kaya", "coffee_condensed_milk", "tea_condensed_milk",
+    "desserts_kueh_coconut", "desserts_kueh_no_coconut"
+  )
+  
+  # 4. HEALTH-CONSCIOUS PATTERN
+  health_conscious_pattern <- c(
+    "wholemeal_bread", "plain_rice_type_unpolished", "oats", "pasta_type_wholemeal",
+    "cereal_plain_wg", "poultry_skin_removed", "poultry_boiled", "poultry_stewed",
+    "raw_fish", "oily_fish", "seafood_boiled", "tofu", "egg_mix_vege",
+    "broccoli", "spinach", "cauliflower", "mushrooms", "carrot", "capsicum",
+    "apple", "banana", "orange", "papaya", "blueberries", "avocado",
+    "nuts", "seeds", "yoghurt_reduced_fat", "milk_low_fat", "soya_milk_low_sugar"
+  )
+  
+  # Calculate pattern scores
+  calculate_pattern_score <- function(data, pattern_foods) {
+    available_foods <- intersect(pattern_foods, food_columns)
+    if(length(available_foods) > 0) {
+      return(rowSums(data[, available_foods, drop = FALSE], na.rm = TRUE))
+    } else {
+      return(rep(0, nrow(data)))
+    }
+  }
+  
+  merged_data$Traditional_Asian_Pattern <- calculate_pattern_score(merged_data, traditional_asian)
+  merged_data$Westernized_Pattern <- calculate_pattern_score(merged_data, westernized_pattern)
+  merged_data$Street_Food_Pattern <- calculate_pattern_score(merged_data, street_food_pattern)
+  merged_data$Health_Conscious_Pattern <- calculate_pattern_score(merged_data, health_conscious_pattern)
+  
+  cat("\n=== ASIAN DIETARY PATTERN SUMMARY ===\n")
+  pattern_scores <- c("Traditional_Asian_Pattern", "Westernized_Pattern", 
+                     "Street_Food_Pattern", "Health_Conscious_Pattern")
+  
+  for(pattern in pattern_scores) {
+    cat("\n", pattern, ":\n")
+    cat("  Mean:", round(mean(merged_data[[pattern]], na.rm = TRUE), 2))
+    cat("  SD:", round(sd(merged_data[[pattern]], na.rm = TRUE), 2), "\n")
+  }
+  
+  return(merged_data)
+}
+
+
+```
+
+
+```{r}
+# After running your analyzer preparation:
+analyzer <- MicrobiomeDietAnalyzer$new(participant_df, species_filtered1)
+analyzer$prepare_data()
+
+# Add the custom scores:
+analyzer$merged_data <- create_custom_food_scores(analyzer$merged_data, analyzer$food_columns)
+analyzer$merged_data <- create_asian_dietary_patterns(analyzer$merged_data, analyzer$food_columns)
+
+# Now correlate these better scores with your microbiome:
+library(corrplot)
+new_scores <- c("Anti_Inflammatory_Index", "Mediterranean_Score", "Plant_Based_Score", 
+                "Traditional_Asian_Pattern", "Health_Conscious_Pattern")
+
+# Get correlations with your top species
+top_species <- analyzer$species_columns[1:15]
+correlation_data <- analyzer$merged_data[, c(new_scores, top_species)]
+corr_matrix <- cor(correlation_data, use = "complete.obs", method = "spearman")
+corr_matrix
+nrow(corr_matrix)
+# Plot the correlations
+corrplot(corr_matrix[1:5, 6:ncol(corr_matrix)], 
+         method = "color", is.corr = TRUE,
+         title = "New Diet Scores vs Microbiome Species")
+```
+# see all the scores
+```{r}
+# Comprehensive Heatmap with All Custom Dietary Scores
+
+create_comprehensive_heatmap <- function(analyzer, n_species = 30, correlation_method = "spearman", 
+                                       color_range = c(-0.2, 0.2), plot_width = 16, plot_height = 12) {
+  
+  cat("=== COMPREHENSIVE DIET-MICROBIOME HEATMAP ===\n\n")
+  
+  # Get ALL custom dietary scores
+  all_diet_scores <- c(
+    # Custom food scores from create_custom_food_scores
+    "Anti_Inflammatory_Index", "Ultra_Processed_Score", "Mediterranean_Score", 
+    "Plant_Based_Score", "Fiber_Score", "Healthy_Cooking_Score",
+    
+    # Asian dietary patterns from create_asian_dietary_patterns  
+    "Traditional_Asian_Pattern", "Westernized_Pattern", 
+    "Street_Food_Pattern", "Health_Conscious_Pattern"
+  )
+  
+  # Check which scores are available in the data
+  available_scores <- intersect(all_diet_scores, colnames(analyzer$merged_data))
+  missing_scores <- setdiff(all_diet_scores, available_scores)
+  
+  cat("Available dietary scores:", length(available_scores), "\n")
+  if(length(missing_scores) > 0) {
+    cat("Missing scores (need to run create_custom_food_scores and create_asian_dietary_patterns):\n")
+    print(missing_scores)
+  }
+  
+  # Get top species by abundance
+  species_data <- analyzer$merged_data[, analyzer$species_columns, drop = FALSE]
+  species_data[is.na(species_data)] <- 0
+  
+  # Convert to relative abundance for better interpretation
+  row_sums <- rowSums(species_data)
+  species_rel <- species_data / (row_sums + 1e-10)
+  
+  # Select top abundant species
+  mean_abundance <- colMeans(species_rel)
+  top_species <- names(sort(mean_abundance, decreasing = TRUE)[1:n_species])
+  
+  cat("Using top", length(top_species), "most abundant species\n")
+  
+  # Create correlation matrix
+  correlation_data <- cbind(
+    analyzer$merged_data[, available_scores, drop = FALSE],
+    species_rel[, top_species, drop = FALSE]
+  )
+  
+  # Calculate correlations
+  corr_matrix <- cor(correlation_data, use = "complete.obs", method = correlation_method)
+  
+  # Extract diet-microbiome correlations
+  diet_microbe_corr <- corr_matrix[available_scores, top_species, drop = FALSE]
+  
+  # Cap correlations at specified range for better visualization
+  diet_microbe_corr_capped <- diet_microbe_corr
+  diet_microbe_corr_capped[diet_microbe_corr_capped > color_range[2]] <- color_range[2]
+  diet_microbe_corr_capped[diet_microbe_corr_capped < color_range[1]] <- color_range[1]
+  
+  # Count capped values
+  capped_high <- sum(diet_microbe_corr > color_range[2], na.rm = TRUE)
+  capped_low <- sum(diet_microbe_corr < color_range[1], na.rm = TRUE)
+  
+  cat("Correlation range:", round(min(diet_microbe_corr, na.rm = TRUE), 3), 
+      "to", round(max(diet_microbe_corr, na.rm = TRUE), 3), "\n")
+  cat("Values capped:", capped_high, "above", color_range[2], 
+      "and", capped_low, "below", color_range[1], "\n")
+  
+  # Create comprehensive heatmap
+  library(corrplot)
+  library(RColorBrewer)
+  
+  # Enhanced color palette
+  colors <- colorRampPalette(c("#053061", "#2166AC", "#4393C3", "#92C5DE", "#D1E5F0", 
+                              "white", 
+                              "#FDBF6F", "#FD8D3C", "#E31A1C", "#BD0026", "#800026"))(200)
+  
+  # Set up plotting area for large heatmap
+  par(mfrow = c(1, 1), mar = c(5, 4, 4, 2))
+  
+  # Create main comprehensive heatmap
+  corrplot(diet_microbe_corr_capped, 
+           method = "color", 
+           is.corr = TRUE,
+           title = paste("Comprehensive Diet Scores vs Top", n_species, "Microbiome Species (", correlation_method, ")"),
+           mar = c(0, 0, 3, 0), 
+           tl.cex = 0.8, 
+           tl.col = "black",
+           col = colors,
+           cl.lim = color_range,
+           cl.cex = 1.0,
+           addCoef.col = "black", 
+           number.cex = 0.4,
+           tl.srt = 45)  # Rotate species labels for better readability
+  
+  # Find and display strongest correlations
+  corr_flat <- as.vector(diet_microbe_corr)
+  names(corr_flat) <- paste(rep(rownames(diet_microbe_corr), ncol(diet_microbe_corr)),
+                           rep(colnames(diet_microbe_corr), each = nrow(diet_microbe_corr)), 
+                           sep = " ↔ ")
+  
+  top_correlations <- head(sort(abs(corr_flat), decreasing = TRUE), 15)
+  
+  cat("\nTop 15 strongest correlations:\n")
+  for(i in 1:length(top_correlations)) {
+    original_corr <- corr_flat[names(top_correlations)[i]]
+    cat(sprintf("%2d. %s: %+.3f\n", i, names(top_correlations)[i], original_corr))
+  }
+  
+  # Create focused heatmaps for different score categories
+  
+  # 1. Health-related scores
+  health_scores <- c("Anti_Inflammatory_Index", "Mediterranean_Score", "Plant_Based_Score", 
+                    "Fiber_Score", "Healthy_Cooking_Score", "Health_Conscious_Pattern")
+  available_health <- intersect(health_scores, available_scores)
+  
+  if(length(available_health) > 0) {
+    health_corr <- diet_microbe_corr_capped[available_health, , drop = FALSE]
+    
+    corrplot(health_corr, 
+             method = "color", 
+             is.corr = TRUE,
+             title = "Healthy Diet Scores vs Microbiome",
+             mar = c(0, 0, 3, 0), 
+             tl.cex = 0.9, 
+             tl.col = "black",
+             col = colors,
+             cl.lim = color_range,
+             addCoef.col = "black", 
+             number.cex = 0.5)
+  }
+  
+  # 2. Processed/unhealthy scores
+  processed_scores <- c("Ultra_Processed_Score", "Westernized_Pattern", "Street_Food_Pattern")
+  available_processed <- intersect(processed_scores, available_scores)
+  
+  if(length(available_processed) > 0) {
+    processed_corr <- diet_microbe_corr_capped[available_processed, , drop = FALSE]
+    
+    corrplot(processed_corr, 
+             method = "color", 
+             is.corr = TRUE,
+             title = "Processed/Western Diet Scores vs Microbiome",
+             mar = c(0, 0, 3, 0), 
+             tl.cex = 0.9, 
+             tl.col = "black",
+             col = colors,
+             cl.lim = color_range,
+             addCoef.col = "black", 
+             number.cex = 0.5)
+  }
+  
+  # Statistical summary
+  cat("\n=== STATISTICAL SUMMARY ===\n")
+  
+  # Count significant correlations at different thresholds
+  thresholds <- c(0.1, 0.15, 0.2, 0.25)
+  for(threshold in thresholds) {
+    count <- sum(abs(diet_microbe_corr) >= threshold, na.rm = TRUE)
+    percentage <- round(count / length(diet_microbe_corr) * 100, 1)
+    cat("Correlations |r| ≥", threshold, ":", count, "(", percentage, "%)\n")
+  }
+  
+  # Return comprehensive results
+  return(list(
+    correlation_matrix = diet_microbe_corr,
+    correlation_matrix_capped = diet_microbe_corr_capped,
+    top_correlations = top_correlations,
+    available_scores = available_scores,
+    species_used = top_species,
+    method = correlation_method,
+    color_range = color_range,
+    statistics = list(
+      n_scores = length(available_scores),
+      n_species = length(top_species),
+      correlation_range = range(diet_microbe_corr, na.rm = TRUE),
+      capped_values = c(high = capped_high, low = capped_low)
+    )
+  ))
+}
+
+# Function to create publication-ready heatmap
+create_publication_heatmap <- function(analyzer, selected_scores = NULL, selected_species = NULL,
+                                     correlation_method = "spearman", color_range = c(-0.2, 0.2)) {
+  
+  # If no specific scores selected, use the most interesting ones
+  if(is.null(selected_scores)) {
+    selected_scores <- c("Anti_Inflammatory_Index", "Mediterranean_Score", "Plant_Based_Score",
+                        "Ultra_Processed_Score", "Traditional_Asian_Pattern", "Westernized_Pattern")
+  }
+  
+  # If no specific species selected, use those with strongest correlations
+  if(is.null(selected_species)) {
+    # Run quick correlation to find most relevant species
+    all_scores <- intersect(selected_scores, colnames(analyzer$merged_data))
+    species_data <- analyzer$merged_data[, analyzer$species_columns, drop = FALSE]
+    species_data[is.na(species_data)] <- 0
+    
+    # Quick correlation to find relevant species
+    quick_corr <- cor(analyzer$merged_data[, all_scores, drop = FALSE], 
+                     species_data, use = "complete.obs", method = correlation_method)
+    
+    # Select species with strongest correlations
+    species_max_corr <- apply(abs(quick_corr), 2, max, na.rm = TRUE)
+    selected_species <- names(sort(species_max_corr, decreasing = TRUE)[1:20])
+  }
+  
+  # Create focused correlation matrix
+  correlation_data <- analyzer$merged_data[, c(selected_scores, selected_species), drop = FALSE]
+  corr_matrix <- cor(correlation_data, use = "complete.obs", method = correlation_method)
+  
+  # Extract diet-microbiome part
+  diet_microbe_corr <- corr_matrix[selected_scores, selected_species, drop = FALSE]
+  
+  # Cap correlations
+  diet_microbe_corr_capped <- diet_microbe_corr
+  diet_microbe_corr_capped[diet_microbe_corr_capped > color_range[2]] <- color_range[2]
+  diet_microbe_corr_capped[diet_microbe_corr_capped < color_range[1]] <- color_range[1]
+  
+  # Create clean, publication-ready heatmap
+  library(corrplot)
+  colors <- colorRampPalette(c("#2166AC", "#4393C3", "#92C5DE", "#D1E5F0", 
+                              "white", 
+                              "#FDBF6F", "#FD8D3C", "#E31A1C", "#BD0026"))(200)
+  
+  corrplot(diet_microbe_corr_capped, 
+           method = "color", 
+           is.corr = TRUE,
+           title = "Diet Quality Indices vs Key Microbiome Species",
+           mar = c(0, 0, 3, 0), 
+           tl.cex = 1.0, 
+           tl.col = "black",
+           col = colors,
+           cl.lim = color_range,
+           cl.cex = 1.2,
+           addCoef.col = "white", 
+           number.cex = 0.7,
+           number.font = 2)
+  
+  return(diet_microbe_corr_capped)
+}
+```
+
+
+```{r}
+# 1. Comprehensive heatmap with all scores and top 30 species
+results <- create_comprehensive_heatmap(analyzer, n_species = 30, 
+                                       correlation_method = 'spearman',
+                                       color_range = c(-0.2, 0.2))
+
+# 2. Even larger heatmap with 50 species
+results_large <- create_comprehensive_heatmap(analyzer, n_species = 50,
+                                             color_range = c(-0.15, 0.15))
+
+# 3. Publication-ready focused heatmap
+pub_heatmap <- create_publication_heatmap(analyzer,
+                                         selected_scores = c('Anti_Inflammatory_Index', 
+                                                           'Mediterranean_Score', 
+                                                           'Ultra_Processed_Score',
+                                                           'Traditional_Asian_Pattern'),
+                                         correlation_method = 'spearman')
+
+# 4. Custom selection of interesting bacteria
+interesting_bacteria <- c('Bifidobacterium', 'Lactobacillus', 'Akkermansia', 
+                         'Faecalibacterium', 'Bacteroides')  # Adjust to your actual species names
+custom_heatmap <- create_publication_heatmap(analyzer, 
+                                            selected_species = interesting_bacteria)
+```
+
+
+
+
+
+```{r}
+# Check your score distributions
+summary(analyzer$merged_data[, c("Anti_Inflammatory_Index", "Mediterranean_Score", 
+                                "Plant_Based_Score", "Traditional_Asian_Pattern")])
+
+# Check variance
+apply(analyzer$merged_data[, c("Anti_Inflammatory_Index", "Mediterranean_Score", 
+                              "Plant_Based_Score")], 2, var, na.rm = TRUE)
+
+# Look at some raw correlations with individual foods instead
+top_foods <- analyzer$food_columns[1:20]
+top_species <- analyzer$species_columns[1:10]
+food_species_corr <- cor(analyzer$merged_data[, c(top_foods, top_species)], 
+                        use = "complete.obs")
+
+# Check correlation range
+range(food_species_corr[1:20, 21:30], na.rm = TRUE)
+```
+
+## robust
+```{r}
+# Simple and Robust Microbiome-Diet Analysis
+# Designed specifically for your data structure
+
+simple_microbiome_analysis <- function(merged_data, food_columns, species_columns) {
+  
+  cat("=== SIMPLE MICROBIOME-DIET ANALYSIS ===\n\n")
+  
+  # 1. CLEAN AND PREPARE DATA
+  cat("1. DATA PREPARATION\n")
+  cat("===================\n")
+  
+  # Clean continuous food data (0-6 range, could be servings, portions, etc.)
+  food_data <- merged_data[, food_columns, drop = FALSE]
+  
+  # For continuous data, replace NAs with median instead of 0
+  for(col in food_columns) {
+    if(sum(is.na(food_data[[col]])) > 0) {
+      median_val <- median(food_data[[col]], na.rm = TRUE)
+      food_data[[col]][is.na(food_data[[col]])] <- median_val
+    }
+  }
+  
+  # Check for and handle extreme outliers in continuous data
+  food_data_clean <- food_data
+  outliers_found <- 0
+  
+  for(col in food_columns) {
+    Q1 <- quantile(food_data[[col]], 0.25, na.rm = TRUE)
+    Q3 <- quantile(food_data[[col]], 0.75, na.rm = TRUE)
+    IQR <- Q3 - Q1
+    
+    # Define outliers as values beyond 3*IQR from quartiles
+    lower_bound <- Q1 - 3 * IQR
+    upper_bound <- Q3 + 3 * IQR
+    
+    outliers <- which(food_data[[col]] < lower_bound | food_data[[col]] > upper_bound)
+    if(length(outliers) > 0) {
+      outliers_found <- outliers_found + length(outliers)
+      # Cap outliers at bounds
+      food_data_clean[[col]][food_data[[col]] < lower_bound] <- lower_bound
+      food_data_clean[[col]][food_data[[col]] > upper_bound] <- upper_bound
+    }
+  }
+  
+  cat("Food data cleaned - NAs replaced with medians\n")
+  cat("Outliers capped:", outliers_found, "extreme values\n")
+  cat("Food data range:", round(min(food_data_clean), 2), "to", round(max(food_data_clean), 2), "\n")
+  
+  # For continuous data, also create standardized versions
+  food_data_scaled <- scale(food_data_clean)
+  cat("Food data also standardized (mean=0, sd=1) for correlation analysis\n")
+  
+  # Clean and transform species data (raw counts)
+  species_data <- merged_data[, species_columns, drop = FALSE]
+  species_data[is.na(species_data)] <- 0
+  
+  # Convert to relative abundance (proportions)
+  row_sums <- rowSums(species_data)
+  species_rel <- species_data / (row_sums + 1e-10)  # Add small constant to avoid division by 0
+  
+  cat("Species data converted to relative abundance\n")
+  cat("Species relative abundance range:", round(min(species_rel), 6), "to", round(max(species_rel), 6), "\n")
+  
+  # Remove very rare species (present in <5% of samples)
+  species_prevalence <- colSums(species_rel > 0) / nrow(species_rel)
+  common_species <- species_columns[species_prevalence >= 0.05]
+  species_rel_filtered <- species_rel[, common_species, drop = FALSE]
+  
+  cat("Filtered to", length(common_species), "species present in ≥5% of samples\n")
+  
+  # Select top abundant species for analysis
+  mean_abundance <- colMeans(species_rel_filtered)
+  top_species <- names(sort(mean_abundance, decreasing = TRUE)[1:min(50, length(common_species))])
+  species_final <- species_rel_filtered[, top_species, drop = FALSE]
+  
+  cat("Using top", length(top_species), "most abundant species\n\n")
+  
+  # 2. CREATE SIMPLE DIETARY SCORES
+  cat("2. DIETARY SCORES\n")
+  cat("=================\n")
+  
+  # Define food groups based on your actual foods
+  food_groups <- list(
+    # Processed/unhealthy foods
+    processed_foods = c("noodle_type_instant", "coffee_3in1", "tea_3in1", "malted_drink_3in1",
+                       "carb_soft_drinks_regular", "sweet_biscuits", "cake", "chocolate", 
+                       "ice_cream", "fried_chips", "burger", "french_fries"),
+    
+    # Fresh fruits
+    fruits = c("apple", "banana", "orange", "papaya", "pear", "mango", "pineapple",
+              "strawberries", "blueberries", "kiwi", "guava", "melon", "grape"),
+    
+    # Vegetables
+    vegetables = c("broccoli", "chye_sim", "kailan", "kang_kong", "spinach", "white_cabbage",
+                  "beansprouts", "cauliflower", "eggplant", "mushrooms", "carrot", "capsicum",
+                  "lettuce", "cucumber", "raw_tomato"),
+    
+    # Fish and seafood
+    seafood = c("raw_fish", "oily_fish", "white_fish", "prawn", "crab", "squid", "oysters"),
+    
+    # Fried foods
+    fried_foods = c("poultry_deep_fried", "seafood_deep_fried", "meat_deep_fried", 
+                   "veg_deep_fried", "french_fries", "fried_chips", "sweet_snack_deepfried"),
+    
+    # Whole grains
+    whole_grains = c("wholemeal_bread", "plain_rice_type_unpolished", "oats", 
+                    "pasta_type_wholemeal", "cereal_plain_wg")
+  )
+  
+  # Calculate food group scores
+  dietary_scores <- data.frame(participant_id = merged_data$participant_id)
+  
+  for(group_name in names(food_groups)) {
+    # Find available foods in this group
+    available_foods <- intersect(food_groups[[group_name]], food_columns)
+    
+    if(length(available_foods) > 0) {
+      # For continuous data, sum the actual consumption amounts
+      group_consumption <- rowSums(food_data_clean[, available_foods, drop = FALSE], na.rm = TRUE)
+      dietary_scores[[paste0(group_name, "_score")]] <- group_consumption
+      
+      # Also create standardized version
+      dietary_scores[[paste0(group_name, "_score_std")]] <- scale(group_consumption)[,1]
+      
+      cat(group_name, ": found", length(available_foods), "foods, mean consumption:", 
+          round(mean(group_consumption), 2), "\n")
+    } else {
+      dietary_scores[[paste0(group_name, "_score")]] <- 0
+      dietary_scores[[paste0(group_name, "_score_std")]] <- 0
+      cat(group_name, ": no foods found\n")
+    }
+  }
+  
+  # Create composite scores (both raw and standardized)
+  dietary_scores$healthy_diet_score <- dietary_scores$fruits_score + 
+                                     dietary_scores$vegetables_score + 
+                                     dietary_scores$seafood_score + 
+                                     dietary_scores$whole_grains_score
+  
+  dietary_scores$unhealthy_diet_score <- dietary_scores$processed_foods_score + 
+                                        dietary_scores$fried_foods_score
+  
+  dietary_scores$diet_quality_score <- dietary_scores$healthy_diet_score - dietary_scores$unhealthy_diet_score
+  
+  # Standardized versions
+  dietary_scores$healthy_diet_score_std <- scale(dietary_scores$healthy_diet_score)[,1]
+  dietary_scores$unhealthy_diet_score_std <- scale(dietary_scores$unhealthy_diet_score)[,1]
+  dietary_scores$diet_quality_score_std <- scale(dietary_scores$diet_quality_score)[,1]
+  
+  cat("\nDietary scores calculated (both raw and standardized versions)\n\n")
+  
+  # 3. CORRELATION ANALYSIS WITH MULTIPLE APPROACHES
+  cat("3. CORRELATION ANALYSIS\n")
+  cat("=======================\n")
+  
+  # Test both raw and standardized dietary scores
+  raw_score_columns <- c("fruits_score", "vegetables_score", "seafood_score", "processed_foods_score", 
+                        "fried_foods_score", "healthy_diet_score", "unhealthy_diet_score", "diet_quality_score")
+  
+  std_score_columns <- c("fruits_score_std", "vegetables_score_std", "seafood_score_std", "processed_foods_score_std", 
+                        "fried_foods_score_std", "healthy_diet_score_std", "unhealthy_diet_score_std", "diet_quality_score_std")
+  
+  # Get available score columns
+  available_raw_scores <- intersect(raw_score_columns, colnames(dietary_scores))
+  available_std_scores <- intersect(std_score_columns, colnames(dietary_scores))
+  
+  # Test different correlation approaches
+  correlation_approaches <- list(
+    "Raw Scores vs Relative Abundance" = list(
+      scores = dietary_scores[, available_raw_scores, drop = FALSE],
+      species = species_final
+    ),
+    "Standardized Scores vs Relative Abundance" = list(
+      scores = dietary_scores[, available_std_scores, drop = FALSE],
+      species = species_final
+    )
+  )
+  
+  best_correlations <- list()
+  
+  for(approach_name in names(correlation_approaches)) {
+    cat("\n", approach_name, ":\n")
+    approach_data <- correlation_approaches[[approach_name]]
+    
+    # Calculate correlations
+    corr_matrix <- cor(approach_data$scores, approach_data$species, 
+                      use = "complete.obs", method = "spearman")
+    
+    # Find correlation range
+    corr_range <- range(corr_matrix, na.rm = TRUE)
+    cat("  Correlation range:", round(corr_range[1], 3), "to", round(corr_range[2], 3), "\n")
+    
+    # Find top correlations for this approach
+    corr_flat <- as.vector(corr_matrix)
+    names(corr_flat) <- paste(rep(rownames(corr_matrix), ncol(corr_matrix)),
+                             rep(colnames(corr_matrix), each = nrow(corr_matrix)), 
+                             sep = " ↔ ")
+    
+    top_5 <- head(sort(abs(corr_flat), decreasing = TRUE), 5)
+    cat("  Top 5 correlations:\n")
+    for(i in 1:length(top_5)) {
+      original_corr <- corr_flat[names(top_5)[i]]
+      cat(sprintf("    %d. %s: %+.3f\n", i, names(top_5)[i], original_corr))
+    }
+    
+    best_correlations[[approach_name]] <- list(
+      matrix = corr_matrix,
+      top_correlations = top_5,
+      flat_correlations = corr_flat
+    )
+  }
+  
+  # Select best approach
+  best_approach_name <- names(best_correlations)[which.max(sapply(best_correlations, function(x) max(abs(x$matrix))))]
+  diet_microbe_corr <- best_correlations[[best_approach_name]]$matrix
+  
+  cat("\nBest approach:", best_approach_name, "\n")
+  
+  # 4. STATISTICAL SIGNIFICANCE
+  cat("\n4. STATISTICAL TESTING\n")
+  cat("======================\n")
+  
+  # Use the best correlation approach for significance testing
+  best_scores <- best_correlations[[best_approach_name]]$flat_correlations
+  top_correlations <- head(sort(abs(best_scores), decreasing = TRUE), 10)
+  
+  # Test significance of top correlations
+  significant_correlations <- list()
+  
+  # Get score and species data from best approach
+  best_approach_data <- correlation_approaches[[best_approach_name]]
+  
+  for(corr_name in names(top_correlations)) {
+    # Parse the correlation name to get score and species
+    parts <- strsplit(corr_name, " ↔ ")[[1]]
+    score_name <- parts[1]
+    species_name <- parts[2]
+    
+    if(score_name %in% colnames(best_approach_data$scores) && 
+       species_name %in% colnames(best_approach_data$species)) {
+      
+      cor_test <- cor.test(best_approach_data$scores[[score_name]], 
+                          best_approach_data$species[[species_name]], 
+                          method = "spearman", exact = FALSE)
+      
+      significant_correlations[[corr_name]] <- list(
+        correlation = cor_test$estimate,
+        p_value = cor_test$p.value,
+        significant = cor_test$p.value < 0.05
+      )
+    }
+  }
+  
+  sig_count <- sum(sapply(significant_correlations, function(x) x$significant))
+  cat("Found", sig_count, "significant correlations out of top 10 (p < 0.05)\n")
+  
+  if(sig_count > 0) {
+    cat("\nSignificant correlations:\n")
+    sig_corrs <- significant_correlations[sapply(significant_correlations, function(x) x$significant)]
+    for(i in 1:length(sig_corrs)) {
+      pair_name <- names(sig_corrs)[i]
+      corr_val <- sig_corrs[[pair_name]]$correlation
+      p_val <- sig_corrs[[pair_name]]$p_value
+      cat(sprintf("%2d. %s: r = %+.3f, p = %.3f\n", i, pair_name, corr_val, p_val))
+    }
+  }
+  
+  # 5. VISUALIZATION
+  cat("\n5. CREATING HEATMAP\n")
+  cat("===================\n")
+  
+  # Create heatmap of top correlations
+  library(corrplot)
+  
+  # Select subset for visualization (top correlations)
+  viz_species <- top_species[1:min(15, length(top_species))]
+  viz_corr <- diet_microbe_corr[, viz_species, drop = FALSE]
+  
+  # Plot
+  corrplot(viz_corr, method = "color", is.corr = TRUE,
+           title = "Diet Scores vs Top Microbiome Species",
+           mar = c(0,0,2,0), tl.cex = 0.7, tl.col = "black",
+           col = colorRampPalette(c("red", "white", "blue"))(200))
+  
+  # 6. SUMMARY STATISTICS
+  cat("\n6. SUMMARY\n")
+  cat("==========\n")
+  
+  # Get all dietary score columns (both raw and standardized)
+  all_score_columns <- grep("_score", colnames(dietary_scores), value = TRUE)
+  all_score_columns <- all_score_columns[all_score_columns != "participant_id"]  # Remove participant_id if it exists
+  
+  # Dietary score summaries
+  cat("Dietary score ranges:\n")
+  for(score in all_score_columns) {
+    if(score %in% colnames(dietary_scores)) {
+      score_range <- range(dietary_scores[[score]], na.rm = TRUE)
+      score_mean <- mean(dietary_scores[[score]], na.rm = TRUE)
+      cat(sprintf("  %s: %.2f to %.2f (mean: %.2f)\n", 
+                  score, score_range[1], score_range[2], score_mean))
+    }
+  }
+  
+  # Return results
+  return(list(
+    dietary_scores = dietary_scores,
+    correlation_matrix = diet_microbe_corr,
+    all_correlation_approaches = best_correlations,
+    best_approach = best_approach_name,
+    significant_correlations = significant_correlations,
+    top_correlations = top_correlations,
+    species_used = top_species,
+    food_groups_found = food_groups
+  ))
+}
+```
+
+
+```{r}
+# Usage
+
+results <- simple_microbiome_analysis(analyzer$merged_data, 
+                                     analyzer$food_columns, 
+                                     analyzer$species_columns)
+
+# View results
+print(results$top_correlations)
+print(results$significant_correlations)
+```
+```{r}
+
+
+create_custom_heatmap <- function(results, selection_method = "strongest_correlations", 
+                                 n_species = 15, correlation_threshold = 0.1,
+                                 color_range = c(-0.2, 0.2)) {
+  
+  cat("=== CUSTOM HEATMAP ANALYSIS ===\n\n")
+  
+  # Get the best correlation matrix from results
+  best_corr_matrix <- results$correlation_matrix
+  
+  # Different methods to select species for visualization
+  if(selection_method == "strongest_correlations") {
+    # Method 1: Select species with strongest correlations to ANY diet score
+    species_max_corr <- apply(abs(best_corr_matrix), 2, max, na.rm = TRUE)
+    selected_species <- names(sort(species_max_corr, decreasing = TRUE)[1:n_species])
+    cat("Selected", n_species, "species with strongest correlations to diet scores\n")
+    
+  } else if(selection_method == "above_threshold") {
+    # Method 2: Select species with correlations above threshold
+    species_above_threshold <- colnames(best_corr_matrix)[apply(abs(best_corr_matrix), 2, 
+                                                              function(x) any(x > correlation_threshold, na.rm = TRUE))]
+    selected_species <- species_above_threshold[1:min(n_species, length(species_above_threshold))]
+    cat("Selected", length(selected_species), "species with correlations > ±", correlation_threshold, "\n")
+    
+  } else if(selection_method == "most_abundant") {
+    # Method 3: Most abundant species (original method)
+    selected_species <- colnames(best_corr_matrix)[1:n_species]
+    cat("Selected", n_species, "most abundant species\n")
+    
+  } else if(selection_method == "specific_bacteria") {
+    # Method 4: Focus on specific bacterial types
+    all_species <- colnames(best_corr_matrix)
+    
+    # Look for beneficial bacteria
+    beneficial_patterns <- c("Bifidobacterium", "Lactobacillus", "Akkermansia", "Faecalibacterium", 
+                           "Roseburia", "Butyricicoccus", "Prevotella")
+    
+    beneficial_species <- c()
+    for(pattern in beneficial_patterns) {
+      matches <- grep(pattern, all_species, ignore.case = TRUE, value = TRUE)
+      beneficial_species <- c(beneficial_species, matches)
+    }
+    
+    # Look for potentially harmful bacteria
+    harmful_patterns <- c("Bilophila", "Desulfovibrio", "Enterobacter", "Klebsiella")
+    harmful_species <- c()
+    for(pattern in harmful_patterns) {
+      matches <- grep(pattern, all_species, ignore.case = TRUE, value = TRUE)
+      harmful_species <- c(harmful_species, matches)
+    }
+    
+    # Combine and take up to n_species
+    selected_species <- unique(c(beneficial_species, harmful_species))[1:min(n_species, 
+                                                                           length(unique(c(beneficial_species, harmful_species))))]
+    
+    # Fill remaining slots with strongest correlations if needed
+    if(length(selected_species) < n_species) {
+      remaining_species <- setdiff(colnames(best_corr_matrix), selected_species)
+      species_max_corr <- apply(abs(best_corr_matrix[, remaining_species, drop = FALSE]), 2, max, na.rm = TRUE)
+      additional_species <- names(sort(species_max_corr, decreasing = TRUE)[1:(n_species - length(selected_species))])
+      selected_species <- c(selected_species, additional_species)
+    }
+    
+    cat("Selected", length(beneficial_species), "beneficial and", length(harmful_species), 
+        "potentially harmful bacteria, plus", length(selected_species) - length(beneficial_species) - length(harmful_species), "others\n")
+  }
+  
+  # Create subset correlation matrix
+  viz_corr <- best_corr_matrix[, selected_species, drop = FALSE]
+  
+  # Print selection summary
+  cat("\nSelected species:\n")
+  for(i in 1:length(selected_species)) {
+    max_corr <- max(abs(viz_corr[, selected_species[i]]), na.rm = TRUE)
+    cat(sprintf("%2d. %s (max |r| = %.3f)\n", i, selected_species[i], max_corr))
+  }
+  
+  # Show correlation statistics
+  cat("\nCorrelation statistics for selected species:\n")
+  cat("Range:", round(min(viz_corr, na.rm = TRUE), 3), "to", round(max(viz_corr, na.rm = TRUE), 3), "\n")
+  cat("Mean absolute correlation:", round(mean(abs(viz_corr), na.rm = TRUE), 3), "\n")
+  
+  # Count correlations above different thresholds
+  above_01 <- sum(abs(viz_corr) > 0.1, na.rm = TRUE)
+  above_015 <- sum(abs(viz_corr) > 0.15, na.rm = TRUE)
+  above_02 <- sum(abs(viz_corr) > 0.2, na.rm = TRUE)
+  
+  cat("Correlations |r| > 0.1:", above_01, "/", length(viz_corr), "\n")
+  cat("Correlations |r| > 0.15:", above_015, "/", length(viz_corr), "\n")
+  cat("Correlations |r| > 0.2:", above_02, "/", length(viz_corr), "\n")
+  
+  # Create enhanced heatmap with capped correlations
+  library(corrplot)
+  library(RColorBrewer)
+  
+  # Cap correlations at the specified range
+  viz_corr_capped <- viz_corr
+  viz_corr_capped[viz_corr_capped > color_range[2]] <- color_range[2]
+  viz_corr_capped[viz_corr_capped < color_range[1]] <- color_range[1]
+  
+  cat("\nCorrelations capped at range:", color_range[1], "to", color_range[2], "\n")
+  cat("Original range:", round(min(viz_corr, na.rm = TRUE), 3), "to", round(max(viz_corr, na.rm = TRUE), 3), "\n")
+  cat("Capped range:", round(min(viz_corr_capped, na.rm = TRUE), 3), "to", round(max(viz_corr_capped, na.rm = TRUE), 3), "\n")
+  
+  # Count how many values were capped
+  capped_high <- sum(viz_corr > color_range[2], na.rm = TRUE)
+  capped_low <- sum(viz_corr < color_range[1], na.rm = TRUE)
+  cat("Values capped:", capped_high, "above", color_range[2], "and", capped_low, "below", color_range[1], "\n")
+  
+  # Custom color palette for better contrast in small ranges
+  colors <- colorRampPalette(c("#2166AC", "#4393C3", "#92C5DE", "#D1E5F0", 
+                              "white", 
+                              "#FDBF6F", "#FF7F00", "#E31A1C", "#B10026"))(200)
+  
+  # Create the heatmap with capped correlations
+  corrplot(viz_corr_capped, method = "color", is.corr = TRUE,
+           title = paste("Diet Scores vs", selection_method, "- Capped Range"),
+           mar = c(0,0,3,0), tl.cex = 0.7, tl.col = "black",
+           col = colors,
+           cl.lim = color_range,  # Color bar range
+           cl.cex = 0.8,
+           addCoef.col = "black", number.cex = 0.5)
+  
+  # Also create a version showing only stronger correlations
+  if(max(abs(viz_corr), na.rm = TRUE) > 0.15) {
+    # Mask weak correlations and cap strong ones
+    viz_corr_masked <- viz_corr
+    viz_corr_masked[abs(viz_corr_masked) < 0.1] <- 0
+    
+    # Cap the masked correlations too
+    viz_corr_masked[viz_corr_masked > color_range[2]] <- color_range[2]
+    viz_corr_masked[viz_corr_masked < color_range[1]] <- color_range[1]
+    
+    corrplot(viz_corr_masked, method = "color", is.corr = TRUE,
+             title = "Diet Scores vs Microbiome (|r| ≥ 0.1, Capped Range)",
+             mar = c(0,0,3,0), tl.cex = 0.7, tl.col = "black",
+             col = colors,
+             cl.lim = color_range,
+             cl.cex = 0.8,
+             addCoef.col = "black", number.cex = 0.5)
+  }
+  
+  # Return results with both original and capped matrices
+  return(list(
+    selected_species = selected_species,
+    correlation_matrix = viz_corr,
+    correlation_matrix_capped = viz_corr_capped,
+    selection_method = selection_method,
+    color_range = color_range,
+    correlation_stats = list(
+      range = range(viz_corr, na.rm = TRUE),
+      capped_range = range(viz_corr_capped, na.rm = TRUE),
+      mean_abs = mean(abs(viz_corr), na.rm = TRUE),
+      above_01 = above_01,
+      above_015 = above_015,
+      above_02 = above_02,
+      capped_high = capped_high,
+      capped_low = capped_low
+    )
+  ))
+}
+
+# Function to explore different bacteria in your dataset
+explore_bacteria_types <- function(results) {
+  
+  all_species <- colnames(results$correlation_matrix)
+  
+  cat("=== BACTERIA EXPLORATION ===\n\n")
+  
+  # Look for beneficial bacteria
+  beneficial_patterns <- c("Bifidobacterium", "Lactobacillus", "Akkermansia", "Faecalibacterium", 
+                         "Roseburia", "Butyricicoccus", "Prevotella", "Bacteroides")
+  
+  cat("BENEFICIAL BACTERIA FOUND:\n")
+  for(pattern in beneficial_patterns) {
+    matches <- grep(pattern, all_species, ignore.case = TRUE, value = TRUE)
+    if(length(matches) > 0) {
+      cat(pattern, ":", length(matches), "species\n")
+      for(match in matches[1:min(3, length(matches))]) {
+        cat("  -", match, "\n")
+      }
+      if(length(matches) > 3) cat("  ... and", length(matches) - 3, "more\n")
+    }
+  }
+  
+  # Look for potentially problematic bacteria
+  problematic_patterns <- c("Bilophila", "Desulfovibrio", "Enterobacter", "Klebsiella", 
+                          "Clostridium", "Escherichia")
+  
+  cat("\nPOTENTIALLY PROBLEMATIC BACTERIA FOUND:\n")
+  for(pattern in problematic_patterns) {
+    matches <- grep(pattern, all_species, ignore.case = TRUE, value = TRUE)
+    if(length(matches) > 0) {
+      cat(pattern, ":", length(matches), "species\n")
+      for(match in matches[1:min(3, length(matches))]) {
+        cat("  -", match, "\n")
+      }
+      if(length(matches) > 3) cat("  ... and", length(matches) - 3, "more\n")
+    }
+  }
+  
+  # Look for SCFA producers
+  scfa_patterns <- c("Roseburia", "Faecalibacterium", "Eubacterium", "Butyricicoccus", 
+                    "Coprococcus", "Anaerostipes")
+  
+  cat("\nSCFA-PRODUCING BACTERIA FOUND:\n")
+  for(pattern in scfa_patterns) {
+    matches <- grep(pattern, all_species, ignore.case = TRUE, value = TRUE)
+    if(length(matches) > 0) {
+      cat(pattern, ":", length(matches), "species\n")
+    }
+  }
+}
+```
+
+
+
+```{r}
+
+
+# 1. Explore what bacteria you have
+explore_bacteria_types(results)
+
+# 2. Heatmap with strongest correlations and custom color range
+heatmap1 <- create_custom_heatmap(results, 
+                                 selection_method = 'strongest_correlations',
+                                 n_species = 15,
+                                 color_range = c(-0.2, 0.2))
+
+# 3. Heatmap focusing on beneficial/harmful bacteria
+heatmap2 <- create_custom_heatmap(results, 
+                                 selection_method = 'specific_bacteria',
+                                 n_species = 20,
+                                 color_range = c(-0.15, 0.15))
+
+# 4. Only species with meaningful correlations
+heatmap3 <- create_custom_heatmap(results, 
+                                 selection_method = 'above_threshold',
+                                 correlation_threshold = 0.1,
+                                 n_species = 25,
+                                 color_range = c(-0.2, 0.2))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

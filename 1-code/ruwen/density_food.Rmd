@@ -22,11 +22,11 @@ library(ggpubr)
 ```
 
 ```{r}
-food_data = read_xlsx("data/FFQA862.xlsx")
+food_data = read_xlsx("data/FFQA862_new.xlsx")
 nutrition_data = read_xlsx("data/FFQB800.xlsx")
 metadata = read_xlsx("data/ethnicity_866.xlsx")
 
-food_data[] <- lapply(food_data, function(x) as.double(as.character(x)))
+food_data[-1] <- lapply(food_data[-1], function(x) as.double(as.character(x)))
 food_data <- food_data %>%
   mutate(Participant_ID = as.character(Participant_ID))
 food_data
@@ -47,7 +47,12 @@ plot_data <- merged_data %>%
 
 # Get the names of all food columns
 food_columns <- names(plot_data)[names(plot_data) != "FREG5_Ethnic_Group"]
+food_columns
+merged_data
+```
 
+
+```{r}
 # Create a directory to store the plots
 dir.create("food_density_plots", showWarnings = FALSE)
 
@@ -69,8 +74,8 @@ for (food in food_columns) {
           legend.text = element_text(size = 10))
   
   # Save the plot
-  ggsave(paste0("figure/food_density_plots/", food, "_density_plot.png"), 
-         plot = p, width = 10, height = 6, dpi = 300)
+  # ggsave(paste0("figure/food_density_plots/", food, "_density_plot.png"), 
+  #        plot = p, width = 10, height = 6, dpi = 300)
   
   # Print progress
   cat("Saved plot for", food, "\n")
@@ -130,7 +135,7 @@ for (i in 1:nrow(stat_results)) {
 }
 
 # Save statistical results
-write.csv(stat_results, "figure/food_statistical_results.csv", row.names = FALSE)
+#write.csv(stat_results, "figure/food_statistical_results.csv", row.names = FALSE)
 
 cat("Statistical results have been saved in 'food_statistical_results.csv'.\n")
 
@@ -180,7 +185,7 @@ f
 remove_top_bottom_1_percent <- function(df) {
   df %>%
     group_by(Food_Group) %>%
-    filter(Intake >= quantile(Intake, 0.05) & Intake <= quantile(Intake, 0.95))
+    dplyr::filter(Intake >= quantile(Intake, 0.05) & Intake <= quantile(Intake, 0.95))
 }
 
 # Apply the function to remove the top and bottom 1%
@@ -195,32 +200,32 @@ t = ggplot(long_data_filtered, aes(x = FREG5_Ethnic_Group, y = Intake, fill = FR
        x = "Ethnic Group", y = "Intake") +
   scale_fill_manual(values = ethnicity_colors)
 
-#ggsave("figure/boxplot_raw_no_outlier.png", plot = t, width = 10, height = 6, dpi = 300)
+# ggsave("figure/boxplot_raw_no_outlier2.png", plot = t, width = 10, height = 6, dpi = 300)
 t
 ```
 
 ```{r}
 significant_pairs_list <- list(
-  "Fish" = list(c("C", "I"), c("I", "M")),
-  "Crustacean" = list(c("C", "I"), c("I", "M")),
-  "Mollusk" = list(c("C", "M"), c("I", "M")),
+  "Seafood" = list(c("C", "I"), c("I", "M")),
   "Poultry" = list(c("C", "I"), c("I", "M")),
   "Red_meat" = list(c("C", "I"), c("C", "M"), c("I", "M")),
-  "Processed_meat" = list(c("C", "I"), c("C", "M"), c("I", "M")),
   "Dairy" = list(c("C", "I")),
-  "Cruciferous_veg" = list(c("C", "I"), c("C", "M")),
+  "Cruciferous_veg" = list(c("C", "M")),
   "Legumes" = list(c("C", "I"), c("I", "M")),
   "Mushrooms" = list(c("C", "I"), c("C", "M")),
   "Fruits" = NULL,
-  "Papaya" = NULL,
-  "Orange" = NULL,
-  "Wholegrain" = NULL,
   "Chapati" = list(c("C", "I"), c("I", "M")),
   "Idli_Thosai" = list(c("C", "I"), c("C", "M"), c("I", "M")),
   "Noodle_dishes" = list(c("C", "I"), c("I", "M")),
-  "Deep_fried" = list(c("C", "M"), c("I", "M")),
   "Coffee" = NULL,
-  "Tea" = NULL
+  "Tea" = NULL,
+  "Longtong" = list(c("C", "M"), c("I", "M")),
+  "Pork" = list(c("C", "I"), c("C", "M")),
+  "Rice_dishes" = NULL,
+  "Bakery_bread" = list(c("C", "I")),
+  "Leafy_veg" = list(c("C", "I"), c("C", "M")),
+  "Root_veg" = NULL,
+  "Eggs" = list(c("C", "I"))
 )
 
 ```
@@ -242,7 +247,6 @@ p <- ggplot(long_data_filtered, aes(x = FREG5_Ethnic_Group, y = Intake, fill = F
        y = "Intake") +
   scale_fill_manual(values = ethnicity_colors)
 
-# Add significance annotations
 p <- p + stat_compare_means(
   aes(label = ..p.signif..), 
   method = "kruskal.test", 
@@ -250,7 +254,6 @@ p <- p + stat_compare_means(
   hide.ns = TRUE,
   size = 3
 )
-
 # Add pairwise comparisons
 for (food_group in names(significant_pairs_list)) {
   if (!is.null(significant_pairs_list[[food_group]])) {
@@ -266,10 +269,709 @@ for (food_group in names(significant_pairs_list)) {
   }
 }
 
+# Add significance annotations
+# p <- p + stat_compare_means(
+#   aes(label = ..p.signif..), 
+#   method = "kruskal.test", 
+#   hide.ns = TRUE,
+#   size = 3
+# )
+
+# Add pairwise comparisons
+# for (food_group in names(significant_pairs_list)) {
+#   if (!is.null(significant_pairs_list[[food_group]])) {
+#     p <- p + geom_signif(
+#       data = long_data_filtered %>% filter(Food_Group == food_group),
+#       comparisons = significant_pairs_list[[food_group]],
+#       step_increase = 0.1,
+#       map_signif_level = TRUE,
+#       test = "wilcox.test",
+#       textsize = 2,
+#       tip_length = 0.01
+#     )
+#   }
+# }
+
 # Print the plot
 print(p)
-ggsave("figure/figure3/boxplot_no_outlier_sig.pdf", plot = p, width = 10, height = 10)
+#ggsave("figure/figure3/boxplot_no_outlier_sig3.pdf", plot = p, width = 10, height = 10)
 ```
+
+## ternary diagrams
+```{r}
+library(ggtern)
+library(dplyr)
+library(tidyr)
+```
+
+
+```{r}
+food_columns <- c("Poultry", "Red_meat", "Dairy", "Cruciferous_veg", "Legumes", 
+                  "Mushrooms", "Fruits", "Chapati", "Idli_Thosai", "Noodle_dishes", 
+                  "Coffee", "Tea", "Lontong", "Pork", "Seafood", "Rice_dishes", 
+                  "Bakery_bread", "Leafy_veg", "Root_veg", "Eggs")
+
+# Step 2: Calculate per-capita mean intake for each food by ethnic group
+ternary_data <- merged_data %>%
+  group_by(FREG5_Ethnic_Group) %>%
+  summarise(dplyr::across(all_of(food_columns), ~mean(.x, na.rm = TRUE))) %>%
+  pivot_longer(cols = all_of(food_columns), 
+               names_to = "Food", 
+               values_to = "Mean_Intake")
+
+# Step 3: Reshape to wide format for ternary calculation
+ternary_wide <- ternary_data %>%
+  pivot_wider(names_from = FREG5_Ethnic_Group, 
+              values_from = Mean_Intake)
+
+# Step 4: Calculate proportions for ternary diagram
+# Ethnic groups are: C (Chinese), I (Indian), M (Malay)
+ternary_wide <- ternary_wide %>%
+  mutate(
+    Total = C + I + M,
+    C_prop = C / Total,
+    I_prop = I / Total,
+    M_prop = M / Total
+  )
+
+# Step 5: Create ternary diagram with smart text positioning
+library(ggrepel)  # For non-overlapping labels
+
+# Add a column to determine text position based on location
+ternary_wide <- ternary_wide %>%
+  mutate(
+    hjust_val = case_when(
+      M_prop > 0.6 ~ 1,  # Right side of plot, text on left
+      C_prop > 0.6 ~ 0,  # Left side of plot, text on right
+      TRUE ~ 0.5         # Middle, text centered
+    )
+  )
+
+p1 <- ggtern(data = ternary_wide, 
+       aes(x = C_prop, y = I_prop, z = M_prop)) +
+  geom_point(size = 3, alpha = 0.7, color = "steelblue") +
+  geom_text(aes(label = Food, hjust = hjust_val), size = 2.5, vjust = 0) +
+  theme_bw() +
+  theme_showarrows() +
+  theme(tern.plot.background = element_rect(fill = "white", color = NA),
+        plot.margin = unit(c(1, 3, 1, 3), "cm")) +
+  labs(title = "Ternary Diagram of Food Intake by Ethnic Group",
+       subtitle = "Per-capita consumption patterns",
+       x = "Chinese (C)",
+       y = "Indian (I)",
+       z = "Malay (M)")
+
+print(p1)
+
+# Expand the plot window in RStudio, or save to file
+# ggsave("figure/ternary_food_intake.pdf", plot = p1, width = 12, height = 10, dpi = 300)
+```
+
+
+```{r}
+ternary_wide <- ternary_wide %>%
+  mutate(Category = case_when(
+    Food %in% c("Poultry", "Red_meat", "Pork", "Seafood", "Eggs") ~ "Protein",
+    Food %in% c("Dairy") ~ "Dairy",
+    Food %in% c("Cruciferous_veg", "Leafy_veg", "Root_veg") ~ "Vegetables",
+    Food %in% c("Legumes", "Mushrooms") ~ "Plant-based",
+    Food %in% c("Fruits") ~ "Fruits",
+    Food %in% c("Chapati", "Idli_Thosai", "Noodle_dishes", "Lontong", 
+                "Rice_dishes", "Bakery_bread") ~ "Carbohydrates",
+    Food %in% c("Coffee", "Tea") ~ "Beverages",
+    TRUE ~ "Other"
+  ))
+
+# Colored version with smart text positioning
+p2 <- ggtern(data = ternary_wide, 
+       aes(x = C_prop, y = I_prop, z = M_prop, color = Category)) +
+  geom_point(size = 4, alpha = 0.7) +
+  geom_text(aes(label = Food, hjust = hjust_val), size = 2.5, vjust = 0, 
+            show.legend = FALSE) +
+  scale_color_brewer(palette = "Set2") +
+  theme_bw() +
+  theme_showarrows() +
+  theme(tern.plot.background = element_rect(fill = "white", color = NA),
+        plot.margin = unit(c(1, 3, 1, 3), "cm")) +
+  labs(title = "Ternary Diagram of Food Intake by Ethnic Group",
+       subtitle = "Per-capita consumption patterns colored by food category",
+       x = "Chinese (C)",
+       y = "Indian (I)",
+       z = "Malay (M)")
+
+print(p2)
+
+# Step 6: View the data table
+print(ternary_wide)
+#ggsave("figure/ternary_food_intake_color.pdf", plot = p2, width = 12, height = 10, dpi = 300)
+```
+
+"data/filtered_species602.xlsx"
+```{r}
+# Step 1: Read species data
+species_data <- read_excel("data/filtered_species602.xlsx")
+
+# Step 2: Read metadata
+# Assuming you have metadata with FREG1_Barcode and FREG5_Ethnic_Group
+metadata_subset <- metadata[, c("FREG1_Barcode", "FREG5_Ethnic_Group")]
+
+# Step 3: Merge species data with metadata
+species_merged <- species_data %>%
+  left_join(metadata_subset, by = "FREG1_Barcode")
+
+# Step 4: Get all species column names (excluding FREG1_Barcode)
+species_columns <- setdiff(colnames(species_data), "FREG1_Barcode")
+
+# Check the structure
+cat("Total number of species columns:", length(species_columns), "\n")
+cat("First few species names:\n")
+print(head(species_columns))
+
+# Step 5: Extract genus from species names (first word)
+# For "Bradyrhizobium diazoefficiens" -> "Bradyrhizobium"
+genus_mapping <- data.frame(
+  Species = species_columns,
+  Genus = sapply(strsplit(species_columns, " "), function(x) x[1]),
+  stringsAsFactors = FALSE
+)
+
+# Step 6: Expanded manual mapping for common bacterial classes
+# Mapping genus to class (higher taxonomic level = fewer colors)
+genus_to_taxonomy <- data.frame(
+  Genus = c(
+    # Clostridia (Firmicutes)
+    "Faecalibacterium", "Ruminococcus", "Clostridium", "Roseburia", "Blautia",
+    "Coprococcus", "Dorea", "Eubacterium", "Veillonella", "Megasphaera", "Dialister",
+    "Anaerostipes", "Oscillibacter", "Subdoligranulum",
+    # Bacilli (Firmicutes)
+    "Lactobacillus", "Streptococcus", "Enterococcus", "Staphylococcus", "Bacillus",
+    "Lactococcus", "Leuconostoc",
+    # Bacteroidia (Bacteroidetes)
+    "Bacteroides", "Prevotella", "Parabacteroides", "Alistipes", "Barnesiella",
+    "Odoribacter", "Butyricimonas",
+    # Actinobacteria
+    "Bifidobacterium", "Collinsella", "Eggerthella", "Actinomyces",
+    "Mycobacterium", "Corynebacterium", "Nocardia", "Streptomyces",
+    "Propionibacterium", "Cutibacterium",
+    # Gammaproteobacteria
+    "Escherichia", "Klebsiella", "Enterobacter", "Citrobacter", "Salmonella",
+    "Shigella", "Proteus", "Serratia", "Yersinia",
+    "Pseudomonas", "Acinetobacter", "Stenotrophomonas", "Vibrio",
+    "Haemophilus", "Pasteurella",
+    # Alphaproteobacteria
+    "Rhizobium", "Sinorhizobium", "Mesorhizobium", "Bradyrhizobium",
+    "Agrobacterium", "Ensifer", "Neorhizobium", "Starkeya",
+    "Sphingomonas", "Caulobacter", "Bartonella",
+    # Betaproteobacteria
+    "Burkholderia", "Neisseria", "Sutterella", "Oxalobacter",
+    "Ralstonia", "Herbaspirillum",
+    # Deltaproteobacteria
+    "Desulfovibrio", "Bilophila",
+    # Epsilonproteobacteria
+    "Campylobacter", "Helicobacter", "Arcobacter",
+    # Verrucomicrobiae
+    "Akkermansia",
+    # Fusobacteriia
+    "Fusobacterium", "Leptotrichia",
+    # Negativicutes (Firmicutes)
+    "Selenomonas", "Sporomusa"
+  ),
+  Class = c(
+    # Clostridia
+    "Clostridia", "Clostridia", "Clostridia", "Clostridia", "Clostridia",
+    "Clostridia", "Clostridia", "Clostridia", "Negativicutes", "Negativicutes", "Negativicutes",
+    "Clostridia", "Clostridia", "Clostridia",
+    # Bacilli
+    "Bacilli", "Bacilli", "Bacilli", "Bacilli", "Bacilli",
+    "Bacilli", "Bacilli",
+    # Bacteroidia
+    "Bacteroidia", "Bacteroidia", "Bacteroidia", "Bacteroidia", "Bacteroidia",
+    "Bacteroidia", "Bacteroidia",
+    # Actinobacteria
+    "Actinobacteria", "Actinobacteria", "Actinobacteria", "Actinobacteria",
+    "Actinobacteria", "Actinobacteria", "Actinobacteria", "Actinobacteria",
+    "Actinobacteria", "Actinobacteria",
+    # Gammaproteobacteria
+    "Gammaproteobacteria", "Gammaproteobacteria", "Gammaproteobacteria", "Gammaproteobacteria", "Gammaproteobacteria",
+    "Gammaproteobacteria", "Gammaproteobacteria", "Gammaproteobacteria", "Gammaproteobacteria",
+    "Gammaproteobacteria", "Gammaproteobacteria", "Gammaproteobacteria", "Gammaproteobacteria",
+    "Gammaproteobacteria", "Gammaproteobacteria",
+    # Alphaproteobacteria
+    "Alphaproteobacteria", "Alphaproteobacteria", "Alphaproteobacteria", "Alphaproteobacteria",
+    "Alphaproteobacteria", "Alphaproteobacteria", "Alphaproteobacteria", "Alphaproteobacteria",
+    "Alphaproteobacteria", "Alphaproteobacteria", "Alphaproteobacteria",
+    # Betaproteobacteria
+    "Betaproteobacteria", "Betaproteobacteria", "Betaproteobacteria", "Betaproteobacteria",
+    "Betaproteobacteria", "Betaproteobacteria",
+    # Deltaproteobacteria
+    "Deltaproteobacteria", "Deltaproteobacteria",
+    # Epsilonproteobacteria
+    "Epsilonproteobacteria", "Epsilonproteobacteria", "Epsilonproteobacteria",
+    # Verrucomicrobiae
+    "Verrucomicrobiae",
+    # Fusobacteriia
+    "Fusobacteriia", "Fusobacteriia",
+    # Negativicutes
+    "Negativicutes", "Negativicutes"
+  ),
+  stringsAsFactors = FALSE
+)
+
+# Merge genus with class
+genus_mapping <- genus_mapping %>%
+  left_join(genus_to_taxonomy, by = "Genus")
+```
+
+
+```{r}
+# Check how many genera we could map
+cat("\nGenus mapping summary:\n")
+cat("Total genera:", length(unique(genus_mapping$Genus)), "\n")
+cat("Mapped to class:", sum(!is.na(genus_mapping$Class)), "\n")
+cat("Unmapped:", sum(is.na(genus_mapping$Class)), "\n")
+
+# Step 7: Calculate per-capita mean abundance for each species by ethnic group
+ternary_species <- species_merged %>%
+  group_by(FREG5_Ethnic_Group) %>%
+  dplyr::summarise(across(all_of(species_columns), ~ mean(.x, na.rm = TRUE)))%>%
+  pivot_longer(cols = all_of(species_columns), 
+               names_to = "Species", 
+               values_to = "Mean_Abundance")
+
+# Step 8: Reshape to wide format for ternary calculation
+ternary_wide_species <- ternary_species %>%
+  pivot_wider(names_from = FREG5_Ethnic_Group, 
+              values_from = Mean_Abundance)
+
+# Step 9: Add class information and FILTER OUT unmapped species
+ternary_wide_species <- ternary_wide_species %>%
+  left_join(genus_mapping, by = "Species") %>%
+  filter(!is.na(Class))  # Remove species without class mapping
+
+cat("\nAfter filtering unmapped species:\n")
+cat("Species retained:", nrow(ternary_wide_species), "\n")
+
+# Step 10: Calculate proportions for ternary diagram
+ternary_wide_species <- ternary_wide_species %>%
+  mutate(
+    Total = C + I + M,
+    C_prop = C / Total,
+    I_prop = I / Total,
+    M_prop = M / Total
+  )
+
+# Step 11: Remove species with zero or NA values
+ternary_wide_species <- ternary_wide_species %>%
+  filter(!is.na(Total) & Total > 0)
+ternary_wide_species <- ternary_wide_species %>%
+  mutate(
+    point_size = case_when(
+      C_prop > 0.7 | I_prop > 0.7 | M_prop > 0.7 ~ 6,  # Large for corner points
+      C_prop > 0.5 | I_prop > 0.5 | M_prop > 0.5 ~ 4,  # Medium for near-corner
+      TRUE ~ 3                                          # Small for center points
+    )
+  )
+
+# Step 12: Use Class instead of Family for coloring
+# This will give us ~10-12 colors instead of 30+
+
+# Convert to regular dataframe if it's a tibble with list columns
+ternary_wide_species <- as.data.frame(ternary_wide_species)
+
+
+# Count classes
+class_counts <- ternary_wide_species %>%
+  group_by(Class) %>%
+  dplyr::summarise(n = n(), .groups = 'drop') %>%
+  arrange(dplyr::desc(n))
+
+cat("\nClass distribution:\n")
+print(class_counts)
+
+# No need to group "Other" since classes are already at a high level
+ternary_wide_species$Class_display <- ternary_wide_species$Class
+```
+
+
+```{r}
+library(RColorBrewer)
+
+n_classes <- length(unique(ternary_wide_species$Class_display))
+cat("\nNumber of classes to display:", n_classes, "\n")
+
+
+# color_palette <- brewer.pal(min(12, n_classes), "Paired")
+
+# color_palette <- brewer.pal(min(8, n_classes), "Dark2")
+
+
+# if(n_classes <= 8) {
+#   color_palette <- brewer.pal(n_classes, "Dark2")
+# } else if(n_classes <= 12) {
+#   color_palette <- brewer.pal(n_classes, "Paired")
+# } else {
+#   # For more than 12 classes, combine multiple palettes
+#   color_palette <- c(
+#     brewer.pal(8, "Dark2"),
+#     brewer.pal(8, "Set2"),
+#     brewer.pal(max(n_classes - 16, 3), "Set3")
+#   )[1:n_classes]
+# }
+
+color_palette <- c(
+  "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",
+  "#FFFF33", "#A65628", "#F781BF", "#66C2A5", "#FC8D62",
+  "#8DA0CB", "#E5C494")[1:n_classes]
+```
+
+
+```{r}
+p_microbiome <- ggtern(data = ternary_wide_species, 
+       aes(x = C_prop, y = I_prop, z = M_prop, color = Class_display)) +
+  geom_point(aes(size = point_size), alpha = 0.7) +
+  scale_size_identity() +
+  scale_color_manual(values = color_palette) +
+  theme_bw() +
+  theme_showarrows() +
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10, face = "bold"),
+    tern.plot.background = element_rect(fill = "white", color = NA),
+    plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm")
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 4, alpha = 1))) +
+  labs(
+    title = "Ternary Diagram of Gut Microbiome Species by Ethnic Group",
+    subtitle = "Per-capita abundance patterns colored by bacterial class",
+    x = "Chinese (C)",
+    y = "Indian (I)",
+    z = "Malay (M)",
+    color = "Bacterial Class"
+  )
+
+print(p_microbiome)
+```
+
+
+```{r}
+
+#ggsave("figure/ternary_microbiome_all3.pdf", plot = p_microbiome,
+       #width = 12, height = 10, dpi = 300)
+# ggsave("figure/ternary_microbiome_all2.png", plot = p_microbiome_labeled,
+#        width = 12, height = 10, dpi = 300)
+ternary_wide_species
+#ternary_wide_species$Species
+# write.csv(ternary_wide_species, "ternary_species_data.csv", row.names = FALSE)
+```
+
+
+```{r}
+# Identify foods at each corner (angle)
+# Chinese corner (high C_prop)
+chinese_species <- ternary_wide_species %>%
+  filter(C_prop > 0.7) %>%
+  arrange(dplyr::desc(C_prop)) %>%
+  dplyr::select(Species, Class, C_prop, I_prop, M_prop)
+
+cat("\n=== CHINESE CORNER (C_prop > 0.7) ===\n")
+print(chinese_species, n = Inf)
+
+# Indian corner (high I_prop)
+indian_species <- ternary_wide_species %>%
+  filter(I_prop > 0.5) %>%
+  arrange(dplyr::desc(I_prop)) %>%
+  dplyr::select(Species, Class, C_prop, I_prop, M_prop)
+
+cat("\n=== INDIAN CORNER (I_prop > 0.7) ===\n")
+print(indian_species, n = Inf)
+
+# Malay corner (high M_prop)
+malay_species <- ternary_wide_species %>%
+  filter(M_prop > 0.7) %>%
+  arrange(dplyr::desc(M_prop)) %>%
+  dplyr::select(Species, Class, C_prop, I_prop, M_prop)
+
+cat("\n=== MALAY CORNER (M_prop > 0.7) ===\n")
+print(malay_species, n = Inf)
+
+
+indian_species
+# Summary count
+cat("\n=== SUMMARY ===\n")
+cat("species at Chinese corner:", nrow(chinese_species), "\n")
+cat("species at Indian corner:", nrow(indian_species), "\n")
+cat("species at Malay corner:", nrow(malay_species), "\n")
+```
+
+
+## all food
+```{r}
+food_data_all <- read_excel("data/all_food_863.xlsx")
+food_data_all
+```
+
+
+```{r}
+# Install required packages if not already installed
+# install.packages(c("ggtern", "dplyr", "tidyr"))
+
+library(ggtern)
+library(dplyr)
+library(tidyr)
+
+# Step 1: Prepare metadata
+metadata_subset <- metadata[, c("FREG1_Barcode", "FREG5_Ethnic_Group")]
+
+# Step 2: Merge food data with metadata
+# The first column is "participant_id"
+food_merged <- food_data_all %>%
+  left_join(metadata_subset, by = c("participant_id" = "FREG1_Barcode"))
+
+# Step 3: Get all food column names (excluding participant_id, freg0_pid, and FREG5_Ethnic_Group)
+food_columns <- setdiff(colnames(food_data_all), c("participant_id", "freg0_pid"))
+
+cat("Total number of food items:", length(food_columns), "\n")
+cat("First few food items:\n")
+print(head(food_columns, 10))
+
+# Step 4: Calculate per-capita mean intake for each food by ethnic group
+ternary_food <- food_merged %>%
+  group_by(FREG5_Ethnic_Group) %>%
+  summarise(across(all_of(food_columns), ~mean(.x, na.rm = TRUE))) %>%
+  pivot_longer(cols = all_of(food_columns), 
+               names_to = "Food", 
+               values_to = "Mean_Intake")
+
+# Step 5: Reshape to wide format for ternary calculation
+ternary_wide_food <- ternary_food %>%
+  pivot_wider(names_from = FREG5_Ethnic_Group, 
+              values_from = Mean_Intake)
+
+# Step 6: Calculate proportions for ternary diagram
+ternary_wide_food <- ternary_wide_food %>%
+  mutate(
+    Total = C + I + M,
+    C_prop = C / Total,
+    I_prop = I / Total,
+    M_prop = M / Total
+  )
+
+# Step 7: Remove foods with zero or NA values
+ternary_wide_food <- ternary_wide_food %>%
+  filter(!is.na(Total) & Total > 0)
+ternary_wide_food <- ternary_wide_food %>%
+  mutate(
+    point_size = case_when(
+      C_prop > 0.7 | I_prop > 0.7 | M_prop > 0.7 ~ 6,  # Large for corner points
+      C_prop > 0.5 | I_prop > 0.5 | M_prop > 0.5 ~ 4,  # Medium for near-corner
+      TRUE ~ 3                                          # Small for center points
+    )
+  )
+
+cat("\nFoods retained after filtering:", nrow(ternary_wide_food), "\n")
+
+# Step 8: Create food categories based on your 20 defined food groups
+# Foods that don't match any category will be removed
+ternary_wide_food <- ternary_wide_food %>%
+  mutate(Category = case_when(
+    # Poultry
+    grepl("poultry|chicken", Food) ~ "Protein",
+    
+    # Red_meat (beef, mutton, organs, but NOT pork)
+    grepl("beef|mutton|burger|organs|^meat_", Food) & !grepl("pork|egg_mix", Food) ~ "Protein",
+    
+    # Pork (separate from red meat)
+    grepl("pork|cured_pork", Food) ~ "Protein",
+    
+    # Seafood
+    grepl("fish|seafood|prawn|crab|squid|oyster|ngiri", Food) ~ "Protein",
+    
+    # Dairy
+    grepl("^milk_|^yoghurt_|^cheese_|^malted_drink|milkshake|yoghurt_drink", Food) ~ "Dairy",
+    
+    # Eggs
+    grepl("egg", Food) ~ "Protein",
+    
+    # Cruciferous_veg (broccoli, cabbage, cauliflower)
+    grepl("broccoli|cabbage|cauliflower", Food) ~ "Plant-based",
+    
+    # Leafy_veg
+    grepl("chye_sim|kailan|kang_kong|spinach|lettuce", Food) ~ "Plant-based",
+    
+    # Root_veg
+    grepl("carrot|potato|yam|lotus_root|pumpkin", Food) ~ "Plant-based",
+    
+    # Legumes (includes beans, peas, dhal, tofu, beancurd)
+    grepl("dhal|peas|beans|tofu|beancurd", Food) ~ "Plant-based",
+    
+    # Mushrooms
+    grepl("mushroom", Food) ~ "Plant-based",
+    
+    # Fruits
+    grepl("apple|avocado|banana|blueberr|dragonfruit|durian|grape|guava|kiwi|mango|melon|orange|papaya|pear|pineapple|strawberr|dried_fruit|fruit_juice", Food) ~ "Fruits",
+    
+    # Rice_dishes
+    grepl("rice|^plain_porr|^flav_porr|^flav_rice|^glut_rice|rice_roll", Food) ~ "Carbohydrates",
+    
+    # Noodle_dishes
+    grepl("noodle|pasta", Food) ~ "Carbohydrates",
+    
+    # Chapati (Indian flatbreads - chapati, roti, puri, murtabak)
+    grepl("chapati|^roti$|puri|murtabak", Food) ~ "Carbohydrates",
+    
+    # Idli_Thosai
+    grepl("thosai|idli", Food) ~ "Carbohydrates",
+    
+    # Lontong
+    grepl("lontong", Food) ~ "Carbohydrates",
+    
+    # Bakery_bread (breads, buns, toast, pizza)
+    grepl("bread|toast|pizza|buns|french_toast", Food) ~ "Carbohydrates",
+    
+    # Coffee
+    grepl("coffee|bottled_coffee", Food) ~ "Beverages",
+    
+    # Tea
+    grepl("^tea_|bottled_tea", Food) ~ "Beverages",
+    
+    TRUE ~ NA_character_  # Mark as NA for removal
+  )) %>%
+  filter(!is.na(Category))  # Remove foods that don't belong to any of the 20 categories
+
+cat("\nFoods retained after filtering to 20 categories:", nrow(ternary_wide_food), "\n")
+cat("\nFood category distribution:\n")
+category_table <- table(ternary_wide_food$Category)
+print(category_table[order(-category_table)])
+
+# Step 9: Create ternary diagram without labels (too many foods to label all)
+library(RColorBrewer)
+
+# n_categories <- length(unique(ternary_wide_food$Category))
+# if(n_categories <= 8) {
+#   color_palette <- brewer.pal(n_categories, "Dark2")
+# } else if(n_categories <= 12) {
+#   color_palette <- brewer.pal(n_categories, "Paired")
+# } else {
+#   color_palette <- c(
+#     brewer.pal(8, "Dark2"),
+#     brewer.pal(8, "Set2")
+#   )[1:n_categories]
+# }
+color_palette_20 <- c(
+  "#E41A1C",  # Red - Poultry
+  "#377EB8",  # Blue - Red_meat
+  "#4DAF4A",  # Green - Dairy
+  "#984EA3",  # Purple - Cruciferous_veg
+  "#FF7F00",  # Orange - Legumes
+  "#FFFF33",  # Yellow - Mushrooms
+  "#A65628",  # Brown - Fruits
+  "#F781BF",  # Pink - Chapati
+  "#66C2A5",  # Teal - Idli_Thosai
+  "#FC8D62",  # Coral - Noodle_dishes
+  "#8DA0CB",  # Lavender - Coffee
+  "#E78AC3",  # Rose - Tea
+  "#A6D854",  # Lime - Lontong
+  "#FFD92F",  # Gold - Pork
+  "#E5C494",  # Tan - Seafood
+  "#B3B3B3",  # Gray - Rice_dishes
+  "#1B9E77",  # Dark teal - Bakery_bread
+  "#D95F02",  # Dark orange - Leafy_veg
+  "#7570B3",  # Dark purple - Root_veg
+  "#E7298A"   # Magenta - Eggs
+)[1:9]
+
+p_food <- ggtern(data = ternary_wide_food, 
+       aes(x = C_prop, y = I_prop, z = M_prop, color = Category)) +
+  geom_point(aes(size = point_size), alpha = 0.7) +
+  scale_size_identity() +
+  #scale_color_manual(values = color_palette_20) +
+  scale_color_brewer(palette = "Set2") +
+  theme_bw() +
+  theme_showarrows() +
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10, face = "bold"),
+    tern.plot.background = element_rect(fill = "white", color = NA),
+    plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm")
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 4, alpha = 1))) +
+  labs(
+    title = "Ternary Diagram of Food Intake by Ethnic Group",
+    subtitle = "Per-capita consumption patterns across 248 food items",
+    x = "Chinese (C)",
+    y = "Indian (I)",
+    z = "Malay (M)",
+    color = "Food Category"
+  )
+
+print(p_food)
+
+# ggsave("figure/ternary_food_item_large2.pdf", plot = p_food,
+#        width = 12, height = 10, dpi = 300)
+```
+
+
+```{r}
+# Identify foods at each corner (angle)
+# Chinese corner (high C_prop)
+chinese_foods <- ternary_wide_food %>%
+  filter(C_prop > 0.7) %>%
+  arrange(desc(C_prop)) %>%
+  dplyr::select(Food, Category, C_prop, I_prop, M_prop)
+
+cat("\n=== CHINESE CORNER (C_prop > 0.7) ===\n")
+print(chinese_foods, n = Inf)
+
+# Indian corner (high I_prop)
+indian_foods <- ternary_wide_food %>%
+  filter(I_prop > 0.7) %>%
+  arrange(desc(I_prop)) %>%
+  dplyr::select(Food, Category, C_prop, I_prop, M_prop)
+
+cat("\n=== INDIAN CORNER (I_prop > 0.7) ===\n")
+print(indian_foods, n = Inf)
+
+# Malay corner (high M_prop)
+malay_foods <- ternary_wide_food %>%
+  filter(M_prop > 0.7) %>%
+  arrange(desc(M_prop)) %>%
+  dplyr::select(Food, Category, C_prop, I_prop, M_prop)
+
+cat("\n=== MALAY CORNER (M_prop > 0.7) ===\n")
+print(malay_foods, n = Inf)
+
+# Optional: Export to CSV for easier viewing
+# write.csv(chinese_foods, "corner_foods_chinese.csv", row.names = FALSE)
+# write.csv(indian_foods, "corner_foods_indian.csv", row.names = FALSE)
+# write.csv(malay_foods, "corner_foods_malay.csv", row.names = FALSE)
+
+# Summary count
+cat("\n=== SUMMARY ===\n")
+cat("Foods at Chinese corner:", nrow(chinese_foods), "\n")
+cat("Foods at Indian corner:", nrow(indian_foods), "\n")
+cat("Foods at Malay corner:", nrow(malay_foods), "\n")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

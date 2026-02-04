@@ -1,0 +1,448 @@
+---
+title: "factor_analysis"
+author: "Ruwen Zhou"
+date: "8/5/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggraph)
+library(igraph)
+library(Hmisc)
+library(writexl)
+
+library(tidygraph)
+
+```
+
+
+#demographic
+```{r}
+food_data = read_xlsx("data/FFQA862.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
+
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms", "Papaya", "Orange", "Chapati"), as.numeric))
+food_data
+nutrition_data
+species
+metadata
+```
+
+```{r}
+colnames(species)[1] = "Participant_ID"
+colnames(metadata)[1] = "Participant_ID"
+threshold <- nrow(species) * 0.5
+
+species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+species_filtered1
+species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+#species_filtered2
+species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "Homo sapiens")]
+#species_filtered2$`Homo sapiens`
+#species_filtered2
+#food_data[is.na(food_data)] <- 0
+#food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
+nutrition_data[is.na(nutrition_data)] <- 0
+```
+
+
+```{r}
+food_data
+nutrition_data
+species_filtered2
+species_filtered1
+metadata
+```
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(psych)
+library(corrplot)
+library(FactoMineR)
+library(factoextra)
+library(gridExtra)
+```
+
+
+```{r}
+# Assuming your data is already loaded as:
+# food_data, species_filtered1, metadata
+
+# Step 1: Merge datasets by Participant_ID
+# Ensure all datasets have Participant_ID column
+merged_data <- food_data %>%
+  inner_join(species_filtered2, by = "Participant_ID") %>%
+  inner_join(metadata, by = "Participant_ID")
+
+# Step 2: Prepare data for analysis
+# Separate numeric variables (food and microbe data) from categorical (ethnicity)
+numeric_cols <- merged_data %>%
+  select(-Participant_ID, -FREG5_Ethnic_Group) %>%
+  select_if(is.numeric)
+
+# Remove columns with near-zero variance or too many missing values
+numeric_cols <- numeric_cols[, apply(numeric_cols, 2, function(x) var(x, na.rm = TRUE) > 0)]
+numeric_cols <- numeric_cols[, colSums(is.na(numeric_cols)) < nrow(numeric_cols) * 0.5]
+
+# Handle missing values (replace with median or remove rows)
+numeric_cols_clean <- numeric_cols %>%
+  mutate_all(~ifelse(is.na(.), median(., na.rm = TRUE), .))
+
+# Step 3: Standardize the data (important for factor analysis)
+numeric_scaled <- scale(numeric_cols_clean)
+```
+
+
+```{r}
+# Step 4: Determine optimal number of factors
+# Scree plot and parallel analysis
+fa.parallel(numeric_scaled, fm = "pa", fa = "fa", n.iter = 10)
+
+# Kaiser criterion (eigenvalues > 1)
+eigenvalues <- eigen(cor(numeric_scaled))$values
+n_factors <- sum(eigenvalues > 1)
+cat("Number of factors with eigenvalues > 1:", n_factors, "\n")
+
+# Step 5: Perform Factor Analysis
+# You can adjust the number of factors (nfactors) based on Step 4 results
+fa_result <- fa(numeric_scaled, 
+                nfactors = min(5, n_factors), # Limit to 5 factors for interpretability
+                rotate = "varimax", 
+                fm = "pa")
+
+print(fa_result)
+
+# Step 6: Extract and visualize factor loadings
+loadings_matrix <- fa_result$loadings
+loadings_df <- as.data.frame(loadings_matrix[,])
+loadings_df$Variable <- rownames(loadings_df)
+
+# Create a heatmap of factor loadings
+loadings_long <- loadings_df %>%
+  pivot_longer(-Variable, names_to = "Factor", values_to = "Loading")
+
+p1 <- ggplot(loadings_long, aes(x = Factor, y = Variable, fill = Loading)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = 0, limits = c(-1, 1)) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Factor Loadings Heatmap",
+       x = "Factors", y = "Variables")
+
+print(p1)
+
+# Step 7: Calculate factor scores for each participant
+factor_scores <- as.data.frame(fa_result$scores)
+factor_scores$Participant_ID <- merged_data$Participant_ID
+factor_scores$FREG5_Ethnic_Group <- merged_data$FREG5_Ethnic_Group
+
+# Step 8: Analyze relationship between factors and ethnicity
+# ANOVA for each factor across ethnic groups
+factor_ethnicity_results <- list()
+
+for(i in 1:ncol(fa_result$scores)) {
+  factor_name <- paste0("PA", i)
+  formula_str <- paste(factor_name, "~ FREG5_Ethnic_Group")
+  
+  anova_result <- aov(as.formula(formula_str), data = factor_scores)
+  factor_ethnicity_results[[factor_name]] <- summary(anova_result)
+  
+  cat("\n", factor_name, "vs Ethnicity:\n")
+  print(summary(anova_result))
+}
+
+# Step 9: Visualize factor scores by ethnicity
+# Box plots for each factor by ethnic group
+plot_list <- list()
+
+for(i in 1:ncol(fa_result$scores)) {
+  factor_name <- paste0("PA", i)
+  
+  p <- ggplot(factor_scores, aes_string(x = "FREG5_Ethnic_Group", 
+                                       y = factor_name, 
+                                       fill = "FREG5_Ethnic_Group")) +
+    geom_boxplot(alpha = 0.7) +
+    geom_jitter(width = 0.2, alpha = 0.5) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "none") +
+    labs(title = paste("Factor", i, "by Ethnicity"),
+         x = "Ethnic Group", y = paste("Factor", i, "Score"))
+  
+  plot_list[[i]] <- p
+}
+
+# Display plots
+grid.arrange(grobs = plot_list, ncol = 2)
+
+# Step 10: Identify top contributing variables for each factor
+top_loadings <- function(loadings_matrix, n_top = 10) {
+  results <- list()
+  
+  for(i in 1:ncol(loadings_matrix)) {
+    factor_loadings <- abs(loadings_matrix[, i])
+    top_vars <- names(sort(factor_loadings, decreasing = TRUE)[1:n_top])
+    top_values <- sort(factor_loadings, decreasing = TRUE)[1:n_top]
+    
+    results[[paste0("Factor_", i)]] <- data.frame(
+      Variable = top_vars,
+      Loading = top_values,
+      Original_Loading = loadings_matrix[top_vars, i]
+    )
+    
+    cat("\nTop contributors to Factor", i, ":\n")
+    print(results[[paste0("Factor_", i)]])
+  }
+  
+  return(results)
+}
+
+top_contributors <- top_loadings(loadings_matrix)
+
+# Step 11: Alternative approach - PCA for comparison
+pca_result <- PCA(numeric_scaled, graph = FALSE)
+
+# Visualize PCA results
+fviz_pca_var(pca_result, col.var = "contrib", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE) +
+  labs(title = "PCA - Variable Contributions")
+
+# Step 12: Create summary report
+cat("\n=== FACTOR ANALYSIS SUMMARY ===\n")
+cat("Number of participants:", nrow(factor_scores), "\n")
+cat("Number of variables analyzed:", ncol(numeric_scaled), "\n")
+cat("Number of factors extracted:", ncol(fa_result$scores), "\n")
+cat("Proportion of variance explained:", sum(fa_result$Vaccounted[2,]), "\n")
+
+# Correlation between factors and ethnicity (if ethnicity is numeric)
+if(is.numeric(as.numeric(as.factor(factor_scores$FREG5_Ethnic_Group)))) {
+  ethnicity_numeric <- as.numeric(as.factor(factor_scores$FREG5_Ethnic_Group))
+  factor_correlations <- cor(factor_scores[,1:ncol(fa_result$scores)], 
+                            ethnicity_numeric)
+  cat("\nCorrelations between factors and ethnicity:\n")
+  print(factor_correlations)
+}
+```
+
+
+```{r}
+
+
+# Step 1: Merge datasets by Participant_ID
+# Ensure all datasets have Participant_ID column
+merged_data <- food_data %>%
+  inner_join(species_filtered2, by = "Participant_ID") %>%
+  inner_join(metadata, by = "Participant_ID")
+
+# Step 2: Prepare data for analysis
+# Separate numeric variables (food and microbe data) from categorical (ethnicity)
+numeric_cols <- merged_data %>%
+  select(-Participant_ID, -FREG5_Ethnic_Group) %>%
+  select_if(is.numeric)
+
+# Remove columns with near-zero variance or too many missing values
+numeric_cols <- numeric_cols[, apply(numeric_cols, 2, function(x) var(x, na.rm = TRUE) > 0)]
+numeric_cols <- numeric_cols[, colSums(is.na(numeric_cols)) < nrow(numeric_cols) * 0.5]
+
+# Handle missing values (replace with median or remove rows)
+numeric_cols_clean <- numeric_cols %>%
+  mutate_all(~ifelse(is.na(.), median(., na.rm = TRUE), .))
+
+# Step 3: Standardize the data (important for factor analysis)
+numeric_scaled <- scale(numeric_cols_clean)
+
+# Step 4: Determine optimal number of factors
+# Method 1: Kaiser criterion (eigenvalues > 1) - Very fast
+eigenvalues <- eigen(cor(numeric_scaled))$values
+n_factors_kaiser <- sum(eigenvalues > 1)
+cat("Kaiser criterion - Number of factors with eigenvalues > 1:", n_factors_kaiser, "\n")
+
+# Method 2: Scree plot (visual inspection) - Fast
+plot(eigenvalues, type = "b", main = "Scree Plot", 
+     xlab = "Factor Number", ylab = "Eigenvalue")
+abline(h = 1, col = "red", lty = 2)
+
+# Method 3: Variance explained threshold - Fast
+cumvar <- cumsum(eigenvalues) / sum(eigenvalues)
+n_factors_80 <- which(cumvar >= 0.80)[1]  # 80% variance explained
+cat("Factors explaining 80% variance:", n_factors_80, "\n")
+
+# Method 4: Fast parallel analysis (reduced iterations) - Much faster
+# Only run if you have time, otherwise skip
+if(ncol(numeric_scaled) < 100) {  # Only for smaller datasets
+  cat("Running fast parallel analysis...\n")
+  fa_parallel_fast <- fa.parallel(numeric_scaled, fm = "pa", fa = "fa", 
+                                  n.iter = 20, show.legend = FALSE)  # Reduced iterations
+  n_factors_parallel <- fa_parallel_fast$nfact
+  cat("Parallel analysis suggests:", n_factors_parallel, "factors\n")
+} else {
+  cat("Skipping parallel analysis for large dataset\n")
+  n_factors_parallel <- n_factors_kaiser
+}
+
+# Choose number of factors (you can adjust this logic)
+n_factors <- min(n_factors_kaiser, 8)  # Limit to 8 factors max for interpretability
+cat("Selected number of factors:", n_factors, "\n")
+
+# Step 5: Perform Factor Analysis
+# You can adjust the number of factors (nfactors) based on Step 4 results
+fa_result <- fa(numeric_scaled, 
+                nfactors = n_factors, 
+                rotate = "varimax", 
+                fm = "pa")
+
+print(fa_result)
+
+# Step 6: Extract and visualize factor loadings
+loadings_matrix <- fa_result$loadings
+loadings_df <- as.data.frame(loadings_matrix[,])
+loadings_df$Variable <- rownames(loadings_df)
+
+# Create a heatmap of factor loadings
+loadings_long <- loadings_df %>%
+  pivot_longer(-Variable, names_to = "Factor", values_to = "Loading")
+
+p1 <- ggplot(loadings_long, aes(x = Factor, y = Variable, fill = Loading)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = 0, limits = c(-1, 1)) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Factor Loadings Heatmap",
+       x = "Factors", y = "Variables")
+
+print(p1)
+
+# Step 7: Calculate factor scores for each participant
+factor_scores <- as.data.frame(fa_result$scores)
+factor_scores$Participant_ID <- merged_data$Participant_ID
+factor_scores$FREG5_Ethnic_Group <- merged_data$FREG5_Ethnic_Group
+
+# Step 8: Analyze relationship between factors and ethnicity
+# ANOVA for each factor across ethnic groups
+factor_ethnicity_results <- list()
+
+for(i in 1:ncol(fa_result$scores)) {
+  factor_name <- paste0("PA", i)
+  formula_str <- paste(factor_name, "~ FREG5_Ethnic_Group")
+  
+  anova_result <- aov(as.formula(formula_str), data = factor_scores)
+  factor_ethnicity_results[[factor_name]] <- summary(anova_result)
+  
+  cat("\n", factor_name, "vs Ethnicity:\n")
+  print(summary(anova_result))
+}
+
+# Step 9: Visualize factor scores by ethnicity
+# Box plots for each factor by ethnic group
+plot_list <- list()
+
+for(i in 1:ncol(fa_result$scores)) {
+  factor_name <- paste0("PA", i)
+  
+  p <- ggplot(factor_scores, aes_string(x = "FREG5_Ethnic_Group", 
+                                       y = factor_name, 
+                                       fill = "FREG5_Ethnic_Group")) +
+    geom_boxplot(alpha = 0.7) +
+    geom_jitter(width = 0.2, alpha = 0.5) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "none") +
+    labs(title = paste("Factor", i, "by Ethnicity"),
+         x = "Ethnic Group", y = paste("Factor", i, "Score"))
+  
+  plot_list[[i]] <- p
+}
+
+# Display plots
+grid.arrange(grobs = plot_list, ncol = 2)
+
+# Step 10: Identify top contributing variables for each factor
+top_loadings <- function(loadings_matrix, n_top = 10) {
+  results <- list()
+  
+  for(i in 1:ncol(loadings_matrix)) {
+    factor_loadings <- abs(loadings_matrix[, i])
+    top_vars <- names(sort(factor_loadings, decreasing = TRUE)[1:n_top])
+    top_values <- sort(factor_loadings, decreasing = TRUE)[1:n_top]
+    
+    results[[paste0("Factor_", i)]] <- data.frame(
+      Variable = top_vars,
+      Loading = top_values,
+      Original_Loading = loadings_matrix[top_vars, i]
+    )
+    
+    cat("\nTop contributors to Factor", i, ":\n")
+    print(results[[paste0("Factor_", i)]])
+  }
+  
+  return(results)
+}
+
+top_contributors <- top_loadings(loadings_matrix)
+
+# Step 11: Alternative approach - PCA for comparison
+pca_result <- PCA(numeric_scaled, graph = FALSE)
+
+# Visualize PCA results
+fviz_pca_var(pca_result, col.var = "contrib", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE) +
+  labs(title = "PCA - Variable Contributions")
+
+# Step 12: Create summary report
+cat("\n=== FACTOR ANALYSIS SUMMARY ===\n")
+cat("Number of participants:", nrow(factor_scores), "\n")
+cat("Number of variables analyzed:", ncol(numeric_scaled), "\n")
+cat("Number of factors extracted:", ncol(fa_result$scores), "\n")
+cat("Proportion of variance explained:", sum(fa_result$Vaccounted[2,]), "\n")
+
+# Correlation between factors and ethnicity (if ethnicity is numeric)
+if(is.numeric(as.numeric(as.factor(factor_scores$FREG5_Ethnic_Group)))) {
+  ethnicity_numeric <- as.numeric(as.factor(factor_scores$FREG5_Ethnic_Group))
+  factor_correlations <- cor(factor_scores[,1:ncol(fa_result$scores)], 
+                            ethnicity_numeric)
+  cat("\nCorrelations between factors and ethnicity:\n")
+  print(factor_correlations)
+}
+```
+
+```{r}
+# Look at PA5's top loadings
+top_contributors$Factor_5  # From your analysis
+
+# Statistical significance
+ethnicity_numeric <- as.numeric(as.factor(factor_scores$FREG5_Ethnic_Group))
+cor.test(factor_scores$PA5, ethnicity_numeric)
+
+# Which ethnic groups have highest/lowest PA5 scores
+aggregate(PA5 ~ FREG5_Ethnic_Group, data = factor_scores, mean)
+```
+
+
+
+
+
+

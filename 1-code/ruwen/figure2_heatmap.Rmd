@@ -39,22 +39,99 @@ nutrition_new = filter(FFQ_nutrition, FREG0_PID %in% pid_list)
 ```
 #species
 ```{r}
-species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_G_unfiltered_reads_decont2.csv")
+species = read_csv("data/abundance_bracken_standard_16_20221209_taxa_S_unfiltered_reads_decont2.csv")
 #species$`SAM id`
 helios_new_list = helios_new$FREG1_Barcode
 #sample_list = metadata_micro$`Original Sample name`
 micro_list <- filter(metadata_micro, metadata_micro$`Original Sample name` %in% helios_new_list)
 species_new = filter(species, species$`SAM id` %in% micro_list$`Library ID`)
-species_new
+helios_new
 ```
 
 ```{r}
 new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM id")
 #new_merge
-species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group","FREG7_Gender", "FREG8_Age", "BMI")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
 species_meta = species_meta %>% drop_na(FREG5_Ethnic_Group)
-species_meta
+species_meta$`Serratia marcescens`
 ```
+# check Serratia marcescens
+```{r}
+species_col <- "Serratia marcescens"
+library(dplyr)
+library(tidyr)
+
+df_serratia <- species_meta %>%
+  dplyr::select(
+    FREG5_Ethnic_Group,
+    FREG7_Gender,
+    FREG8_Age,
+    BMI,
+    Serratia = all_of(species_col)
+  ) %>%
+  dplyr::filter(!is.na(Serratia)) %>%
+  dplyr::filter(FREG5_Ethnic_Group %in% c("C", "I", "M"))  # drop "O" if needed
+df_serratia <- df_serratia %>%
+  mutate(Serratia_log = log10(Serratia + 1e-6))
+
+
+```
+```{r}
+library(ggplot2)
+
+ggplot(df_serratia, aes(x = FREG5_Ethnic_Group, y = Serratia_log)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.4, size = 1) +
+  labs(
+    x = "Ethnic Group",
+    y = "log10 Abundance of Serratia marcescens",
+    title = "Serratia marcescens abundance across ethnic groups"
+  ) +
+  theme_classic()
+
+```
+```{r}
+kruskal.test(Serratia_log ~ FREG5_Ethnic_Group, data = df_serratia)
+wilcox.test(Serratia_log ~ FREG7_Gender, data = df_serratia)
+
+```
+
+```{r}
+ggplot(df_serratia, aes(x = FREG8_Age, y = Serratia_log)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    x = "Age",
+    y = "Abundance of Serratia marcescens"
+  ) +
+  theme_classic()
+
+```
+
+```{r}
+cor.test(
+  df_serratia$FREG8_Age,
+  df_serratia$Serratia_log,
+  method = "spearman"
+)
+cor.test(
+  df_serratia$BMI,
+  df_serratia$Serratia_log,
+  method = "spearman"
+)
+```
+```{r}
+ggplot(df_serratia, aes(x = BMI, y = Serratia_log)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    x = "BMI",
+    y = "Abundance of Serratia marcescens"
+  ) +
+  theme_classic()
+
+```
+
 
 ```{r}
 metadata = species_meta[, c("FREG1_Barcode", "FREG5_Ethnic_Group")]

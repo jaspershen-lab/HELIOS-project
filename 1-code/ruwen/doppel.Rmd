@@ -1,0 +1,270 @@
+---
+title: "doppel"
+author: "Ruwen Zhou"
+date: "12/30/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(vegan)
+library(phyloseq)
+library(tidyverse)
+library(patchwork)
+library(agricolae)
+library(FSA)
+library(rcompanion)
+library(data.table)
+library(doppelgangerIdentifier)
+```
+
+
+```{r}
+library(readxl)
+library(dplyr)
+
+# 1. Load the data
+# Adjust the file paths if they are not in your current working directory
+df_species <- read_excel("data/doppel_data/doppel_species.xlsx")
+df_clinical <- read_excel("data/doppel_data/meta_diabetes.xlsx")
+
+# 2. Prepare the IDs for matching
+# For species, we assume the ID is in the first column. 
+# We explicitly rename the first column to 'match_id' temporarily for easier handling.
+colnames(df_species)[1] <- "match_id"
+
+# For clinical, the ID is 'FREG1_Barcode'.
+# We convert both to character strings to ensure they match correctly (e.g., "500" vs 500).
+df_species$match_id <- as.character(df_species$match_id)
+df_clinical$FREG1_Barcode <- as.character(df_clinical$FREG1_Barcode)
+
+# 3. Find common IDs
+common_ids <- intersect(df_species$match_id, df_clinical$FREG1_Barcode)
+
+message(paste("Found", length(common_ids), "common rows."))
+
+# 4. Filter both dataframes
+df_species_filtered <- df_species %>%
+  filter(match_id %in% common_ids) %>%
+  arrange(match_id) # Optional: Sort by ID
+
+df_clinical_filtered <- df_clinical %>%
+  filter(FREG1_Barcode %in% common_ids) %>%
+  arrange(FREG1_Barcode) # Optional: Sort by ID
+
+# 5. Save to new files
+write.csv(df_species_filtered, "data/doppel_data/doppel_species_filtered.csv", row.names = FALSE)
+write.csv(df_clinical_filtered, "data/doppel_data/meta_diabetes_filtered.csv", row.names = FALSE)
+```
+
+diabetes
+```{r}
+# 1. Read the filtered CSV files
+df_species_clean <- read.csv("data/doppel_data/doppel_species_filtered.csv", stringsAsFactors = FALSE)
+df_clinical_clean <- read.csv("data/doppel_data/meta_diabetes_filtered.csv", stringsAsFactors = FALSE)
+
+# 2. Set Row Names
+# For the species file, use the 'match_id' column
+rownames(df_species_clean) <- df_species_clean$match_id
+df_species_clean$match_id <- NULL  # Remove the column since it's now the index
+
+# For the clinical file, use the 'FREG1_Barcode' column
+# (Note: These values should match the species row names now)
+rownames(df_clinical_clean) <- df_clinical_clean$FREG1_Barcode
+df_clinical_clean$FREG1_Barcode <- NULL # Remove the column since it's now the index
+
+# 3. Verify
+# Check that the row names are identical and in the same order
+identical(rownames(df_species_clean), rownames(df_clinical_clean))
+
+```
+```{r}
+df_species_clean
+df_species_clean_t = transpose(df_species_clean)
+rownames(df_species_clean_t) = colnames(df_species_clean)
+colnames(df_species_clean_t) = rownames(df_species_clean)
+df_species_clean_t
+```
+
+
+```{r}
+diabetes1 = getPPCCDoppelgangers(df_species_clean_t, df_clinical_clean)
+
+visualisePPCCDoppelgangers(diabetes1)
+```
+```{r}
+subset(diabetes1$PPCC_df, DoppelgangerLabel == "Doppelganger")
+```
+
+obesity
+```{r}
+# 1. Read the filtered CSV files
+df_species_clean <- read.csv("data/doppel_data/doppel_species_filtered.csv", stringsAsFactors = FALSE)
+df_clinical_clean <- read.csv("data/doppel_data/meta_obesity.csv", stringsAsFactors = FALSE)
+
+# 2. Set Row Names
+# For the species file, use the 'match_id' column
+rownames(df_species_clean) <- df_species_clean$match_id
+df_species_clean$match_id <- NULL  # Remove the column since it's now the index
+
+# For the clinical file, use the 'FREG1_Barcode' column
+# (Note: These values should match the species row names now)
+rownames(df_clinical_clean) <- df_clinical_clean$FREG1_Barcode
+df_clinical_clean$FREG1_Barcode <- NULL # Remove the column since it's now the index
+
+# 3. Verify
+# Check that the row names are identical and in the same order
+identical(rownames(df_species_clean), rownames(df_clinical_clean))
+df_clinical_clean
+```
+```{r}
+df_species_clean
+df_species_clean_t = transpose(df_species_clean)
+rownames(df_species_clean_t) = colnames(df_species_clean)
+colnames(df_species_clean_t) = rownames(df_species_clean)
+df_species_clean_t
+```
+
+
+```{r}
+obesity1 = getPPCCDoppelgangers(df_species_clean_t, df_clinical_clean)
+
+visualisePPCCDoppelgangers(obesity1)
+```
+```{r}
+subset(obesity1$PPCC_df, DoppelgangerLabel == "Doppelganger")
+```
+## chinese vs non
+```{r}
+# 1. Read the filtered CSV files
+df_species_clean <- read.csv("data/doppel_data/doppel_species_filtered.csv", stringsAsFactors = FALSE)
+df_clinical_clean <- read.csv("data/doppel_data/meta_chinese.csv", stringsAsFactors = FALSE)
+
+# 2. Set Row Names
+# For the species file, use the 'match_id' column
+rownames(df_species_clean) <- df_species_clean$match_id
+df_species_clean$match_id <- NULL  # Remove the column since it's now the index
+
+# For the clinical file, use the 'FREG1_Barcode' column
+# (Note: These values should match the species row names now)
+rownames(df_clinical_clean) <- df_clinical_clean$FREG1_Barcode
+df_clinical_clean$FREG1_Barcode <- NULL # Remove the column since it's now the index
+
+# 3. Verify
+# Check that the row names are identical and in the same order
+identical(rownames(df_species_clean), rownames(df_clinical_clean))
+df_clinical_clean
+```
+```{r}
+df_species_clean
+df_species_clean_t = transpose(df_species_clean)
+rownames(df_species_clean_t) = colnames(df_species_clean)
+colnames(df_species_clean_t) = rownames(df_species_clean)
+df_species_clean_t
+```
+
+
+```{r}
+chinese1 = getPPCCDoppelgangers(df_species_clean_t, df_clinical_clean)
+
+visualisePPCCDoppelgangers(chinese1)
+```
+```{r}
+subset(chinese1$PPCC_df, DoppelgangerLabel == "Doppelganger")
+```
+
+## indian vs non
+```{r}
+# 1. Read the filtered CSV files
+df_species_clean <- read.csv("data/doppel_data/doppel_species_filtered.csv", stringsAsFactors = FALSE)
+df_clinical_clean <- read.csv("data/doppel_data/meta_indian.csv", stringsAsFactors = FALSE)
+
+# 2. Set Row Names
+# For the species file, use the 'match_id' column
+rownames(df_species_clean) <- df_species_clean$match_id
+df_species_clean$match_id <- NULL  # Remove the column since it's now the index
+
+# For the clinical file, use the 'FREG1_Barcode' column
+# (Note: These values should match the species row names now)
+rownames(df_clinical_clean) <- df_clinical_clean$FREG1_Barcode
+df_clinical_clean$FREG1_Barcode <- NULL # Remove the column since it's now the index
+
+# 3. Verify
+# Check that the row names are identical and in the same order
+identical(rownames(df_species_clean), rownames(df_clinical_clean))
+df_clinical_clean
+```
+```{r}
+df_species_clean
+df_species_clean_t = transpose(df_species_clean)
+rownames(df_species_clean_t) = colnames(df_species_clean)
+colnames(df_species_clean_t) = rownames(df_species_clean)
+df_species_clean_t
+```
+
+
+```{r}
+indian1 = getPPCCDoppelgangers(df_species_clean_t, df_clinical_clean)
+
+visualisePPCCDoppelgangers(indian1)
+```
+```{r}
+subset(indian1$PPCC_df, DoppelgangerLabel == "Doppelganger")
+```
+
+## female vs male
+```{r}
+# 1. Read the filtered CSV files
+df_species_clean <- read.csv("data/doppel_data/doppel_species_filtered.csv", stringsAsFactors = FALSE)
+df_clinical_clean <- read.csv("data/doppel_data/meta_female.csv", stringsAsFactors = FALSE)
+
+# 2. Set Row Names
+# For the species file, use the 'match_id' column
+rownames(df_species_clean) <- df_species_clean$match_id
+df_species_clean$match_id <- NULL  # Remove the column since it's now the index
+
+# For the clinical file, use the 'FREG1_Barcode' column
+# (Note: These values should match the species row names now)
+rownames(df_clinical_clean) <- df_clinical_clean$FREG1_Barcode
+df_clinical_clean$FREG1_Barcode <- NULL # Remove the column since it's now the index
+
+# 3. Verify
+# Check that the row names are identical and in the same order
+identical(rownames(df_species_clean), rownames(df_clinical_clean))
+df_clinical_clean
+```
+```{r}
+df_species_clean
+df_species_clean_t = transpose(df_species_clean)
+rownames(df_species_clean_t) = colnames(df_species_clean)
+colnames(df_species_clean_t) = rownames(df_species_clean)
+df_species_clean_t
+```
+
+
+```{r}
+female1 = getPPCCDoppelgangers(df_species_clean_t, df_clinical_clean)
+
+visualisePPCCDoppelgangers(female1)
+```
+```{r}
+subset(female1$PPCC_df, DoppelgangerLabel == "Doppelganger")
+```
+## food and doppel
+
+1 helios (ethnic and microbiome)
+2 food and microbiome (ffq and infogest + ASA24)
+3 helios diabetes obesity and risk score
+4 helios doppel + crc ibd public data doppel + review paper 
+
+
+
+
+
+
+
+
+
+

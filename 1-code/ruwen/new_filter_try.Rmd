@@ -1,0 +1,1864 @@
+---
+title: "new_filter_try"
+author: "Ruwen Zhou"
+date: "9/11/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+
+# import 800 data species
+```{r}
+species_data_800 = read_excel("data/species_866.xlsx")
+species_data_800
+species_data_800 <- species_data_800 %>%
+  dplyr::select(-c(unclassified, others, `Homo sapiens`))
+ethnicity_800 = read_excel("data/ethnicity_866.xlsx")
+species_data_800
+ethnicity_800
+```
+
+
+
+
+
+```{r}
+# Convert absolute counts -> relative abundance (row-wise proportions)
+counts_to_relabund <- function(df) {
+  df_num <- as.data.frame(df, stringsAsFactors = FALSE)
+  # ensure numeric
+  for (j in seq_len(ncol(df_num))) df_num[[j]] <- as.numeric(df_num[[j]])
+  
+  libsize <- rowSums(df_num, na.rm = TRUE)
+  zero_rows <- which(libsize == 0)
+  if (length(zero_rows) > 0) {
+    warning(sprintf("Found %d samples with total count = 0; their relative abundances are set to 0.", length(zero_rows)))
+  }
+  rel <- sweep(df_num, 1, libsize, FUN = "/")
+  rel[is.na(rel)] <- 0
+  rel
+}
+
+# Filter by prevalence (≥ prev_threshold of samples have >0) 
+# and mean relative abundance (≥ relabund_threshold)
+filter_prev_abund <- function(rel_df, prev_threshold = 0.10, relabund_threshold = 1e-4) {
+  stopifnot(prev_threshold >= 0 && prev_threshold <= 1)
+  n <- nrow(rel_df)
+  keep_prev  <- vapply(rel_df, function(col) sum(col > 0) >= (n * prev_threshold), logical(1))
+  keep_abund <- vapply(rel_df, function(col) mean(col, na.rm = TRUE) >= relabund_threshold, logical(1))
+  keep <- keep_prev & keep_abund
+  rel_df[, keep, drop = FALSE]
+}
+
+# Convenience wrapper: counts -> relabund -> filter.
+# Optionally return the filtered *counts* aligned to the kept taxa too.
+filter_counts_by_prev_and_relabund <- function(count_df,
+                                               prev_threshold = 0.10,
+                                               relabund_threshold = 1e-4,
+                                               return_counts_also = TRUE) {
+  rel <- counts_to_relabund(count_df)
+  rel_filt <- filter_prev_abund(rel, prev_threshold, relabund_threshold)
+  if (return_counts_also) {
+    kept_taxa <- colnames(rel_filt)
+    list(
+      relabund_filtered  = rel_filt,
+      counts_filtered    = count_df[, kept_taxa, drop = FALSE],
+      kept_taxa          = kept_taxa
+    )
+  } else {
+    rel_filt
+  }
+}
+```
+
+
+```{r}
+# ==== Example on your data ====
+res <- filter_counts_by_prev_and_relabund(
+  species_data_800,
+  prev_threshold = 0.10,    # present in ≥10% of samples
+  relabund_threshold = 0.00001 # mean relative abundance ≥0.01%
+)
+
+# Filtered relative abundance table:
+relabund_filtered <- res$relabund_filtered
+relabund_filtered
+# (Optional) filtered counts, aligned to the same kept taxa:
+species_filtered <- res$counts_filtered
+species_filtered
+write_xlsx(species_filtered, path = "data/filtered_species602.xlsx")
+```
+
+```{r}
+# rownames(species_data) = species_data[,1]
+# species_data[1] = NULL
+# rownames(metadata) = metadata[,1]
+# species_data
+# metadata
+species_filtered
+```
+
+```{r}
+merged_data1 <- merge(ethnicity_800[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], species_filtered, by.x = "FREG1_Barcode", by.y = "FREG1_Barcode",  all = FALSE)
+merged_data1 = subset(merged_data1, FREG5_Ethnic_Group != "O")
+merged_data1
+ethnicity_800
+```
+
+```{r}
+library(DESeq2)
+library(dplyr)
+
+# Metadata
+meta <- merged_data1[, 1:2]
+colnames(meta) <- c("SampleID", "Ethnicity")
+rownames(meta) <- meta$SampleID
+meta$Group <- ifelse(meta$Ethnicity == "C", "C", "nonC")
+meta$Group <- factor(meta$Group, levels = c("nonC", "C"))
+# Counts (species only)
+counts <- merged_data1[, -(1:2)]
+rownames(counts) <- meta$SampleID
+
+# Transpose counts: DESeq2 wants rows = species, cols = samples
+counts_t <- t(counts)
+
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_t,
+  colData   = meta,
+  design    = ~ Group
+)
+
+dds <- dds[rowSums(counts(dds)) > 10, ]  # filter low-abundance
+dds <- DESeq(dds)
+
+# Extract results: C vs nonC
+res_C <- results(dds, contrast = c("Group", "C", "nonC"))
+res_C <- as.data.frame(res_C) %>% mutate(Species = rownames(.))
+sig_C <- res_C %>% filter(padj < 0.05) %>% arrange(padj)
+sig_C
+
+```
+```{r}
+# I vs non-I
+meta$Group <- ifelse(meta$Ethnicity == "I", "I", "nonI")
+meta$Group <- factor(meta$Group, levels = c("nonI", "I"))
+dds <- DESeqDataSetFromMatrix(countData = counts_t, colData = meta, design = ~ Group)
+dds <- dds[rowSums(counts(dds)) > 10, ]
+dds <- DESeq(dds)
+res_I <- results(dds, contrast = c("Group", "I", "nonI")) %>%
+  as.data.frame() %>% mutate(Species = rownames(.))
+sig_I <- res_I %>% filter(padj < 0.05) %>% arrange(padj)
+
+# M vs non-M
+meta$Group <- ifelse(meta$Ethnicity == "M", "M", "nonM")
+meta$Group <- factor(meta$Group, levels = c("nonM", "M"))
+dds <- DESeqDataSetFromMatrix(countData = counts_t, colData = meta, design = ~ Group)
+dds <- dds[rowSums(counts(dds)) > 10, ]
+dds <- DESeq(dds)
+res_M <- results(dds, contrast = c("Group", "M", "nonM")) %>%
+  as.data.frame() %>% mutate(Species = rownames(.))
+sig_M <- res_M %>% filter(padj < 0.05) %>% arrange(padj)
+
+
+```
+
+```{r}
+# Load required libraries
+library(DESeq2)
+library(dplyr)
+library(ggplot2)
+
+# Your existing data preparation
+meta <- merged_data1[, 1:2]
+colnames(meta) <- c("SampleID", "Ethnicity")
+rownames(meta) <- meta$SampleID
+
+counts <- merged_data1[, -(1:2)]
+rownames(counts) <- meta$SampleID
+counts_t <- t(counts)
+
+# Function to run DESeq2 and create lollipop plot
+run_comparison <- function(target_ethnicity, plot_title, filename) {
+  
+  # Create group variable
+  meta_temp <- meta
+  meta_temp$Group <- ifelse(meta_temp$Ethnicity == target_ethnicity, target_ethnicity, paste0("non", target_ethnicity))
+  meta_temp$Group <- factor(meta_temp$Group, levels = c(paste0("non", target_ethnicity), target_ethnicity))
+  
+  # DESeq2 analysis
+  dds <- DESeqDataSetFromMatrix(countData = counts_t, colData = meta_temp, design = ~ Group)
+  dds <- dds[rowSums(counts(dds)) > 10, ]
+  dds <- DESeq(dds)
+  
+  # Get results
+  res <- results(dds, contrast = c("Group", target_ethnicity, paste0("non", target_ethnicity)))
+  res_df <- as.data.frame(res)
+  res_df$Species <- rownames(res_df)
+  
+  # Filter significant results
+  sig_results <- res_df %>% 
+    filter(!is.na(padj) & padj < 0.05) %>%
+    arrange(padj)   # Top 15 most significant
+  
+  # Skip if no significant results
+  if(nrow(sig_results) == 0) {
+    return(paste("No significant species for", plot_title))
+  }
+  
+  # Add plotting variables
+  sig_results$Direction <- ifelse(sig_results$log2FoldChange > 0, "Higher", "Lower")
+  sig_results$SpeciesName <- gsub("_", " ", sig_results$SpeciesName)
+  sig_results$neg_log10_padj <- -log10(sig_results$padj)
+  
+  # Create lollipop plot
+  p <- ggplot(sig_results, aes(x = reorder(SpeciesName, log2FoldChange), y = log2FoldChange)) +
+    geom_segment(aes(x = reorder(SpeciesName, log2FoldChange), 
+                     xend = reorder(SpeciesName, log2FoldChange),
+                     y = 0, yend = log2FoldChange), 
+                 linewidth = 1.2, alpha = 0.8, color = "gray60") +
+    geom_point(aes(size = neg_log10_padj, color = Direction), alpha = 0.8) +
+    scale_color_manual(values = c("Higher" = "#E31A1C", "Lower" = "#1F78B4")) +
+    scale_size_continuous(name = "-log10(adj p-value)", range = c(3, 8)) +
+    labs(title = plot_title, x = "Species", y = "log2 Fold Change") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          legend.position = "bottom") +
+    geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5) +
+    coord_flip()
+  
+  # Save plot
+  ggsave(paste0("figure/", filename), p, width = 10, height = 18, device = "pdf")
+  
+  return(paste("Saved", filename, "with", nrow(sig_results), "significant species"))
+}
+
+
+
+# Run all three comparisons
+result1 <- run_comparison("C", "Chinese vs Non-Chinese", "chinese_vs_non.pdf")
+result2 <- run_comparison("I", "Indian vs Non-Indian", "indian_vs_non.pdf")  
+result3 <- run_comparison("M", "Malay vs Non-Malay", "malay_vs_non.pdf")
+
+# Print results
+cat(result1, "\n")
+cat(result2, "\n")
+cat(result3, "\n")
+```
+
+## bubble plot
+```{r}
+library(DESeq2)
+library(dplyr)
+library(ggplot2)
+library(forcats)
+
+# Optional: a lookup table for taxonomy if you have it
+# tax_df should have columns: Species (matching rownames in counts_t), Phylum or Genus, etc.
+# Example structure: tax_df <- data.frame(Species=rownames(counts_t), Phylum=..., Genus=..., stringsAsFactors=FALSE)
+
+run_comparison_bubble <- function(target_ethnicity,
+                                  plot_title,
+                                  filename,
+                                  top_n_per_direction = 20,
+                                  facet_tax_level = NULL,      # e.g. "Phylum" or "Genus" if tax_df provided
+                                  tax_df = NULL,
+                                  height_per_40 = 10) {         # autoscale height: 10in per ~40 rows
+  
+  # Create group variable
+  meta_temp <- meta
+  meta_temp$Group <- ifelse(meta_temp$Ethnicity == target_ethnicity,
+                            target_ethnicity, paste0("non", target_ethnicity))
+  meta_temp$Group <- factor(meta_temp$Group,
+                            levels = c(paste0("non", target_ethnicity), target_ethnicity))
+  
+  # DESeq2
+  dds <- DESeqDataSetFromMatrix(countData = counts_t, colData = meta_temp, design = ~ Group)
+  dds <- dds[rowSums(counts(dds)) > 10, ]
+  dds <- DESeq(dds)
+  
+  res <- results(dds, contrast = c("Group", target_ethnicity, paste0("non", target_ethnicity)))
+  res_df <- as.data.frame(res)
+  res_df$Species <- rownames(res_df)
+
+  # Keep significant rows
+  sig <- res_df %>%
+    filter(!is.na(padj), padj < 0.05) %>%
+    mutate(Direction = ifelse(log2FoldChange > 0, "Higher", "Lower"),
+           SpeciesName = gsub("_", " ", Species),
+           SpeciesLabel = paste0("italic('", SpeciesName, "')"), 
+           neg_log10_padj = -log10(padj))
+  
+  if (nrow(sig) == 0) {
+    message(paste("No significant species for", plot_title))
+    return(invisible(NULL))
+  }
+
+  # Attach taxonomy if provided
+  if (!is.null(tax_df) && !is.null(facet_tax_level) && facet_tax_level %in% names(tax_df)) {
+    sig <- sig %>%
+      left_join(tax_df[, c("Species", facet_tax_level)], by = "Species") %>%
+      mutate(!!facet_tax_level := ifelse(is.na(.data[[facet_tax_level]]), "Unassigned", .data[[facet_tax_level]]))
+  }
+
+  # Top-N per direction (rank by padj, then by |log2FC|)
+  if (!is.null(facet_tax_level) && facet_tax_level %in% names(sig)) {
+  sig_top <- sig %>%
+    dplyr::group_by(Direction, .data[[facet_tax_level]]) %>%
+    dplyr::arrange(padj, dplyr::desc(abs(log2FoldChange)), .by_group = TRUE) %>%
+    dplyr::slice_head(n = top_n_per_direction) %>%
+    dplyr::ungroup()
+  } else {
+    sig_top <- sig %>%
+    dplyr::group_by(Direction) %>%
+    dplyr::arrange(padj, dplyr::desc(abs(log2FoldChange)), .by_group = TRUE) %>%
+    dplyr::slice_head(n = top_n_per_direction) %>%
+    dplyr::ungroup()
+  n}
+
+  # Order species by effect size within plot for nicer layout
+  sig_top <- sig_top %>%
+    mutate(SpeciesName = fct_reorder(SpeciesName, log2FoldChange))
+
+  # Bubble plot (compact)
+  p <- ggplot(sig_top,
+            aes(x = reorder(SpeciesLabel, log2FoldChange),
+                y = log2FoldChange,
+                size = neg_log10_padj,
+                color = Direction)) +
+  geom_point(alpha = 0.85) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4, alpha = 0.7) +
+  scale_size_continuous(name = "-log10(adj p-value)", range = c(2.5, 8)) +
+  scale_color_manual(values = c("Higher" = "#E31A1C", "Lower" = "#1F78B4")) +
+  labs(title = plot_title, x = "Species", y = "log2 Fold Change") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(size = 9),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        legend.position = "bottom") +
+  coord_flip() +
+  scale_x_discrete(labels = function(x) parse(text = x))  # <-- render italic
+
+  # Facet by taxonomy if requested
+  if (!is.null(facet_tax_level) && facet_tax_level %in% names(sig_top)) {
+    p <- p + facet_wrap(as.formula(paste("~", facet_tax_level)), scales = "free_y")
+  }
+
+  # Auto-scale figure height by number of rows shown (works for long lists)
+  n_rows <- nrow(sig_top)
+  fig_height <- max(6, ceiling(n_rows / 40) * height_per_40)  # ~40 rows per 10 inches (adjust if needed)
+  dir.create("figure", showWarnings = FALSE, recursive = TRUE)
+  ggsave(file.path("figure", filename), p, width = 10, height = fig_height, device = "pdf")
+
+  invisible(sig_top)
+}
+
+# Example calls (mirroring your original three):
+resC_bub <- run_comparison_bubble("C", "Chinese vs Non-Chinese", "chinese_vs_non_bubble.pdf",
+                                  top_n_per_direction = 20)
+resI_bub <- run_comparison_bubble("I", "Indian vs Non-Indian", "indian_vs_non_bubble.pdf",
+                                  top_n_per_direction = 20)
+resM_bub <- run_comparison_bubble("M", "Malay vs Non-Malay", "malay_vs_non_bubble.pdf",
+                                  top_n_per_direction = 20)
+
+```
+```{r}
+counts_t
+```
+
+
+
+```{r}
+## ===== Parameters you can tweak =====
+alpha <- 0.05                 # FDR cutoff (your sig_* tables likely already use this)
+lfc_cutoff <- log2(2)       # require ≥ 1.5x change (set to log2(2) for 2-fold, etc.)
+
+## ===== Helper: pick the best LFC column (shrunk if available) =====
+pick_lfc <- function(df) {
+  if ("log2FoldChange_shr" %in% names(df)) {
+    df$log2FoldChange_shr
+  } else {
+    df$log2FoldChange
+  }
+}
+
+## ===== Helper: annotate direction given a group label =====
+annotate_direction <- function(sig_df, group_label, lfc_cut = lfc_cutoff, alpha = alpha) {
+  if (is.null(sig_df) || nrow(sig_df) == 0) {
+    return(sig_df)
+  }
+  # ensure required cols exist
+  stopifnot(all(c("Species","padj") %in% names(sig_df)))
+  lfc <- pick_lfc(sig_df)
+
+  out <- sig_df
+  out$LFC_used <- lfc
+  out$Direction <- ifelse(out$LFC_used >=  lfc_cut, paste("Enriched in", group_label),
+                   ifelse(out$LFC_used <= -lfc_cut, paste("Depleted in", group_label), "NS_by_LFC"))
+  # keep only those passing the LFC cutoff as well
+  out <- out[out$Direction != "NS_by_LFC" & !is.na(out$padj) & out$padj < alpha, , drop = FALSE]
+
+  # standardize useful columns/order
+  keep_cols <- intersect(c("Species","baseMean","LFC_used","lfcSE","padj","Direction",
+                           "log2FoldChange","log2FoldChange_shr","stat","pvalue"),
+                         names(out))
+  out <- out[, keep_cols, drop = FALSE]
+  names(out)[names(out) == "LFC_used"] <- "log2FC_used"
+
+  out[order(out$padj, -abs(out$log2FC_used)), ]
+}
+
+## ===== Make sure we have the three tables (case-safe) =====
+sig_C_in <- if (exists("sig_C")) sig_C else sig_c
+sig_I_in <- if (exists("sig_I")) sig_I else if (exists("sig_i")) sig_i else sig_I
+sig_M_in <- if (exists("sig_M")) sig_M else if (exists("sig_m")) sig_m else sig_M
+
+## ===== Apply annotation per comparison =====
+ann_C <- annotate_direction(sig_C_in, "C", lfc_cutoff, alpha)
+ann_I <- annotate_direction(sig_I_in, "I", lfc_cutoff, alpha)
+ann_M <- annotate_direction(sig_M_in, "M", lfc_cutoff, alpha)
+
+# Add a Comparison column
+if (!is.null(ann_C) && nrow(ann_C)>0) ann_C$Comparison <- "C_vs_nonC"
+if (!is.null(ann_I) && nrow(ann_I)>0) ann_I$Comparison <- "I_vs_nonI"
+if (!is.null(ann_M) && nrow(ann_M)>0) ann_M$Comparison <- "M_vs_nonM"
+
+## ===== Combined tidy table =====
+combined_dir <- dplyr::bind_rows(ann_C, ann_I, ann_M) %>%
+  dplyr::select(Comparison, Species, Direction, baseMean, log2FC_used,
+                dplyr::any_of(c("log2FoldChange","log2FoldChange_shr","lfcSE","stat","pvalue","padj")))
+
+# Save if you like:
+# readr::write_csv(combined_dir, "DESeq2_sig_with_direction_all.csv")
+
+## ===== Simple species lists per group (character vectors) =====
+enriched_C <- if (exists("ann_C")) ann_C$Species[grepl("^Enriched in C$", ann_C$Direction)] else character(0)
+depleted_C <- if (exists("ann_C")) ann_C$Species[grepl("^Depleted in C$", ann_C$Direction)] else character(0)
+
+enriched_I <- if (exists("ann_I")) ann_I$Species[grepl("^Enriched in I$", ann_I$Direction)] else character(0)
+depleted_I <- if (exists("ann_I")) ann_I$Species[grepl("^Depleted in I$", ann_I$Direction)] else character(0)
+
+enriched_M <- if (exists("ann_M")) ann_M$Species[grepl("^Enriched in M$", ann_M$Direction)] else character(0)
+depleted_M <- if (exists("ann_M")) ann_M$Species[grepl("^Depleted in M$", ann_M$Direction)] else character(0)
+```
+
+
+```{r}
+enriched_C
+```
+
+
+```{r}
+depleted_C
+```
+
+
+```{r}
+enriched_I
+```
+
+
+```{r}
+depleted_I
+```
+
+
+```{r}
+enriched_M
+```
+
+
+```{r}
+depleted_M
+
+```
+
+## food
+```{r}
+food_data800 <- read_excel("data/all_food_863.xlsx")
+```
+
+
+```{r}
+#ethnicity_800
+#food_data800
+
+merged_data2 <- merge(ethnicity_800[,c("FREG1_Barcode", "FREG5_Ethnic_Group")], food_data800, by.x = "FREG1_Barcode", by.y = "participant_id",  all = FALSE)
+merged_data2 = subset(merged_data2, FREG5_Ethnic_Group != "O")
+merged_data2 <- merged_data2 %>%
+  dplyr::select(-c(freg0_pid))
+merged_data2
+```
+
+```{r}
+merged_data1
+```
+```{r}
+## ===== Packages =====
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(purrr)
+  library(readr)   # for write_csv(); swap to write.csv if you prefer
+})
+
+## ===== Inputs expected =====
+## - food_data800: first col = participant_id, second col = freg0_pid (to drop), remaining = foods (numeric)
+## - ethnicity_800: columns FREG1_Barcode (ID), FREG5_Ethnic_Group (C/I/M)
+
+## ===== Parameters =====
+alpha <- 0.05                         # FDR threshold
+lfc_cutoff <- log2(2)               # require ≥ 1.5x change (use log2(2) for 2x)
+eps <- 1e-6                           # to avoid division-by-zero in median ratios
+
+## ===== 1) Merge & clean =====
+meta <- ethnicity_800 %>%
+  transmute(SampleID = FREG1_Barcode,
+            Ethnicity = FREG5_Ethnic_Group) %>%
+  filter(Ethnicity %in% c("C","I","M")) %>%
+  mutate(Ethnicity = factor(Ethnicity, levels = c("C","I","M")))
+
+food <- food_data800 %>%
+  rename(SampleID = participant_id) %>%
+  select(-freg0_pid)
+
+df <- food %>%
+  inner_join(meta, by = "SampleID") %>%
+  relocate(SampleID, Ethnicity)
+
+# Make sure all food columns are numeric
+food_cols <- setdiff(names(df), c("SampleID","Ethnicity"))
+df[food_cols] <- lapply(df[food_cols], function(x) suppressWarnings(as.numeric(x)))
+
+## ===== 2) Omnibus Kruskal–Wallis across C/I/M =====
+kw_results <- map_dfr(food_cols, function(var) {
+  x <- df[[var]]
+  d <- data.frame(x = x, Ethnicity = df$Ethnicity)
+  p <- tryCatch(stats::kruskal.test(x ~ Ethnicity, data = d)$p.value, error = function(e) NA_real_)
+  tibble(Food = var, p_kw = p)
+}) %>%
+  mutate(p_kw_adj = p.adjust(p_kw, method = "fdr"))
+
+## ===== 3) Binary (X vs non-X) Wilcoxon + median fold-change =====
+binary_compare <- function(group_label) {
+  grp <- ifelse(df$Ethnicity == group_label, group_label, paste0("non", group_label))
+  map_dfr(food_cols, function(var) {
+    a <- df[[var]][grp == group_label]
+    b <- df[[var]][grp != group_label]
+    a <- a[!is.na(a)]; b <- b[!is.na(b)]
+    if (length(a) < 3 || length(b) < 3) {
+      return(tibble(Food = var, group = group_label, p = NA_real_,
+                    median_group = NA_real_, median_non = NA_real_,
+                    fc_median = NA_real_, log2FC = NA_real_))
+    }
+    p <- tryCatch(wilcox.test(a, b)$p.value, error = function(e) NA_real_)
+    med_a <- median(a); med_b <- median(b)
+    fc <- (med_a + eps) / (med_b + eps)
+    tibble(Food = var, group = group_label, p = p,
+           median_group = med_a, median_non = med_b,
+           fc_median = fc, log2FC = log2(fc))
+  }) %>%
+    mutate(p_adj = p.adjust(p, method = "fdr"))
+}
+
+res_C <- binary_compare("C")
+res_I <- binary_compare("I")
+res_M <- binary_compare("M")
+
+## ===== 4) Annotate direction (Enriched/Depleted) with LFC cutoff =====
+annotate_dir <- function(res_tbl) {
+  res_tbl %>%
+    mutate(
+      Direction = dplyr::case_when(
+        !is.na(p_adj) & p_adj < alpha & log2FC >=  lfc_cutoff ~ paste("Enriched in", group),
+        !is.na(p_adj) & p_adj < alpha & log2FC <= -lfc_cutoff ~ paste("Depleted in", group),
+        TRUE ~ "NS"
+      )
+    ) %>%
+    filter(Direction != "NS") %>%
+    arrange(p_adj, desc(abs(log2FC)))
+}
+
+ann_C <- annotate_dir(res_C) %>% mutate(Comparison = "C_vs_nonC")
+ann_I <- annotate_dir(res_I) %>% mutate(Comparison = "I_vs_nonI")
+ann_M <- annotate_dir(res_M) %>% mutate(Comparison = "M_vs_nonM")
+
+## ===== 5) Combined tables =====
+combined_binary <- bind_rows(
+  res_C %>% mutate(Comparison = "C_vs_nonC"),
+  res_I %>% mutate(Comparison = "I_vs_nonI"),
+  res_M %>% mutate(Comparison = "M_vs_nonM")
+) %>%
+  left_join(kw_results, by = "Food") %>%
+  relocate(Comparison, group, Food)
+
+combined_sig_with_dir <- bind_rows(ann_C, ann_I, ann_M) %>%
+  left_join(kw_results, by = "Food") %>%
+  select(Comparison, group, Food, Direction,
+         median_group, median_non, fc_median, log2FC,
+         p, p_adj, p_kw, p_kw_adj)
+```
+
+
+```{r}
+## ===== 6) Simple name lists (per group) =====
+enriched_C_food <- ann_C %>% filter(Direction == "Enriched in C") %>% pull(Food)
+depleted_C_food <- ann_C %>% filter(Direction == "Depleted in C") %>% pull(Food)
+enriched_I_food <- ann_I %>% filter(Direction == "Enriched in I") %>% pull(Food)
+depleted_I_food <- ann_I %>% filter(Direction == "Depleted in I") %>% pull(Food)
+enriched_M_food <- ann_M %>% filter(Direction == "Enriched in M") %>% pull(Food)
+depleted_M_food <- ann_M %>% filter(Direction == "Depleted in M") %>% pull(Food)
+```
+
+
+```{r}
+enriched_C_food
+```
+
+
+```{r}
+depleted_C_food
+```
+
+
+```{r}
+enriched_I_food
+```
+
+
+```{r}
+depleted_I_food
+```
+
+
+```{r}
+enriched_M_food
+```
+
+
+```{r}
+depleted_M_food
+
+```
+
+## stratification
+```{r}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(purrr)
+  library(tibble)
+  library(readr)   # optional for write_csv
+})
+
+## ==== 1) Helpers ====
+counts_to_relabund <- function(df_counts) {
+  lib <- rowSums(df_counts, na.rm = TRUE)
+  rel <- sweep(df_counts, 1, lib, "/")
+  rel[is.na(rel)] <- 0
+  rel
+}
+
+run_group_corr <- function(df_all, group_label, species_cols, food_cols,
+                           min_nonzero_prop_species = 0.10,
+                           min_nonzero_prop_food    = 0.10,
+                           alpha = 0.05,
+                           min_abs_rho = 0.0,
+                           restrict_species = NULL,
+                           restrict_foods   = NULL) {
+  d <- df_all %>% filter(Ethnicity == group_label)
+
+  # Restrict to curated lists if provided
+  if (!is.null(restrict_species)) species_cols <- intersect(species_cols, restrict_species)
+  if (!is.null(restrict_foods))   food_cols    <- intersect(food_cols,   restrict_foods)
+
+  # Keep species present in ≥ X% samples (within group) and with variance > 0
+  keep_species <- species_cols[vapply(species_cols, function(s)
+    mean(d[[s]] > 0, na.rm = TRUE) >= min_nonzero_prop_species && stats::var(d[[s]], na.rm = TRUE) > 0,
+    logical(1))]
+
+  # Keep foods observed in ≥ X% samples (non-missing/non-constant)
+  keep_foods <- food_cols[vapply(food_cols, function(f)
+    mean(is.finite(d[[f]]), na.rm = TRUE) >= min_nonzero_prop_food && stats::var(d[[f]], na.rm = TRUE) > 0,
+    logical(1))]
+
+  if (length(keep_species) == 0 || length(keep_foods) == 0) {
+    message(sprintf("[%s] No columns left after filtering.", group_label))
+    return(tibble())
+  }
+
+  res <- map_dfr(keep_species, function(s) {
+    x <- d[[s]]
+    map_dfr(keep_foods, function(f) {
+      y <- d[[f]]
+      ok <- is.finite(x) & is.finite(y)
+      if (sum(ok) < 8) return(tibble())  # need enough paired data
+      ct <- suppressWarnings(cor.test(x[ok], y[ok], method = "spearman", exact = FALSE))
+      tibble(Ethnicity = group_label, Species = s, Food = f,
+             n = sum(ok), rho = unname(ct$estimate), p_value = ct$p.value)
+    })
+  })
+
+  if (nrow(res) == 0) return(res)
+
+  res %>%
+    mutate(p_adj = p.adjust(p_value, method = "fdr")) %>%
+    filter(!is.na(p_adj), p_adj < alpha, abs(rho) >= min_abs_rho) %>%
+    arrange(p_adj, desc(abs(rho)))
+}
+
+## ==== 2) Build aligned data frames ====
+# Inputs expected:
+# - merged_data1: columns [FREG1_Barcode, FREG5_Ethnic_Group, <species counts...>]
+# - food_data800: first column participant_id, second freg0_pid (drop), rest foods (numeric)
+# - ethnicity_800: (if needed) FREG1_Barcode + FREG5_Ethnic_Group; but merged_data1 already has both.
+
+# --- BEGIN replacement for species_counts build ---
+stopifnot(all(c("FREG1_Barcode","FREG5_Ethnic_Group") %in% names(merged_data1)))
+
+meta <- merged_data1[, c("FREG1_Barcode","FREG5_Ethnic_Group")]
+names(meta) <- c("SampleID","Ethnicity")
+meta <- subset(meta, Ethnicity %in% c("C","I","M"))
+meta$Ethnicity <- factor(meta$Ethnicity, levels = c("C","I","M"))
+
+species_counts_df <- merged_data1[, !(names(merged_data1) %in% c("FREG5_Ethnic_Group"))]
+names(species_counts_df)[names(species_counts_df) == "FREG1_Barcode"] <- "SampleID"
+species_counts_df <- as.data.frame(species_counts_df, stringsAsFactors = FALSE)
+rownames(species_counts_df) <- NULL
+rownames(species_counts_df) <- species_counts_df$SampleID
+species_counts_df$SampleID <- NULL
+species_counts_df[] <- lapply(species_counts_df, function(x) suppressWarnings(as.numeric(x)))
+if (any(duplicated(rownames(species_counts_df)))) {
+  dup_ids <- unique(rownames(species_counts_df)[duplicated(rownames(species_counts_df))])
+  stop(sprintf("Duplicate SampleIDs in merged_data1: %s", paste(head(dup_ids, 10), collapse = ", ")))
+}
+species_counts <- as.matrix(species_counts_df)
+
+# Relative abundance for correlations
+lib <- rowSums(species_counts, na.rm = TRUE)
+species_rel <- sweep(species_counts, 1, lib, "/")
+species_rel[!is.finite(species_rel)] <- 0
+species_rel_df <- as.data.frame(species_rel)
+species_rel_df$SampleID <- rownames(species_rel_df)
+# --- END replacement ---
+
+
+# Convert counts -> relative abundance
+species_rel <- counts_to_relabund(species_counts)
+species_rel_df <- species_rel %>% as.data.frame() %>% rownames_to_column("SampleID")
+species_cols <- colnames(species_rel_df)[-1]   # list of species columns
+
+# Food table (make numeric, drop freg0_pid)
+food_df <- food_data800 %>%
+  rename(SampleID = participant_id) %>%
+  select(-freg0_pid)
+food_cols <- setdiff(colnames(food_df), "SampleID")
+food_df[food_cols] <- lapply(food_df[food_cols], function(x) suppressWarnings(as.numeric(x)))
+
+# Merge everything (inner join to ensure matched samples)
+df_all <- meta %>%
+  inner_join(species_rel_df, by = "SampleID") %>%
+  inner_join(food_df, by = "SampleID")
+
+## ==== 3) (Optional) restrict to your curated lists ====
+# If you have DA species/foods per group, put them here. Otherwise leave as NULL to use ALL.
+# Example placeholders; replace with your vectors if you want targeted correlations:
+species_keep_C <- NULL   # e.g., sig_C$Species[ sig_C$padj < 0.05 & abs(sig_C$log2FoldChange) >= log2(1.5) ]
+species_keep_I <- NULL
+species_keep_M <- NULL
+
+food_keep_C <- NULL      # e.g., enriched_food_C from your food DA step
+food_keep_I <- NULL
+food_keep_M <- NULL
+```
+
+
+```{r}
+## ==== 4) Run within-group Spearman ====
+alpha <- 0.05
+min_abs_rho <- 0       # raise/lower as you like
+min_prev <- 0
+
+corr_C <- run_group_corr(df_all, "C", species_cols, food_cols,
+                         min_nonzero_prop_species = min_prev,
+                         min_nonzero_prop_food    = min_prev,
+                         alpha = alpha, min_abs_rho = min_abs_rho,
+                         restrict_species = species_keep_C,
+                         restrict_foods   = food_keep_C)
+
+corr_I <- run_group_corr(df_all, "I", species_cols, food_cols,
+                         min_nonzero_prop_species = min_prev,
+                         min_nonzero_prop_food    = min_prev,
+                         alpha = alpha, min_abs_rho = min_abs_rho,
+                         restrict_species = species_keep_I,
+                         restrict_foods   = food_keep_I)
+
+corr_M <- run_group_corr(df_all, "M", species_cols, food_cols,
+                         min_nonzero_prop_species = min_prev,
+                         min_nonzero_prop_food    = min_prev,
+                         alpha = alpha, min_abs_rho = min_abs_rho,
+                         restrict_species = species_keep_M,
+                         restrict_foods   = food_keep_M)
+
+combined_corr <- bind_rows(corr_C, corr_I, corr_M)
+```
+
+
+```{r}
+## ==== 5) Save (optional) ====
+# write_csv(corr_C, "Spearman_food_microbiome_C.csv")
+# write_csv(corr_I, "Spearman_food_microbiome_I.csv")
+# write_csv(corr_M, "Spearman_food_microbiome_M.csv")
+# write_csv(combined_corr, "Spearman_food_microbiome_all.csv")
+
+## Quick peek
+
+#table(combined_corr$Ethnicity)
+combined_corr
+
+#corr_I
+```
+
+
+DA detects a between-group shift in means; correlation detects a within-group association (covariance of ranks). Either can be present without the other
+
+Power/sample size
+DA uses all samples at once; within-group uses only C (or I/M) samples: fewer n and more multiple testing (foods × species), so  more FDR pruning.
+
+## food speices association
+```{r}
+food_group = read_xlsx("data/FFQA862.xlsx")
+food_group
+```
+
+```{r}
+## ===== Parameters =====
+alpha <- 0.05          # FDR cutoff
+min_abs_rho <- 0    # set to 0 if you don't want a rho cutoff
+min_prev_species <- 0  # species present in ≥10% of samples
+min_prev_food    <- 0  # food non-missing in ≥10% of samples
+min_n_pair <- 8           # min paired samples per test
+
+## ===== 0) Expect these to already exist from your DA step =====
+## enriched_C, depleted_C, enriched_I, depleted_I, enriched_M, depleted_M
+
+## ===== 1) Build the combined species list with origin labels =====
+map_list <- function(vec, tag) if (exists(deparse(substitute(vec))) && length(vec)) 
+  data.frame(Species = vec, Origin = tag, stringsAsFactors = FALSE) else
+  data.frame(Species = character(0), Origin = character(0))
+
+origin_tbl <- rbind(
+  map_list(enriched_C, "Enriched in C"),
+  map_list(depleted_C, "Depleted in C"),
+  map_list(enriched_I, "Enriched in I"),
+  map_list(depleted_I, "Depleted in I"),
+  map_list(enriched_M, "Enriched in M"),
+  map_list(depleted_M, "Depleted in M")
+)
+species_keep <- unique(origin_tbl$Species)
+
+if (length(species_keep) == 0) stop("No species in combined list (species_keep).")
+
+## ===== 2) Meta & species counts -> relative abundance (from merged_data1) =====
+stopifnot(all(c("FREG1_Barcode","FREG5_Ethnic_Group") %in% names(merged_data1)))
+
+# species counts table with SampleID rownames
+sp_df <- merged_data1[, !(names(merged_data1) %in% c("FREG5_Ethnic_Group"))]
+names(sp_df)[names(sp_df) == "FREG1_Barcode"] <- "SampleID"
+sp_df <- as.data.frame(sp_df, stringsAsFactors = FALSE)
+rownames(sp_df) <- sp_df$SampleID; sp_df$SampleID <- NULL
+sp_df[] <- lapply(sp_df, function(x) suppressWarnings(as.numeric(x)))
+
+# relative abundance
+lib <- rowSums(sp_df, na.rm = TRUE)
+rel <- sp_df / ifelse(lib == 0, 1, lib)
+rel[!is.finite(as.matrix(rel))] <- 0
+
+## Keep only selected species that exist in the table
+species_use <- intersect(species_keep, colnames(rel))
+if (length(species_use) == 0) stop("None of the selected species are present in merged_data1.")
+
+## ===== 3) Food groups (first col = Participant_ID) =====
+fd <- as.data.frame(food_group, stringsAsFactors = FALSE)
+names(fd)[names(fd) == "Participant_ID"] <- "SampleID"
+food_cols <- setdiff(names(fd), "SampleID")
+fd[food_cols] <- lapply(fd[food_cols], function(x) suppressWarnings(as.numeric(x)))
+
+## ===== 4) Align samples =====
+ids <- intersect(rownames(rel), fd$SampleID)
+rel  <- rel[ids, species_use, drop = FALSE]
+fd   <- fd[match(ids, fd$SampleID), , drop = FALSE]
+stopifnot(identical(rownames(rel), fd$SampleID))
+
+## ===== 5) Filter by within-dataset prevalence/variance (pooled, no stratification) =====
+keep_sp <- vapply(colnames(rel), function(s) {
+  x <- rel[, s]; mean(x > 0, na.rm = TRUE) >= min_prev_species && stats::var(x, na.rm = TRUE) > 0
+}, logical(1))
+sp_keep <- colnames(rel)[keep_sp]
+
+keep_food <- vapply(food_cols, function(f) {
+  y <- fd[[f]]; mean(is.finite(y)) >= min_prev_food && stats::var(y, na.rm = TRUE) > 0
+}, logical(1))
+food_keep <- food_cols[keep_food]
+
+if (length(sp_keep) == 0 || length(food_keep) == 0) {
+  stop("After prevalence/variance filtering, no analyzable species or foods left.")
+}
+
+## ===== 6) Spearman correlations (pooled across all samples) =====
+out <- vector("list", length(sp_keep))
+for (i in seq_along(sp_keep)) {
+  s <- sp_keep[i]; x <- rel[, s]
+  rows <- lapply(food_keep, function(f) {
+    y <- fd[[f]]
+    ok <- is.finite(x) & is.finite(y)
+    if (sum(ok) < min_n_pair) return(NULL)
+    ct <- suppressWarnings(cor.test(x[ok], y[ok], method = "spearman", exact = FALSE))
+    data.frame(Species = s, Food = f, n = sum(ok),
+               rho = unname(ct$estimate), p_value = ct$p.value,
+               stringsAsFactors = FALSE)
+  })
+  out[[i]] <- do.call(rbind, rows)
+}
+res <- do.call(rbind, out)
+if (is.null(res) || nrow(res) == 0) stop("No valid species–food pairs to test.")
+
+## ===== 7) Multiple testing & annotation =====
+res$p_adj <- p.adjust(res$p_value, method = "fdr")
+res <- merge(res, origin_tbl, by = "Species", all.x = TRUE)
+
+sig_corr <- subset(res, !is.na(p_adj) & p_adj < alpha & abs(rho) >= min_abs_rho)
+sig_corr <- sig_corr[order(sig_corr$p_adj, -abs(sig_corr$rho)), ]
+
+## ===== 8) (Optional) Save & quick peek =====
+# write.csv(sig_corr, "Spearman_foodGroups_selectedSpecies_allSamples.csv", row.names = FALSE)
+```
+
+
+```{r}
+sig_corr
+table(sig_corr$Origin)   # how many hits per original DA-origin tag
+
+```
+```{r}
+# Load required libraries
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+
+# Step 1: Combine all ethnic-specific species
+all_ethnic_species <- c(enriched_C, depleted_C, 
+                       enriched_I, depleted_I, 
+                       enriched_M, depleted_M)
+
+# Remove duplicates if any
+all_ethnic_species <- unique(all_ethnic_species)
+
+print(paste("Total number of unique ethnic-specific species:", length(all_ethnic_species)))
+
+# Step 2: Filter species data to include only ethnic-specific species
+# First check which species are actually present in the data
+available_species <- intersect(all_ethnic_species, colnames(species_filtered))
+missing_species <- setdiff(all_ethnic_species, colnames(species_filtered))
+
+if (length(missing_species) > 0) {
+  print(paste("Warning: The following species are not found in species_filtered:"))
+  print(missing_species)
+}
+
+print(paste("Available ethnic-specific species:", length(available_species)))
+
+species_subset <- species_filtered %>%
+  select(FREG1_Barcode, all_of(available_species))
+
+# Step 3: Merge all datasets
+# First merge species with ethnicity data
+merged_data <- species_subset %>%
+  inner_join(ethnicity_800, by = "FREG1_Barcode")
+
+# Then merge with food group data (matching Participant_ID with FREG1_Barcode)
+final_data <- merged_data %>%
+  inner_join(food_group, by = c("FREG1_Barcode" = "Participant_ID"))
+
+print(paste("Final dataset dimensions:", nrow(final_data), "x", ncol(final_data)))
+
+# Step 4: Prepare data for partial correlation analysis
+# Get food group columns (exclude ID and metadata columns)
+available_food_cols <- setdiff(colnames(food_group), "Participant_ID")
+species_cols <- available_species  # Use available species instead
+confounder_cols <- c("FREG7_Gender", "FREG8_Age", "BMI", "FREG5_Ethnic_Group")
+
+# Convert gender to numeric (if not already)
+final_data$FREG7_Gender_num <- ifelse(final_data$FREG7_Gender == "M", 1, 0)
+
+# Convert ethnicity to dummy variables (handle potential issues)
+tryCatch({
+  ethnicity_dummies <- model.matrix(~ FREG5_Ethnic_Group - 1, data = final_data)
+  # Remove the "FREG5_Ethnic_Group" prefix from column names for cleaner names
+  colnames(ethnicity_dummies) <- gsub("FREG5_Ethnic_Group", "Ethnicity_", colnames(ethnicity_dummies))
+}, error = function(e) {
+  # If model.matrix fails, create a simple numeric encoding
+  unique_ethnicities <- unique(final_data$FREG5_Ethnic_Group)
+  ethnicity_dummies <- matrix(0, nrow = nrow(final_data), ncol = length(unique_ethnicities))
+  colnames(ethnicity_dummies) <- paste0("Ethnicity_", unique_ethnicities)
+  
+  for (i in seq_along(unique_ethnicities)) {
+    ethnicity_dummies[final_data$FREG5_Ethnic_Group == unique_ethnicities[i], i] <- 1
+  }
+})
+
+# Create final analysis dataset with better error handling
+required_cols <- c(species_cols, available_food_cols, "FREG7_Gender_num", "FREG8_Age", "BMI")
+available_required_cols <- intersect(required_cols, colnames(final_data))
+
+analysis_data <- final_data[, available_required_cols]
+
+# Add ethnicity dummies
+analysis_data <- cbind(analysis_data, ethnicity_dummies)
+
+# Clean the data: convert all columns to numeric where possible
+for (col in colnames(analysis_data)) {
+  if (is.character(analysis_data[[col]]) || is.factor(analysis_data[[col]])) {
+    # Try to convert to numeric, if it fails keep as is
+    tryCatch({
+      analysis_data[[col]] <- as.numeric(as.character(analysis_data[[col]]))
+    }, warning = function(w) {
+      # If conversion introduces NAs, that's okay
+    })
+  }
+}
+
+# Replace infinite values with NA
+analysis_data[] <- lapply(analysis_data, function(x) {
+  x[is.infinite(x)] <- NA
+  return(x)
+})
+
+# Check for columns with too many missing values
+missing_prop <- colSums(is.na(analysis_data)) / nrow(analysis_data)
+cols_to_keep <- names(missing_prop[missing_prop < 0.9])  # Keep columns with <90% missing
+
+analysis_data <- analysis_data[, cols_to_keep]
+
+# Update species and food columns lists based on what's available
+species_cols <- intersect(species_cols, colnames(analysis_data))
+food_cols <- intersect(available_food_cols, colnames(analysis_data))
+
+print(paste("Analysis dataset dimensions:", nrow(analysis_data), "x", ncol(analysis_data)))
+print(paste("Species columns available:", length(species_cols)))
+print(paste("Food group columns available:", length(food_cols)))
+
+# Step 5: Function to calculate partial Spearman correlation
+partial_spearman_cor <- function(x, y, confounders_matrix) {
+  # Create a complete dataset
+  complete_data <- data.frame(
+    x = as.numeric(x),
+    y = as.numeric(y),
+    as.data.frame(confounders_matrix)
+  )
+  
+  # Remove rows with any NA, NaN, or Inf values
+  complete_data <- complete_data[complete.cases(complete_data), ]
+  complete_data <- complete_data[apply(complete_data, 1, function(row) all(is.finite(row))), ]
+  
+  # Check if we have enough data points
+  if (nrow(complete_data) < 15) {
+    return(list(correlation = NA, p_value = NA))
+  }
+  
+  # Check for zero variance (constant values)
+  if (var(complete_data$x) == 0 || var(complete_data$y) == 0) {
+    return(list(correlation = NA, p_value = NA))
+  }
+  
+  # Check for multicollinearity in confounders
+  confounder_data <- complete_data[, -(1:2)]  # exclude x and y
+  if (ncol(confounder_data) > 0) {
+    # Remove constant columns
+    confounder_data <- confounder_data[, sapply(confounder_data, function(col) var(col) > 0)]
+    
+    # Check if we still have confounders after removing constant columns
+    if (ncol(confounder_data) == 0) {
+      # No valid confounders, just do simple correlation
+      cor_test <- cor.test(complete_data$x, complete_data$y, method = "spearman")
+      return(list(correlation = cor_test$estimate, p_value = cor_test$p.value))
+    }
+    
+    # Try to fit models with error handling
+    tryCatch({
+      # Fit linear models to remove confounder effects
+      x_model <- lm(x ~ ., data = cbind(x = complete_data$x, confounder_data))
+      y_model <- lm(y ~ ., data = cbind(y = complete_data$y, confounder_data))
+      
+      x_residuals <- residuals(x_model)
+      y_residuals <- residuals(y_model)
+      
+      # Calculate Spearman correlation on residuals
+      cor_test <- cor.test(x_residuals, y_residuals, method = "spearman")
+      return(list(correlation = cor_test$estimate, p_value = cor_test$p.value))
+      
+    }, error = function(e) {
+      # If linear model fails, fall back to simple correlation
+      cor_test <- cor.test(complete_data$x, complete_data$y, method = "spearman")
+      return(list(correlation = cor_test$estimate, p_value = cor_test$p.value))
+    })
+    
+  } else {
+    # No confounders, just do simple correlation
+    cor_test <- cor.test(complete_data$x, complete_data$y, method = "spearman")
+    return(list(correlation = cor_test$estimate, p_value = cor_test$p.value))
+  }
+}
+
+# Step 6: Calculate partial correlations
+# Prepare confounder matrix (ensure all columns are numeric and finite)
+confounder_cols_available <- c("FREG7_Gender_num", "FREG8_Age", "BMI", 
+                               grep("Ethnicity_", colnames(analysis_data), value = TRUE))
+
+# Only keep confounder columns that exist in the data
+confounder_cols_available <- intersect(confounder_cols_available, colnames(analysis_data))
+
+print(paste("Available confounder columns:", length(confounder_cols_available)))
+print(confounder_cols_available)
+
+confounder_matrix <- as.matrix(analysis_data[, confounder_cols_available])
+
+# Ensure confounder matrix is numeric
+confounder_matrix <- apply(confounder_matrix, 2, as.numeric)
+
+# Initialize correlation matrix
+correlation_matrix <- matrix(NA, 
+                           nrow = length(species_cols), 
+                           ncol = length(food_cols),
+                           dimnames = list(species_cols, food_cols))
+
+# Initialize p-value matrix
+p_value_matrix <- matrix(NA, 
+                        nrow = length(species_cols), 
+                        ncol = length(food_cols),
+                        dimnames = list(species_cols, food_cols))
+
+# Calculate correlations
+print("Calculating partial Spearman correlations...")
+for (i in 1:length(species_cols)) {
+  for (j in 1:length(food_cols)) {
+    species_data <- analysis_data[[species_cols[i]]]
+    food_data <- analysis_data[[food_cols[j]]]
+    
+    # Calculate partial correlation
+    result <- partial_spearman_cor(species_data, food_data, confounder_matrix)
+    correlation_matrix[i, j] <- result$correlation
+    p_value_matrix[i, j] <- result$p_value
+  }
+  if (i %% 10 == 0) print(paste("Processed", i, "out of", length(species_cols), "species"))
+}
+
+# Step 7: Apply multiple testing correction
+p_value_adj <- p.adjust(as.vector(p_value_matrix), method = "fdr")
+p_value_adj_matrix <- matrix(p_value_adj, 
+                            nrow = nrow(p_value_matrix), 
+                            ncol = ncol(p_value_matrix),
+                            dimnames = dimnames(p_value_matrix))
+
+# Step 8: Create significance matrix for plotting
+significance_matrix <- matrix("", 
+                             nrow = nrow(correlation_matrix), 
+                             ncol = ncol(correlation_matrix),
+                             dimnames = dimnames(correlation_matrix))
+
+significance_matrix[p_value_adj_matrix < 0.001] <- "***"
+significance_matrix[p_value_adj_matrix >= 0.001 & p_value_adj_matrix < 0.01] <- "**"
+significance_matrix[p_value_adj_matrix >= 0.01 & p_value_adj_matrix < 0.05] <- "*"
+
+# Step 9: Create correlation heatmap
+# Remove rows/columns with all NA values
+valid_rows <- rowSums(!is.na(correlation_matrix)) > 0
+valid_cols <- colSums(!is.na(correlation_matrix)) > 0
+
+correlation_clean <- correlation_matrix[valid_rows, valid_cols]
+significance_clean <- significance_matrix[valid_rows, valid_cols]
+
+# Check if we have enough valid correlations for plotting
+print(paste("Valid correlations for plotting:", sum(!is.na(correlation_clean))))
+print(paste("Matrix dimensions:", nrow(correlation_clean), "x", ncol(correlation_clean)))
+
+if (sum(!is.na(correlation_clean)) > 0 && nrow(correlation_clean) > 0 && ncol(correlation_clean) > 0) {
+  
+  # Create heatmap using pheatmap
+  tryCatch({
+    png("species_foodgroup_correlation_heatmap.png", width = 12, height = 10, units = "in", res = 300)
+    
+    pheatmap(correlation_clean,
+             color = colorRampPalette(c("blue", "white", "red"))(100),
+             breaks = seq(-1, 1, length.out = 101),
+             display_numbers = significance_clean,
+             number_color = "black",
+             fontsize_number = 6,
+             cluster_rows = ifelse(nrow(correlation_clean) > 2, TRUE, FALSE),
+             cluster_cols = ifelse(ncol(correlation_clean) > 2, TRUE, FALSE),
+             main = "Partial Spearman Correlations:\nEthnic-Specific Species vs Food Groups\n(Adjusted for Age, Gender, BMI, Ethnicity)",
+             fontsize = 8,
+             angle_col = 45,
+             na_col = "grey90")
+    
+    dev.off()
+    print("Pheatmap saved successfully!")
+    
+  }, error = function(e) {
+    dev.off()
+    print(paste("Pheatmap failed:", e$message))
+  })
+  
+  # Alternative heatmap using corrplot with better error handling
+  tryCatch({
+    # For corrplot, we need to handle NAs and ensure proper matrix format
+    correlation_for_corrplot <- correlation_clean
+    
+    # Replace remaining NAs with 0 for visualization purposes only
+    correlation_for_corrplot[is.na(correlation_for_corrplot)] <- 0
+    
+    # Ensure the matrix is properly bounded between -1 and 1
+    correlation_for_corrplot[correlation_for_corrplot > 1] <- 1
+    correlation_for_corrplot[correlation_for_corrplot < -1] <- -1
+    
+    png("species_foodgroup_correlation_corrplot.png", width = 14, height = 10, units = "in", res = 300)
+    
+    # Use different order method if hclust fails
+    plot_order <- "original"
+    if (nrow(correlation_for_corrplot) > 2 && ncol(correlation_for_corrplot) > 2 && 
+        sum(!is.na(correlation_clean)) > (nrow(correlation_clean) * ncol(correlation_clean) * 0.5)) {
+      plot_order <- "hclust"
+    }
+    
+    corrplot(correlation_for_corrplot,
+             method = "color",
+             type = "full",
+             order = plot_order,
+             tl.cex = 0.6,
+             tl.col = "black",
+             tl.srt = 45,
+             col = colorRampPalette(c("blue", "white", "red"))(100),
+             title = "Partial Spearman Correlations: Ethnic-Specific Species vs Food Groups\n(Adjusted for Age, Gender, BMI, Ethnicity)",
+             mar = c(0, 0, 4, 0),
+             na.label = "square",
+             na.label.col = "grey90")
+    
+    dev.off()
+    print("Corrplot saved successfully!")
+    
+  }, error = function(e) {
+    dev.off()
+    print(paste("Corrplot failed:", e$message))
+    
+    # Fallback: create a simple ggplot heatmap
+    tryCatch({
+      library(reshape2)
+      library(ggplot2)
+      
+      # Convert correlation matrix to long format
+      correlation_melted <- melt(correlation_clean, na.rm = FALSE)
+      colnames(correlation_melted) <- c("Species", "Food_Group", "Correlation")
+      
+      # Create ggplot heatmap
+      p <- ggplot(correlation_melted, aes(x = Food_Group, y = Species, fill = Correlation)) +
+        geom_tile() +
+        scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                           midpoint = 0, limit = c(-1, 1), na.value = "grey90") +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+              axis.text.y = element_text(size = 8),
+              plot.title = element_text(size = 12, hjust = 0.5)) +
+        labs(title = "Partial Spearman Correlations:\nEthnic-Specific Species vs Food Groups\n(Adjusted for Age, Gender, BMI, Ethnicity)",
+             x = "Food Groups", y = "Species")
+      
+      ggsave("species_foodgroup_correlation_ggplot.png", p, width = 12, height = 8, dpi = 300)
+      print("Fallback ggplot heatmap saved successfully!")
+      
+    }, error = function(e2) {
+      print(paste("All plotting methods failed:", e2$message))
+    })
+  })
+  
+} else {
+  print("No valid correlations found for plotting. Check your data and analysis parameters.")
+}
+
+# Step 10: Summary statistics
+print("\n=== SUMMARY STATISTICS ===")
+print(paste("Number of species analyzed:", nrow(correlation_clean)))
+print(paste("Number of food groups analyzed:", ncol(correlation_clean)))
+print(paste("Total correlations calculated:", sum(!is.na(correlation_clean))))
+
+# Significant correlations summary
+sig_001 <- sum(p_value_adj_matrix < 0.001, na.rm = TRUE)
+sig_01 <- sum(p_value_adj_matrix >= 0.001 & p_value_adj_matrix < 0.01, na.rm = TRUE)
+sig_05 <- sum(p_value_adj_matrix >= 0.01 & p_value_adj_matrix < 0.05, na.rm = TRUE)
+
+print(paste("Significant correlations (p < 0.001):", sig_001))
+print(paste("Significant correlations (0.001 ≤ p < 0.01):", sig_01))
+print(paste("Significant correlations (0.01 ≤ p < 0.05):", sig_05))
+
+# Correlation range
+print(paste("Correlation range:", round(min(correlation_clean, na.rm = TRUE), 3), "to", round(max(correlation_clean, na.rm = TRUE), 3)))
+
+# Step 11: Save results
+write.csv(correlation_matrix, "species_foodgroup_correlations.csv")
+write.csv(p_value_adj_matrix, "species_foodgroup_pvalues_adjusted.csv")
+
+# Create results summary table
+results_summary <- data.frame(
+  Species = rep(rownames(correlation_clean), ncol(correlation_clean)),
+  Food_Group = rep(colnames(correlation_clean), each = nrow(correlation_clean)),
+  Correlation = as.vector(correlation_clean),
+  P_value_adjusted = as.vector(p_value_adj_matrix[valid_rows, valid_cols]),
+  Significance = as.vector(significance_clean)
+)
+
+# Remove NA rows and sort by absolute correlation
+results_summary <- results_summary[!is.na(results_summary$Correlation), ]
+results_summary <- results_summary[order(-abs(results_summary$Correlation)), ]
+
+write.csv(results_summary, "species_foodgroup_correlation_summary.csv", row.names = FALSE)
+
+print("\nFiles saved:")
+file_list <- c()
+if (file.exists("species_foodgroup_correlation_heatmap.png")) {
+  file_list <- c(file_list, "1. species_foodgroup_correlation_heatmap.png")
+}
+if (file.exists("species_foodgroup_correlation_corrplot.png")) {
+  file_list <- c(file_list, "2. species_foodgroup_correlation_corrplot.png")
+}
+if (file.exists("species_foodgroup_correlation_ggplot.png")) {
+  file_list <- c(file_list, "3. species_foodgroup_correlation_ggplot.png")
+}
+file_list <- c(file_list, "4. species_foodgroup_correlations.csv")
+file_list <- c(file_list, "5. species_foodgroup_pvalues_adjusted.csv")
+file_list <- c(file_list, "6. species_foodgroup_correlation_summary.csv")
+
+for (file in file_list) {
+  print(file)
+}
+
+print("\nAnalysis completed successfully!")
+```
+
+
+```{r}
+library(openxlsx)
+
+# Combine all ethnic-specific species
+all_ethnic_species <- unique(c(enriched_C, depleted_C, 
+                              enriched_I, depleted_I, 
+                              enriched_M, depleted_M))
+
+# Extract data with participant IDs and all ethnic-specific species
+ethnic_species_data <- species_filtered %>%
+  select(FREG1_Barcode, all_of(all_ethnic_species))
+ethnic_species_data
+# Export to Excel
+write.xlsx(ethnic_species_data, "figure/All_Ethnic_Specific_Species602.xlsx")
+```
+
+
+```{r}
+all_ethnic_species <- unique(c(enriched_C, depleted_C, 
+                              enriched_I, depleted_I, 
+                              enriched_M, depleted_M))
+
+# Create dataframe with species names
+species_df <- data.frame(species = all_ethnic_species)
+
+# Export to CSV
+write.csv(species_df, "figure/ethnic_species_names602.csv", row.names = FALSE)
+```
+
+
+```{r}
+# ANOVA Analysis: Species Abundance vs Ethnicity (C, I, M)
+# Select top species associated with ethnicity
+
+library(dplyr)
+
+# Assuming you have:
+# - filtered_data: your species abundance data (samples x species)
+# - ethnicity: vector with values "C", "I", "M" for each sample
+
+# If you need to create the ethnicity vector from sample names or separate file:
+# ethnicity <- c("C", "I", "M", "C", "I", ...)  # match your sample order
+# OR read from metadata file:
+# metadata <- read.csv("metadata.csv")
+# ethnicity <- metadata$ethnicity
+
+# Method 1: ANOVA for all species
+# ===============================
+
+perform_anova_analysis <- function(species_data, ethnicity_vector) {
+  # Ensure ethnicity is a factor
+  ethnicity_vector <- as.factor(ethnicity_vector)
+  
+  # Storage for results
+  anova_results <- data.frame(
+    species = character(),
+    f_statistic = numeric(),
+    p_value = numeric(),
+    adj_p_value = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  # Run ANOVA for each species
+  for (i in 1:ncol(species_data)) {
+    species_name <- colnames(species_data)[i]
+    abundance <- species_data[, i]
+    
+    # Skip if all values are zero
+    if (sum(abundance) == 0) next
+    
+    # Perform ANOVA
+    anova_model <- aov(abundance ~ ethnicity_vector)
+    anova_summary <- summary(anova_model)
+    
+    # Extract results
+    f_stat <- anova_summary[[1]]["ethnicity_vector", "F value"]
+    p_val <- anova_summary[[1]]["ethnicity_vector", "Pr(>F)"]
+    
+    # Store results
+    anova_results <- rbind(anova_results, data.frame(
+      species = species_name,
+      f_statistic = f_stat,
+      p_value = p_val,
+      adj_p_value = NA
+    ))
+  }
+  
+  # Adjust p-values for multiple testing (FDR)
+  anova_results$adj_p_value <- p.adjust(anova_results$p_value, method = "fdr")
+  
+  # Sort by significance
+  anova_results <- anova_results[order(anova_results$adj_p_value), ]
+  
+  return(anova_results)
+}
+
+# Method 2: Quick ANOVA with top species selection
+# ===============================================
+
+select_ethnicity_species <- function(species_data, ethnicity_vector, 
+                                   p_threshold = 0.05, top_n = 20) {
+  
+  # Run ANOVA analysis
+  results <- perform_anova_analysis(species_data, ethnicity_vector)
+  
+  # Filter significant species
+  significant_species <- results[results$adj_p_value < p_threshold, ]
+  
+  # Select top N species
+  if (nrow(significant_species) > top_n) {
+    significant_species <- significant_species[1:top_n, ]
+  }
+  
+  print(paste("Found", nrow(significant_species), "significant species"))
+  print("Top significant species:")
+  print(significant_species[1:min(10, nrow(significant_species)), ])
+  
+  # Return filtered data with only significant species
+  selected_species_data <- species_data[, significant_species$species]
+  
+  return(list(
+    data = selected_species_data,
+    results = significant_species,
+    all_results = results
+  ))
+}
+
+# Usage with your merged_data1:
+# =============================
+
+# Load your data
+
+
+# Extract ethnicity from column 2 (FREG5_Ethnic_Group)
+ethnicity <- merged_data1$FREG5_Ethnic_Group
+
+# Extract species data (columns 3 onwards)
+species_data <- merged_data1[, 3:ncol(merged_data1)]
+rownames(species_data) <- merged_data1$FREG1_Barcode  # Use barcode as row names
+
+# Convert species data to numeric and handle NAs
+species_data[] <- lapply(species_data, function(x) as.numeric(as.character(x)))
+species_data[is.na(species_data)] <- 0
+
+# Check the data
+print(paste("Number of samples:", nrow(species_data)))
+print(paste("Number of species:", ncol(species_data)))
+print("Ethnic groups:")
+print(table(ethnicity))
+
+# Run the ANOVA analysis
+ethnicity_analysis <- select_ethnicity_species(species_data, ethnicity, 
+                                              p_threshold = 0.05, top_n = 20)
+
+# View results
+print("ANOVA Results Summary:")
+print(ethnicity_analysis$results)
+
+# Extract the selected species data
+ethnicity_associated_species <- ethnicity_analysis$data
+ethnicity_analysis$results
+```
+
+
+```{r}
+species_anova <- data.frame(species = ethnicity_analysis$results$species)
+
+# Export to CSV
+write.csv(species_anova, "data/ethnic_species_anova.csv", row.names = FALSE)
+```
+
+## common food
+```{r}
+# Food Intake Analysis: Most Common Foods + Ethnicity Association
+# Two main outputs: Top common foods & ANOVA results for ethnicity
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Load your data
+
+
+# Extract data components
+ethnicity <- merged_data2$FREG5_Ethnic_Group
+food_data <- merged_data2[, 3:ncol(merged_data2)]
+rownames(food_data) <- merged_data2$FREG1_Barcode
+
+# Convert food data to numeric and handle NAs
+food_data[] <- lapply(food_data, function(x) as.numeric(as.character(x)))
+food_data[is.na(food_data)] <- 0
+
+print(paste("Number of samples:", nrow(food_data)))
+print(paste("Number of food items:", ncol(food_data)))
+print("Ethnic groups distribution:")
+print(table(ethnicity))
+
+# ===========================================
+# LIST 1: TOP MOST COMMON FOODS
+# ===========================================
+
+create_common_foods_list <- function(food_data, top_n = 20) {
+  
+  # Method 1: By total consumption (sum across all samples)
+  total_consumption <- colSums(food_data, na.rm = TRUE)
+  
+  # Method 2: By frequency (how many people consume each food)
+  consumption_frequency <- colSums(food_data > 0, na.rm = TRUE)
+  
+  # Method 3: By mean consumption (average per person)
+  mean_consumption <- colMeans(food_data, na.rm = TRUE)
+  
+  # Create comprehensive summary
+  common_foods_summary <- data.frame(
+    food_item = names(total_consumption),
+    total_consumption = total_consumption,
+    frequency_consumers = consumption_frequency,
+    percent_consumers = round((consumption_frequency / nrow(food_data)) * 100, 1),
+    mean_consumption = round(mean_consumption, 3),
+    stringsAsFactors = FALSE
+  )
+  
+  # Sort by total consumption
+  common_foods_by_total <- common_foods_summary[order(common_foods_summary$total_consumption, decreasing = TRUE), ]
+  
+  # Sort by frequency (most consumed by most people)
+  common_foods_by_frequency <- common_foods_summary[order(common_foods_summary$frequency_consumers, decreasing = TRUE), ]
+  
+  print("=== LIST 1: TOP MOST COMMON FOODS ===")
+  print("Top foods by TOTAL consumption:")
+  print(head(common_foods_by_total, top_n))
+  
+  print("\nTop foods by FREQUENCY (most people consume):")
+  print(head(common_foods_by_frequency, top_n))
+  
+  return(list(
+    by_total = head(common_foods_by_total, top_n),
+    by_frequency = head(common_foods_by_frequency, top_n),
+    all_summary = common_foods_summary
+  ))
+}
+
+# ===========================================
+# LIST 2: ANOVA - FOODS ASSOCIATED WITH ETHNICITY
+# ===========================================
+
+perform_food_ethnicity_anova <- function(food_data, ethnicity_vector, top_n = 20) {
+  
+  # Ensure ethnicity is a factor
+  ethnicity_vector <- as.factor(ethnicity_vector)
+  
+  # Storage for ANOVA results
+  anova_results <- data.frame(
+    food_item = character(),
+    f_statistic = numeric(),
+    p_value = numeric(),
+    adj_p_value = numeric(),
+    mean_C = numeric(),
+    mean_I = numeric(),
+    mean_M = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  # Run ANOVA for each food item
+  for (i in 1:ncol(food_data)) {
+    food_name <- colnames(food_data)[i]
+    intake <- food_data[, i]
+    
+    # Skip if all values are zero
+    if (sum(intake, na.rm = TRUE) == 0) next
+    
+    # Calculate group means
+    means_by_ethnicity <- tapply(intake, ethnicity_vector, mean, na.rm = TRUE)
+    
+    # Perform ANOVA
+    anova_model <- aov(intake ~ ethnicity_vector)
+    anova_summary <- summary(anova_model)
+    
+    # Extract F-statistic and p-value
+    f_stat <- anova_summary[[1]]["ethnicity_vector", "F value"]
+    p_val <- anova_summary[[1]]["ethnicity_vector", "Pr(>F)"]
+    
+    # Store results
+    anova_results <- rbind(anova_results, data.frame(
+      food_item = food_name,
+      f_statistic = round(f_stat, 3),
+      p_value = p_val,
+      adj_p_value = NA,
+      mean_C = round(means_by_ethnicity["C"], 3),
+      mean_I = round(means_by_ethnicity["I"], 3),
+      mean_M = round(means_by_ethnicity["M"], 3)
+    ))
+  }
+  
+  # Adjust p-values for multiple testing
+  anova_results$adj_p_value <- p.adjust(anova_results$p_value, method = "fdr")
+  
+  # Sort by significance
+  anova_results <- anova_results[order(anova_results$adj_p_value), ]
+  
+  # Filter significant results
+  significant_foods <- anova_results[anova_results$adj_p_value < 0.05, ]
+  
+  print("=== LIST 2: FOODS ASSOCIATED WITH ETHNICITY (ANOVA) ===")
+  print(paste("Found", nrow(significant_foods), "significantly different foods (p < 0.05)"))
+  print("Top foods with ethnic differences:")
+  print(head(significant_foods, top_n))
+  
+  return(list(
+    significant = significant_foods,
+    all_results = anova_results
+  ))
+}
+
+# ===========================================
+# RUN BOTH ANALYSES
+# ===========================================
+
+# Generate LIST 1: Most Common Foods
+common_foods_analysis <- create_common_foods_list(food_data, top_n = 20)
+common_foods_analysis
+# Generate LIST 2: Ethnicity-Associated Foods
+ethnicity_foods_analysis <- perform_food_ethnicity_anova(food_data, ethnicity, top_n = 20)
+ethnicity_foods_analysis
+# ===========================================
+# EXPORT RESULTS
+# ===========================================
+
+# # Save LIST 1: Common Foods
+# write.csv(common_foods_analysis$by_total, "LIST1_most_common_foods_by_total.csv", row.names = FALSE)
+# write.csv(common_foods_analysis$by_frequency, "LIST1_most_common_foods_by_frequency.csv", row.names = FALSE)
+# 
+# # Save LIST 2: Ethnicity-Associated Foods
+# write.csv(ethnicity_foods_analysis$significant, "LIST2_ethnicity_associated_foods.csv", row.names = FALSE)
+# write.csv(ethnicity_foods_analysis$all_results, "LIST2_all_anova_results.csv", row.names = FALSE)
+
+# ===========================================
+# VISUALIZATION
+# ===========================================
+
+# Plot 1: Top common foods
+# plot_common_foods <- function(common_foods, top_n = 10) {
+#   top_foods <- head(common_foods$by_frequency, top_n)
+#   
+#   p1 <- ggplot(top_foods, aes(x = reorder(food_item, percent_consumers), y = percent_consumers)) +
+#     geom_bar(stat = "identity", fill = "skyblue", alpha = 0.7) +
+#     coord_flip() +
+#     theme_minimal() +
+#     labs(title = "Most Commonly Consumed Foods",
+#          x = "Food Item", y = "% of People Who Consume") +
+#     theme(axis.text.y = element_text(size = 8))
+#   
+#   return(p1)
+# }
+# 
+# # Plot 2: Ethnicity differences for top significant foods
+# plot_ethnicity_foods <- function(food_data, ethnicity_vector, anova_results, top_n = 6) {
+#   
+#   # Get top significant foods
+#   top_foods <- head(anova_results$significant$food_item, top_n)
+#   
+#   # Prepare data
+#   plot_data <- food_data[, top_foods]
+#   plot_data$ethnicity <- ethnicity_vector
+#   
+#   # Reshape for plotting
+#   plot_data_long <- pivot_longer(plot_data, 
+#                                 cols = -ethnicity,
+#                                 names_to = "food_item",
+#                                 values_to = "intake")
+#   
+#   p2 <- ggplot(plot_data_long, aes(x = ethnicity, y = intake, fill = ethnicity)) +
+#     geom_boxplot(alpha = 0.7) +
+#     geom_jitter(width = 0.2, alpha = 0.4, size = 0.5) +
+#     facet_wrap(~food_item, scales = "free_y", ncol = 3) +
+#     theme_minimal() +
+#     labs(title = "Foods with Significant Ethnic Differences",
+#          x = "Ethnicity", y = "Food Intake") +
+#     theme(axis.text.x = element_text(angle = 0),
+#           strip.text = element_text(size = 8)) +
+#     scale_fill_brewer(palette = "Set2")
+#   
+#   return(p2)
+# }
+# 
+# # Create and save plots
+# p1 <- plot_common_foods(common_foods_analysis, top_n = 15)
+# ggsave("most_common_foods_plot.pdf", p1, width = 10, height = 8)
+# 
+# p2 <- plot_ethnicity_foods(food_data, ethnicity, ethnicity_foods_analysis, top_n = 9)
+# ggsave("ethnicity_food_differences_plot.pdf", p2, width = 12, height = 8)
+# 
+# print("\n=== ANALYSIS COMPLETE ===")
+# print("Files created:")
+# print("- LIST1_most_common_foods_by_total.csv")
+# print("- LIST1_most_common_foods_by_frequency.csv") 
+# print("- LIST2_ethnicity_associated_foods.csv")
+# print("- LIST2_all_anova_results.csv")
+# print("- most_common_foods_plot.pdf")
+# print("- ethnicity_food_differences_plot.pdf")
+```
+
+```{r}
+common_foods_analysis
+ethnicity_foods_analysis
+```
+
+common food: water, vegetable, rice, coffee, egg, wholemeal, tea, tofu, nuts butter, noodle, soup, poultry, white bread, white fish, broccoli, carrot, french_fries, white cabbage, spinach, banana, mushrooms, meat, apple
+ethnic food: dhal,thosai, soup_rasam, chapati, begedil,puri, roti, idli, murtabak, pork, longtong, mutton, raita, chye_sim, seafood,  lotus_root, dumpling
+
+
+1.Coffee 
+2. Tea
+
+3. Rice_Dishes (rice, fried rice, nasi lemak)
+
+4. bakery bread (white bread, wholemeal)
+
+5. Chapati 
+6. Thosai 
+
+7. Other_Traditional_Breads (roti, puri, murtabak)
+
+8. Noodles_dishes
+9. Leafy_Vegetables
+10. mushroom
+11. Root_Vegetables
+12. Legumes
+
+13. Eggs
+
+14. Poultry
+15. Red_Meat
+16. Pork
+17. Seafood
+18. Fruits
+19. Nuts_Seeds
+20. Soups_Broths
+21. Snacks_Fried
+22. Dairy
+
+```{r}
+all_food <- read_excel("data/all_food_863.xlsx", col_names = FALSE)
+ffqa <- read_excel("data/FFQA800.xlsx", col_names = FALSE)
+
+# Find unmatched entries (in all_food but not in ffqa)
+unmatched <- setdiff(ffqa, all_food)
+unmatched
+colnames(all_food)
+ffqa
+```
+
+```{r}
+library(readxl)
+library(openxlsx)   # for writing back to Excel
+
+# Read the data
+all_food <- read_excel("data/all_food_863.xlsx")
+
+# --- Define your groups ---
+rice_dishes <- c(
+  "plain_rice_type_mixture","plain_rice_type_unpolished","plain_rice_type_white",
+  "flav_porr_type_mixture","flav_porr_type_unpolished","flav_porr_type_white",
+  "plain_porr_type_mixture","plain_porr_type_unpolished","plain_porr_type_white",
+  "fried_rice_with_veg","fried_rice_type_mixture","fried_rice_type_unpolished",
+  "fried_rice_type_white","fried_rice_without_veg","flav_rice","flav_rice_dish",
+  "glut_rice","lontong","idli","rice_roll"
+)
+
+bakery_bread <- c(
+  "white_bread","wholemeal_bread","dried_fruit_bread","french_toast","pizza",
+  "thosai","roti","chapati","murtabak","puri","sweet_filled_buns","savoury_filled_buns"
+)
+
+leafy_veg <- c(
+  "broccoli","chye_sim","kailan","kang_kong","spinach","white_cabbage",
+  "lettuce","coleslaw"
+)
+
+root_veg <- c("lotus_root","yam","potato","carrot")
+
+eggs <- c(
+  "egg_mix_pork","egg_mix_chicken","egg_mix_seafood","egg_mix_beancurd",
+  "egg_mix_vege","egg_scrambled","egg_steamed"
+)
+
+# --- Add new columns with row sums ---
+all_food$Rice_dishes   <- rowSums(all_food[, rice_dishes], na.rm = TRUE)
+all_food$Bakery_bread  <- rowSums(all_food[, bakery_bread], na.rm = TRUE)
+all_food$Leafy_veg     <- rowSums(all_food[, leafy_veg], na.rm = TRUE)
+all_food$Root_veg      <- rowSums(all_food[, root_veg], na.rm = TRUE)
+all_food$Eggs          <- rowSums(all_food[, eggs], na.rm = TRUE)
+
+# --- Save back to Excel ---
+write.xlsx(all_food, "data/all_food_863_new.xlsx")
+
+```
+
+
+
+
+

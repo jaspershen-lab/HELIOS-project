@@ -35,27 +35,53 @@ library(ComplexHeatmap)
 
 #demographic
 ```{r}
-food_data = read_xlsx("data/FFQA862.xlsx")
+food_data = read_xlsx("data/FFQA862_new.xlsx")
 nutrition_data = read_xlsx("data/FFQB800.xlsx")
 species = read_xlsx("data/species_866.xlsx")
 metadata = read_xlsx("data/ethnicity_866.xlsx")
 
 food_data <- food_data %>%
-  mutate(across(c("Mushrooms", "Papaya", "Orange", "Chapati"), as.numeric))
-food_data
+  mutate(across(c("Mushrooms", "Chapati"), as.numeric))
+  #dplyr::select(-c("Cruciferous_veg", "Noodle_dishes","Rice_dishes"))
+food_data 
 nutrition_data
 species
 metadata
+food_data
 ```
+
+```{r}
+library(dplyr)
+
+# 1. Remove the sample ID column (first column)
+species_mat <- species[, -1]
+
+# 2. Compute total abundance for each species across all samples
+species_totals <- colSums(species_mat, na.rm = TRUE)
+
+# 3. Convert to dataframe
+species_ranked <- data.frame(
+  Species = names(species_totals),
+  TotalAbundance = species_totals
+) %>%
+  arrange(desc(TotalAbundance))
+
+# 4. Extract top 10
+top10_species <- species_ranked %>% slice(2:11)
+
+top10_species$Species
+
+```
+
 
 ```{r}
 colnames(species)[1] = "Participant_ID"
 colnames(metadata)[1] = "Participant_ID"
 threshold <- nrow(species) * 0.5
 
-species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
-species_filtered1
-species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+#species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+#species_filtered1
+#species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
 
 #abundance_threshold <- 0.0001
 #species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
@@ -73,12 +99,34 @@ nutrition_data[is.na(nutrition_data)] <- 0
 ```
 
 
+
 ```{r}
-library(dyplyr)
-unique_species <- read.csv("figure/unique_significant_species.csv")
-unique_species
+
+unique_species <- read.csv("data/ethnic_species_anova.csv")
+target_species = top10_species$Species
+# target_species <- c(
+#   "Faecalibacterium prausnitzii",
+#   "Bacteroides thetaiotaomicron",
+#   "Bacteroides fragilis",
+#   "Bifidobacterium adolescentis",
+#   "Roseburia hominis",
+#   "Collinsella aerofaciens",
+#   "Methanobrevibacter smithii",
+#   "Akkermansia muciniphila"
+# 
+# )
+combined_species <- c(unique_species$species, target_species)
+
+# remove duplicates if you only want each species once
+combined_species <- unique(combined_species)
+
+# see result
+combined_species
+
+species
 sig_species <- species %>%
-  dplyr::select("Participant_ID", all_of(unique_species$species))
+  dplyr::select("Participant_ID", all_of(combined_species))
+sig_species
 ```
 
 
@@ -143,7 +191,7 @@ species_order <- species_clust$labels[species_clust$order]
 food_dist <- dist(t(cor_matrix))
 food_clust <- hclust(food_dist)
 food_order <- food_clust$labels[food_clust$order]
-
+food_order
 # Convert to long format with ordered factors
 # melted_cor <- melt(cor_matrix)
 # colnames(melted_cor) <- c("Species", "Food", "Correlation")
@@ -182,7 +230,8 @@ food_order <- food_clust$labels[food_clust$order]
 
 ```{r}
 # Previous code remains the same until the melting part
-
+food_order = c("Eggs", "Noodle_dishes", "Cruciferous_veg", "Leafy_veg", "Poultry", "Seafood", "Red_meat", "Pork", "Mushrooms", "Rice_dishes", "Fruits", "Chapati", "Legumes", "Dairy", "Tea", "Coffee", "Root_veg", "Lontong", "Idli_Thosai", "Bakery_bread"  )
+food_order_rev <- rev(food_order)
 # Melt both matrices
 melted_cor <- melt(cor_matrix)
 melted_p <- melt(p_matrix)
@@ -195,11 +244,14 @@ melted_data <- melted_cor %>%
 
 # Set the order based on clustering
 melted_data$Species <- factor(melted_data$Species, levels = species_order)
-melted_data$Food <- factor(melted_data$Food, levels = food_order)
+melted_data$Food <- factor(melted_data$Food, levels = food_order_rev)
 
 # Create custom color palette
 extended_palette <- colorRampPalette(brewer.pal(11, "RdBu"))(100)
-
+# red_species <- c("Faecalibacterium prausnitzii", "Bacteroides thetaiotaomicron", 
+#                  "Bacteroides fragilis", "Bifidobacterium adolescentis", 
+#                  "Roseburia hominis", "Collinsella aerofaciens", 
+#                  "Methanobrevibacter smithii", "Akkermansia muciniphila")
 # Create the plot with italicized species names
 ggplot(melted_data, aes(x = Food, y = Species, fill = Correlation)) +
   geom_tile() +
@@ -207,11 +259,12 @@ ggplot(melted_data, aes(x = Food, y = Species, fill = Correlation)) +
                       limits = c(-0.15, 0.15),
                       oob = scales::squish) +
   geom_text(aes(label = ifelse(Significant, "*", "")), 
-            color = "black", size = 5) +
+            color = "black", size = 4) +
   theme_minimal() +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1),
-    axis.text.y = element_text(face = "italic"),  # Italicize species names
+    axis.text.y = element_text(face = "italic"),
+                              #colour = ifelse(levels(melted_data$Species) %in% red_species, "red", "black")), 
     axis.title = element_text(face = "bold"),
     legend.title = element_text(face = "bold")
   ) +
@@ -222,8 +275,27 @@ ggplot(melted_data, aes(x = Food, y = Species, fill = Correlation)) +
     y = "Species"
   )
 
-ggsave("figure/figure3/figure3_correlation_heatmap_more2.pdf", width = 12, height = 10)
+#ggsave("figure/figure3/figure3_anova_select6.pdf", width = 12, height = 10)
 ```
+```{r}
+library(openxlsx)
+cor_results <- melted_cor %>%
+  left_join(melted_p, by = c("Species", "Food"))
+
+# Optional: keep significance column
+cor_results <- cor_results %>%
+  mutate(Significant = P_value < 0.05)
+
+# Save to Excel
+write.xlsx(cor_results,
+           file = "data/Sup1_correlation_results.xlsx",
+           sheetName = "Cor_Pvals",
+           rowNames = FALSE)
+```
+
+
+
+
 ## suplymentary
 ```{r}
 melted_cor <- melt(cor_matrix)

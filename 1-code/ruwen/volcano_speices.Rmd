@@ -168,7 +168,29 @@ calculate_stats <- function(data1, data2) {
 results_CvsIM <- calculate_stats(data_IM, data_C)
 results_IvsCM <- calculate_stats(data_CM, data_I)
 results_MvsCI <- calculate_stats(data_CI, data_M)
+```
 
+
+```{r}
+results_CvsIM
+results_IvsCM
+results_MvsCI
+
+library(writexl)
+
+# Create a named list with your dataframes
+sheets_list <- list(
+  Chinese = results_CvsIM,
+  Indian = results_IvsCM,
+  Malays = results_MvsCI
+)
+
+# Write to Excel with multiple sheets
+write_xlsx(sheets_list, "data/Sup2_differential.xlsx")
+```
+
+
+```{r}
 # Function to plot volcano plot
 plot_volcano <- function(results, title) {
   ggplot(results, aes(x = logFC, y = logP)) +
@@ -320,15 +342,687 @@ ggsave(
 
 
 ```{r}
-png("figure/volcano_species_strict_C.png", width = 1400, height = 1000, res = 120)
-plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
-dev.off()
-png("figure/volcano_species_strict_M.png", width = 1400, height = 1000, res = 120)
-plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
-dev.off()
-png("figure/volcano_species_strict_I.png", width = 1400, height = 1000, res = 120)
-plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
-dev.off()
+# png("figure/volcano_species_strict_C.png", width = 1400, height = 1000, res = 120)
+# plot_volcano(results_CvsIM, "Volcano Plot: Chinese vs Non-Chinese")
+# dev.off()
+# png("figure/volcano_species_strict_M.png", width = 1400, height = 1000, res = 120)
+# plot_volcano(results_MvsCI, "Volcano Plot: Malay vs Non-Malay")
+# dev.off()
+# png("figure/volcano_species_strict_I.png", width = 1400, height = 1000, res = 120)
+# plot_volcano(results_IvsCM, "Volcano Plot: Indian vs Non-Indian")
+# dev.off()
+```
+
+## change to try lollipop graph
+```{r}
+library(forcats)
+
+# 1) Lollipop plot (optionally shows CIs if available)
+plot_lollipop <- function(results, title,
+                          sig_threshold = 0.03, lfc_threshold = 1.2,
+                          top_n = 30, label_top = 12,
+                          ci_low_col = "ci_lower", ci_high_col = "ci_upper") {
+
+  df <- results
+  if (!"logP" %in% names(df)) df$logP <- -log10(df$p_value)
+
+  df$significance <- "Not Significant"
+  df$significance[df$p_value < sig_threshold & df$logFC >  lfc_threshold] <- "Up"
+  df$significance[df$p_value < sig_threshold & df$logFC < -lfc_threshold] <- "Down"
+  df$significance <- factor(df$significance, levels = c("Up","Down","Not Significant"))
+
+  # keep the most informative rows
+  df_top <- df %>%
+    arrange(p_value) %>%
+    slice_head(n = top_n) %>%
+    mutate(species = fct_reorder(species, logFC))
+
+  # label a few strongest signals
+  lab_dat <- df_top %>%
+    filter(significance != "Not Significant") %>%
+    arrange(p_value) %>%
+    slice_head(n = label_top)
+
+  p <- ggplot(df_top, aes(x = logFC, y = species, color = significance)) +
+    geom_segment(aes(x = 0, xend = logFC, y = species, yend = species),
+                 linewidth = 0.6, alpha = 0.7)
+
+  # optional horizontal CIs if present
+  if (all(c(ci_low_col, ci_high_col) %in% names(df_top))) {
+    p <- p + geom_errorbarh(aes(xmin = .data[[ci_low_col]], xmax = .data[[ci_high_col]]),
+                            height = 0.2, alpha = 0.7)
+  }
+
+  p +
+    geom_point(aes(size = logP), alpha = 0.9) +
+    geom_vline(xintercept = 0, linetype = "dotted") +
+    scale_size_continuous(name = "-log10(p)", range = c(2, 6)) +
+    scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697", "Not Significant" = "grey")) +
+    labs(title = title, x = "Log2 Fold Change", y = NULL) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid.major.y = element_blank(),
+          legend.title = element_text(size = 10),
+          legend.position = "right") +
+    geom_text_repel(data = lab_dat, aes(label = species),
+                    size = 3.5, max.overlaps = 20, box.padding = 0.25)
+}
+
+# 2) Compact “forest” (dot–whisker) for only significant species
+plot_forest_sig <- function(results, title,
+                            sig_threshold = 0.03, lfc_threshold = 1.2,
+                            max_rows = 25,
+                            ci_low_col = "ci_lower", ci_high_col = "ci_upper") {
+  df <- results
+  if (!"logP" %in% names(df)) df$logP <- -log10(df$p_value)
+
+  df$significance <- "Not Significant"
+  df$significance[df$p_value < sig_threshold & df$logFC >  lfc_threshold] <- "Up"
+  df$significance[df$p_value < sig_threshold & df$logFC < -lfc_threshold] <- "Down"
+
+  df_sig <- df %>%
+    filter(significance != "Not Significant") %>%
+    arrange(p_value) %>%
+    slice_head(n = max_rows) %>%
+    mutate(species = fct_reorder(species, logFC))
+
+  p <- ggplot(df_sig, aes(x = logFC, y = species, color = significance))
+
+  if (all(c(ci_low_col, ci_high_col) %in% names(df_sig))) {
+    p <- p + geom_errorbarh(aes(xmin = .data[[ci_low_col]], xmax = .data[[ci_high_col]]),
+                            height = 0.2)
+  }
+
+  p +
+    geom_point(aes(size = logP)) +
+    geom_vline(xintercept = 0, linetype = "dotted") +
+    scale_size_continuous(name = "-log10(p)", range = c(2, 6)) +
+    scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697")) +
+    labs(title = paste0(title, " (Significant Only)"), x = "Log2 Fold Change", y = NULL) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid.major.y = element_blank(),
+          legend.position = "right")
+}
+
+# --- Usage with your three contrasts ---
+plot_lollipop(results_CvsIM, "Non-Chinese vs Chinese")
+plot_lollipop(results_IvsCM, "Non-Indian vs Indian")
+plot_lollipop(results_MvsCI, "Non-Malay vs Malay")
+
+# If you have CI columns (ci_lower / ci_upper), the whiskers render automatically:
+# plot_forest_sig(results_CvsIM, "Forest: Non-Chinese vs Chinese")
+
+```
+```{r}
+
+plot_lollipop <- function(results, title,
+                          sig_threshold = 0.03, lfc_threshold = 1.2,
+                          top_n = 30, label_top = 12,
+                          ci_low_col = "ci_lower", ci_high_col = "ci_upper",
+                          wrap_width = 32) {
+
+  # helper (optional) to shorten labels
+  abbrev_species <- function(x) {
+    x <- gsub("_", " ", x)
+    x <- gsub("^(s__|g__)", "", x)
+    sub("^([A-Za-z])[A-Za-z]+\\s+(.+)$", "\\1. \\2", x)
+  }
+
+  df <- results
+  if (!"logP" %in% names(df)) df$logP <- -log10(df$p_value)
+
+  df$significance <- "Not Significant"
+  df$significance[df$p_value < sig_threshold & df$logFC >  lfc_threshold] <- "Up"
+  df$significance[df$p_value < sig_threshold & df$logFC < -lfc_threshold] <- "Down"
+  df$significance <- factor(df$significance, levels = c("Up","Down","Not Significant"))
+
+  df_top <- df %>%
+    arrange(p_value) %>%
+    slice_head(n = top_n) %>%
+    mutate(species = fct_reorder(species, logFC))
+
+  # choose which to label
+  lab_dat <- df_top %>%
+    filter(significance != "Not Significant") %>%
+    arrange(p_value) %>%
+    slice_head(n = label_top) %>%
+    mutate(label = abbrev_species(species))
+
+  # <<< NEW: split into Up (right) and Down (left)
+  lab_up   <- lab_dat %>% filter(significance == "Up")
+  lab_down <- lab_dat %>% filter(significance == "Down")
+
+  # for nudging & extra room on both sides
+  x_rng  <- range(df_top$logFC, na.rm = TRUE)
+  x_span <- diff(x_rng); if (!is.finite(x_span) || x_span == 0) x_span <- 1
+
+  p <- ggplot(df_top, aes(x = logFC, y = species, color = significance)) +
+    geom_segment(aes(x = 0, xend = logFC, y = species, yend = species),
+                 linewidth = 0.6, alpha = 0.7)
+
+  if (all(c(ci_low_col, ci_high_col) %in% names(df_top))) {
+    p <- p + geom_errorbarh(aes(xmin = .data[[ci_low_col]], xmax = .data[[ci_high_col]]),
+                            height = 0.2, alpha = 0.7)
+  }
+
+  p +
+    geom_point(aes(size = logP), alpha = 0.9) +
+    geom_vline(xintercept = 0, linetype = "dotted") +
+    scale_size_continuous(name = "-log10(p)", range = c(2, 6)) +
+    scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697", "Not Significant" = "grey")) +
+    #scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697", "Not Significant" = "")) +
+    labs(title = title, x = "Log2 Fold Change", y = NULL) +
+    scale_y_discrete(labels = function(x) str_wrap(gsub("_", " ", x), width = wrap_width)) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid.major.y = element_blank(),
+          legend.title = element_text(size = 10),
+          legend.position = "right",
+          plot.margin = margin(5, 30, 5, 30)) +   # <<< CHANGED: room on both sides
+    # <<< NEW: RIGHT-side labels for Up
+    geom_text_repel(
+      data = lab_up,
+      aes(label = label),
+      direction = "x",
+      hjust = 0,                          # right side = left-justified
+      nudge_x = 0.06 * x_span,            # push right
+      box.padding = 0.25,
+      point.padding = 0.15,
+      min.segment.length = 0,
+      max.overlaps = Inf,
+      size = 3.5,
+      segment.size = 0.2
+    ) +
+    # <<< NEW: LEFT-side labels for Down
+    geom_text_repel(
+      data = lab_down,
+      aes(label = label),
+      direction = "x",
+      hjust = 1,                          # left side = right-justified
+      nudge_x = -0.06 * x_span,           # push left
+      box.padding = 0.25,
+      point.padding = 0.15,
+      min.segment.length = 0,
+      max.overlaps = Inf,
+      size = 3.5,
+      segment.size = 0.2
+    ) +
+    coord_cartesian(clip = "off") +
+    scale_x_continuous(expand = expansion(mult = c(0.30, 0.30)))  # <<< CHANGED: space left+right
+}
+
+```
+ Bifidobacterium subtile
+```{r}
+results_MvsCI
+results_CvsIM %>% 
+  filter(species == "Bifidobacterium catenulatum")
+```
+
+```{r}
+plot_lollipop(results_CvsIM, "Non-Chinese vs Chinese")
+plot_lollipop(results_IvsCM, "Non-Indian vs Indian")
+plot_lollipop(results_MvsCI, "Non-Malay vs Malay")
+```
+
+```{r}
+plot_lollipop3 <- function(results, title,
+                          sig_threshold = 0.03, lfc_threshold = 1.2,
+                          top_n = 30, label_top = 12,
+                          ci_low_col = "ci_lower", ci_high_col = "ci_upper",
+                          wrap_width = 32) {
+  
+  # Helper function to shorten labels
+  abbrev_species <- function(x) {
+    x <- gsub("_", " ", x)
+    x <- gsub("^(s__|g__)", "", x)
+    sub("^([A-Za-z])[A-Za-z]+\\s+(.+)$", "\\1. \\2", x)
+  }
+  
+  df <- results
+  if (!"logP" %in% names(df)) df$logP <- -log10(df$p_value)
+  
+  df$significance <- "Not Significant"
+  df$significance[df$p_value < sig_threshold & df$logFC >  lfc_threshold] <- "Up"
+  df$significance[df$p_value < sig_threshold & df$logFC < -lfc_threshold] <- "Down"
+  df$significance <- factor(df$significance, levels = c("Up","Down","Not Significant"))
+  
+  df_top <- df %>%
+    arrange(p_value) %>%
+    slice_head(n = top_n) %>%
+    mutate(species = fct_reorder(species, logFC))
+  
+  # Choose which to label - prioritize by significance AND fold change magnitude
+  lab_dat <- df_top %>%
+    filter(significance != "Not Significant") %>%
+    arrange(p_value, desc(abs(logFC))) %>%  # Sort by p-value, then by effect size
+    slice_head(n = label_top) %>%
+    mutate(label = abbrev_species(species))
+  
+  # Split into Up (right) and Down (left)
+  lab_up   <- lab_dat %>% filter(significance == "Up")
+  lab_down <- lab_dat %>% filter(significance == "Down")
+  
+  # Calculate ranges for positioning
+  x_rng  <- range(df_top$logFC, na.rm = TRUE)
+  x_span <- diff(x_rng); if (!is.finite(x_span) || x_span == 0) x_span <- 1
+  
+  p <- ggplot(df_top, aes(x = logFC, y = species, color = significance)) +
+    geom_segment(aes(x = 0, xend = logFC, y = species, yend = species),
+                 linewidth = 0.6, alpha = 0.7)
+  
+  # Add confidence intervals if available
+  if (all(c(ci_low_col, ci_high_col) %in% names(df_top))) {
+    p <- p + geom_errorbarh(aes(xmin = .data[[ci_low_col]], xmax = .data[[ci_high_col]]),
+                            height = 0.2, alpha = 0.7)
+  }
+  
+  p <- p +
+    geom_point(aes(size = logP), alpha = 0.9) +
+    geom_vline(xintercept = 0, linetype = "dotted") +
+    scale_size_continuous(name = "-log10(p)", range = c(2, 6)) +
+    scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697", "Not Significant" = "grey")) +
+    labs(title = title, x = "Log2 Fold Change", y = NULL) +
+    scale_y_discrete(labels = function(x) str_wrap(gsub("_", " ", x), width = wrap_width)) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid.major.y = element_blank(),
+          legend.title = element_text(size = 10),
+          legend.position = "right",
+          plot.margin = margin(5, 50, 5, 50))  # More room on sides
+  
+  # IMPROVED: Better label positioning with more spacing parameters
+  if (nrow(lab_up) > 0) {
+    p <- p + geom_text_repel(
+      data = lab_up,
+      aes(label = label),
+      direction = "y",              # Allow vertical movement
+      hjust = 0,                    # Left-justified for right side
+      nudge_x = 0.08 * x_span,      # Push further right
+      box.padding = 0.4,            # More padding around boxes
+      point.padding = 0.3,          # More padding from points
+      min.segment.length = 0,
+      max.overlaps = Inf,
+      size = 3.2,
+      segment.size = 0.2,
+      segment.alpha = 0.6,
+      xlim = c(max(df_top$logFC, na.rm = TRUE) + 0.05 * x_span, NA),  # Restrict to right side
+      force = 2,                    # Increase repulsion force
+      max.iter = 5000              # More iterations for better placement
+    )
+  }
+  
+  if (nrow(lab_down) > 0) {
+    p <- p + geom_text_repel(
+      data = lab_down,
+      aes(label = label),
+      direction = "y",              # Allow vertical movement
+      hjust = 1,                    # Right-justified for left side
+      nudge_x = -0.08 * x_span,     # Push further left
+      box.padding = 0.4,            # More padding around boxes
+      point.padding = 0.3,          # More padding from points
+      min.segment.length = 0,
+      max.overlaps = Inf,
+      size = 3.2,
+      segment.size = 0.2,
+      segment.alpha = 0.6,
+      xlim = c(NA, min(df_top$logFC, na.rm = TRUE) - 0.05 * x_span),  # Restrict to left side
+      force = 2,                    # Increase repulsion force
+      max.iter = 5000              # More iterations for better placement
+    )
+  }
+  
+  p + 
+    coord_cartesian(clip = "off") +
+    scale_x_continuous(expand = expansion(mult = c(0.35, 0.35)))  # Even more space on sides
+}
+
+# ALTERNATIVE VERSION: Selective labeling with tiered approach
+plot_lollipop_selective <- function(results, title,
+                                  sig_threshold = 0.03, lfc_threshold = 1.2,
+                                  top_n = 30, label_top = 8,  # Reduced default
+                                  ci_low_col = "ci_lower", ci_high_col = "ci_upper",
+                                  wrap_width = 32) {
+  
+  abbrev_species <- function(x) {
+    x <- gsub("_", " ", x)
+    x <- gsub("^(s__|g__)", "", x)
+    # More aggressive abbreviation for tight spaces
+    result <- sub("^([A-Za-z])[A-Za-z]+\\s+(.+)$", "\\1. \\2", x)
+    # Further shorten if still too long
+    if (nchar(result) > 25) {
+      result <- substr(result, 1, 22)
+      result <- paste0(result, "...")
+    }
+    return(result)
+  }
+  
+  df <- results
+  if (!"logP" %in% names(df)) df$logP <- -log10(df$p_value)
+  
+  df$significance <- "Not Significant"
+  df$significance[df$p_value < sig_threshold & df$logFC >  lfc_threshold] <- "Up"
+  df$significance[df$p_value < sig_threshold & df$logFC < -lfc_threshold] <- "Down"
+  df$significance <- factor(df$significance, levels = c("Up","Down","Not Significant"))
+  
+  df_top <- df %>%
+    arrange(p_value) %>%
+    slice_head(n = top_n) %>%
+    mutate(species = fct_reorder(species, logFC))
+  
+  # STRATEGY: Only label the most significant points, balanced between Up/Down
+  sig_species <- df_top %>% filter(significance != "Not Significant")
+  
+  # Take equal numbers from Up and Down, prioritizing by p-value
+  up_species <- sig_species %>% 
+    filter(significance == "Up") %>% 
+    arrange(p_value) %>% 
+    slice_head(n = ceiling(label_top/2))
+  
+  down_species <- sig_species %>% 
+    filter(significance == "Down") %>% 
+    arrange(p_value) %>% 
+    slice_head(n = floor(label_top/2))
+  
+  lab_dat <- bind_rows(up_species, down_species) %>%
+    mutate(label = abbrev_species(species))
+  
+  # Calculate ranges
+  x_rng  <- range(df_top$logFC, na.rm = TRUE)
+  x_span <- diff(x_rng); if (!is.finite(x_span) || x_span == 0) x_span <- 1
+  
+  p <- ggplot(df_top, aes(x = logFC, y = species, color = significance)) +
+    geom_segment(aes(x = 0, xend = logFC, y = species, yend = species),
+                 linewidth = 0.6, alpha = 0.7)
+  
+  if (all(c(ci_low_col, ci_high_col) %in% names(df_top))) {
+    p <- p + geom_errorbarh(aes(xmin = .data[[ci_low_col]], xmax = .data[[ci_high_col]]),
+                            height = 0.2, alpha = 0.7)
+  }
+  
+  p <- p +
+    geom_point(aes(size = logP), alpha = 0.9) +
+    geom_vline(xintercept = 0, linetype = "dotted") +
+    scale_size_continuous(name = "-log10(p)", range = c(2, 6)) +
+    scale_color_manual(values = c("Up" = "#8D3256", "Down" = "#004697", "Not Significant" = "grey")) +
+    labs(title = title, x = "Log2 Fold Change", y = NULL) +
+    scale_y_discrete(labels = function(x) str_wrap(gsub("_", " ", x), width = wrap_width)) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid.major.y = element_blank(),
+          legend.title = element_text(size = 10),
+          legend.position = "right",
+          plot.margin = margin(5, 60, 5, 60))
+  
+  # Single geom_text_repel with better algorithm
+  if (nrow(lab_dat) > 0) {
+    p <- p + geom_text_repel(
+      data = lab_dat,
+      aes(label = label),
+      size = 3.0,
+      box.padding = 0.5,
+      point.padding = 0.4,
+      min.segment.length = 0.1,
+      max.overlaps = Inf,
+      segment.size = 0.2,
+      segment.alpha = 0.7,
+      force = 3,
+      max.iter = 10000,
+      seed = 42  # For reproducible label placement
+    )
+  }
+  
+  p + 
+    coord_cartesian(clip = "off") +
+    scale_x_continuous(expand = expansion(mult = c(0.4, 0.4)))
+}
+```
+
+
+```{r}
+# ggsave("figure/lollopop_C.pdf", 
+#        plot = plot_lollipop(results_CvsIM, "Non-Chinese vs Chinese", sig_threshold = 0.05, lfc_threshold = 1, label_top = 20),
+#        width = 12, height = 8, dpi = 300)
+# ggsave("figure/lollopop_I.pdf", 
+#        plot = plot_lollipop(results_IvsCM, "Non-Indian vs Indian", sig_threshold = 0.05, lfc_threshold = 1, label_top = 20),
+#        width = 12, height = 8, dpi = 300)
+# ggsave("figure/lollopop_M.pdf", 
+#        plot = plot_lollipop(results_MvsCI, "Non-Malay vs Malay", sig_threshold = 0.05, lfc_threshold = 1, label_top = 20),
+#        width = 12, height = 8, dpi = 300)
+
+```
+
+
+
+## BOX PLOT
+```{r}
+plot_bifido_genus_CIM_raw_stars <- function(merged_data,
+                                            groups = c("C","I","M"),
+                                            show_exact_p = FALSE,
+                                            y_bracket_quantile = 0.98,
+                                            save_pdf = NULL) {
+  library(dplyr); library(ggplot2); library(ggpubr); library(scales)
+  df <- merged_data %>%
+    filter(FREG5_Ethnic_Group %in% groups) %>%
+    mutate(Ethnicity = factor(FREG5_Ethnic_Group, levels = groups))
+  all_bifido <- grep("(?i)Bifidobacterium", names(df), value = TRUE, perl = TRUE)
+  genus_cols <- grep("(?i)^(?:g__)?Bifidobacterium$", names(df), value = TRUE, perl = TRUE)
+  species_cols <- setdiff(all_bifido, genus_cols)
+  if (length(all_bifido) == 0) stop("No columns containing 'Bifidobacterium' found.")
+  bifido_raw <- if (length(genus_cols) >= 1) df[[genus_cols[1]]]
+                else rowSums(df[, species_cols, drop = FALSE], na.rm = TRUE)
+  dat <- df %>% transmute(Ethnicity, Bifido = bifido_raw)
+  # axis top and bracket positions
+  bracket_base <- quantile(dat$Bifido, probs = y_bracket_quantile, na.rm = TRUE)
+  if (!is.finite(bracket_base) || bracket_base <= 0) bracket_base <- max(dat$Bifido, na.rm = TRUE)
+  axis_top <- ceiling((bracket_base * 1.25) / 1e6) * 1e6
+  # pairwise comparisons
+  comps <- list(c("C","I"), c("C","M"))
+  y_pos <- axis_top * seq(0.80, 0.80 + 0.08*(length(comps)-1), by = 0.08)
+  p <- ggplot(dat, aes(x = Ethnicity, y = Bifido, fill = Ethnicity)) +
+    geom_boxplot() +
+    theme_bw() +
+    scale_color_manual(values = c(C = "#9FDDCA", I = "#9EA3F1", M = "#E17887")) +
+    scale_fill_manual(values = c(C = "#9FDDCA", I = "#9EA3F1", M = "#E17887")) +
+    stat_compare_means(comparisons = comps, method = "t.test", label = "p.signif", 
+                       symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), 
+                                        symbols = c("***", "**", "*", ""))) +
+    labs(title = "HELIOS Cohort Bifidobacterium Abundance Across Ethnic Groups",
+         y = "Bifidobacterium Abundance",
+         x = "Ethnicity")
+  # Console stats
+  print(kruskal.test(Bifido ~ Ethnicity, data = dat))
+  print(pairwise.wilcox.test(dat$Bifido, dat$Ethnicity, p.adjust.method = "BH"))
+  if (!is.null(save_pdf)) ggsave(save_pdf, p, width = 5.5, height = 4.2, dpi = 300)
+  p
+}
+```
+```{r}
+p1 <- plot_bifido_genus_CIM_raw_stars(merged_data, show_exact_p = FALSE)
+p1
+```
+## try some different figures
+```{r}
+library(dplyr)
+
+# Filter for 3 groups and create Ethnicity factor
+df <- merged_data %>%
+  filter(FREG5_Ethnic_Group %in% c("C", "I", "M")) %>%
+  mutate(Ethnicity = factor(FREG5_Ethnic_Group,
+                            levels = c("C", "I", "M")))
+
+# 1. detect all columns containing "Bifidobacterium"
+all_bifido <- grep("(?i)Bifidobacterium", names(df), value = TRUE, perl = TRUE)
+
+# 2. detect genus-level columns: exactly "Bifidobacterium" or "g__Bifidobacterium"
+genus_cols <- grep("(?i)^(g__)?Bifidobacterium$", names(df), value = TRUE, perl = TRUE)
+
+# 3. species-level columns = anything containing bifido but not genus column
+species_cols <- setdiff(all_bifido, genus_cols)
+
+# 4. Compute Bifido abundance
+bifido_raw <- if (length(genus_cols) >= 1) {
+  df[[genus_cols[1]]]
+} else {
+  rowSums(df[, species_cols, drop = FALSE], na.rm = TRUE)
+}
+
+# 5. Final dataframe for plotting
+dat <- df %>% dplyr::select(Ethnicity) %>% mutate(Bifido = bifido_raw)
+
+```
+
+```{r}
+library(tidyverse)
+library(ggdist)
+library(gghalves)
+bifido_raw
+# dat: Ethnicity + Bifido (from your previous code)
+dat <- df %>% transmute(Ethnicity, Bifido = bifido_raw)
+
+eth_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887")
+
+p_rain <- ggplot(dat, aes(x = Ethnicity, y = Bifido, fill = Ethnicity)) +
+  ggdist::stat_halfeye(adjust = 0.6, width = 0.7, .width = 0.95,
+                       justification = -0.2, alpha = 0.8, color = NA) +
+  geom_boxplot(width = 0.15, outlier.shape = NA,
+               alpha = 0.7, position = position_nudge(x = 0.15)) +
+  geom_point(aes(color = Ethnicity),
+             position = position_jitter(width = 0.05),
+             size = 1.7, alpha = 0.7) +
+  scale_fill_manual(values = eth_colors) +
+  scale_color_manual(values = eth_colors) +
+  theme_bw(base_size = 14) 
+  # labs(title = "Bifidobacterium Abundance Across Ethnic Groups",
+  #      y = "Abundance", x = "Ethnicity")
+
+p_rain
+ggsave("figure/genus_bifido.pdf",  plot = p_rain, width = 8, height = 10, dpi = 300)
+```
+```{r}
+library(ggridges)
+
+p_ridge <- ggplot(dat, aes(x = Bifido, y = Ethnicity, fill = Ethnicity)) +
+  geom_density_ridges(alpha = 0.85, scale = 2) +
+  scale_fill_manual(values = eth_colors) +
+  theme_bw(base_size = 14) +
+  labs(
+    title = "Distribution of Bifidobacterium Abundance by Ethnicity",
+    x = "Bifidobacterium Abundance",
+    y = ""
+  )
+
+p_ridge
+
+
+```
+```{r}
+library(Rmisc)
+
+sum_df <- summarySE(dat, measurevar = "Bifido", groupvars = "Ethnicity")
+
+p_bar <- ggplot(sum_df, aes(x = Ethnicity, y = Bifido, fill = Ethnicity)) +
+  geom_col(width = 0.6, alpha = 0.85) +
+  geom_errorbar(aes(ymin = Bifido - se, ymax = Bifido + se),
+                width = 0.2, linewidth = 1) +
+  scale_fill_manual(values = eth_colors) +
+  theme_bw(base_size = 14) +
+  labs(
+    title = "Mean Bifidobacterium Abundance with SEM",
+    y = "Mean Abundance"
+  )
+
+p_bar
+
+```
+# heatmaps species level
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# 1. Keep only C/I/M and define Ethnicity
+df <- merged_data %>%
+  filter(FREG5_Ethnic_Group %in% c("C","I","M")) %>%
+  mutate(
+    Ethnicity = factor(FREG5_Ethnic_Group, levels = c("C","I","M"))
+  )
+
+# 2. All columns that start with "Bifidobacterium"
+bifido_cols <- names(df)[grepl("^Bifidobacterium\\b", names(df))]
+
+# optional: check them
+print(bifido_cols)
+
+# 3. Is there a pure genus column named exactly "Bifidobacterium"?
+genus_col <- bifido_cols[bifido_cols == "Bifidobacterium"]
+
+# 4. Species columns = all the others that start with "Bifidobacterium"
+species_cols <- setdiff(bifido_cols, genus_col)
+species_cols <- species_cols[!grepl("sp\\. (SKU|TKU|FKU)", species_cols)]
+
+# safety: if you *only* have species (no pure genus), this will just be all bifido_cols
+print(species_cols)
+
+
+```
+```{r}
+library(tidyr)
+
+species_means <- df %>%
+  dplyr::select(Ethnicity, dplyr::all_of(species_cols)) %>%
+  pivot_longer(
+    cols = dplyr::all_of(species_cols),
+    names_to = "Species",
+    values_to = "Abundance"
+  ) %>%
+  group_by(Ethnicity, Species) %>%
+  summarise(
+    mean_abundance = mean(Abundance, na.rm = TRUE),
+    prevalence     = mean(Abundance > 0, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(Species) %>%
+  mutate(
+    z_abundance = scale(mean_abundance)[,1]   # standardize across ethnicities
+  ) %>%
+  ungroup()
+top_species <- species_means %>%
+  group_by(Species) %>%
+  summarise(total = sum(mean_abundance)) %>%
+  slice_max(total, n = 22) %>%
+  pull(Species)
+
+
+species_means_plot <- species_means %>%
+  filter(Species %in% top_species)
+
+
+```
+```{r}
+p_circle_heatmap <- ggplot(species_means_plot,
+                           aes(x = Ethnicity, y = Species)) +
+  geom_point(
+    aes(size = mean_abundance, fill = z_abundance),
+    shape = 21, color = "black"
+  ) +
+  scale_size_continuous(range = c(3, 12), name = "Mean abundance") +
+  scale_fill_gradient2(
+    low = "#2166AC", mid = "white", high = "#B2182B",
+    midpoint = 0, name = "Z-score"
+  ) +
+  theme_bw(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 10, face = "italic")
+  ) +
+  labs(
+    #title = "Bifidobacterium species across ethnic groups",
+    x = "Ethnicity",
+    y = "Species"
+  )
+
+p_circle_heatmap
+
+ggsave("figure/species_bifido.pdf",  plot = p_circle_heatmap, width = 6, height = 8, dpi = 300)
+
 ```
 
 
