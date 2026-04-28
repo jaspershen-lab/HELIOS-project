@@ -36,6 +36,9 @@
 
 1-code/ruwen/data/
 
+/2-data/
+/3-data_analysis/
+
 2-data/from_ruwen/HELIOS_FFQA.xlsx
 2-data/from_ruwen/HELIOS_HLQ_20221202_anon.csv
 2-data/from_ruwen/abundance_bracken_standard_16_20221209_taxa_G_unfiltered_reads_decont2.csv
