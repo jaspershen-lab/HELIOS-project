@@ -1,0 +1,1141 @@
+---
+title: "Pseudomonas"
+author: "Ruwen Zhou"
+date: "4/21/2026"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggraph)
+library(igraph)
+library(Hmisc)
+library(writexl)
+
+library(tidygraph)
+library(ppcor)
+
+library(reshape2)
+library(ComplexHeatmap)
+```
+
+```{r}
+
+food_data = read_xlsx("data/FFQA862_new.xlsx")
+
+species_data = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
+
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms", "Chapati"), as.numeric))
+  #dplyr::select(-c("Cruciferous_veg", "Noodle_dishes","Rice_dishes"))
+food_data_250 <- read_excel("data/all_food_863.xlsx")
+
+species_data
+metadata
+food_data
+food_data_250
+```
+```{r}
+# Load required libraries
+library(tidyverse)
+library(corrplot)
+library(pheatmap)
+library(ggpubr)
+library(Hmisc)
+library(patchwork)
+
+# 1. SETUP OUTPUT DIRECTORY ------------------------------------------------
+
+output_dir <- "Pseudomonas_Food_Analysis_Precise"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+plot_dir <- file.path(output_dir, "Plots")
+table_dir <- file.path(output_dir, "Tables")
+dirs_to_create <- c(plot_dir, table_dir)
+for(dir in dirs_to_create) if (!dir.exists(dir)) dir.create(dir)
+
+log_file <- file.path(output_dir, "analysis_log.txt")
+sink(log_file, split = TRUE)
+
+cat("========================================\n")
+cat("Pseudomonas-Food Association Analysis (Precise)\n")
+cat("Started:", Sys.time(), "\n")
+cat("========================================\n\n")
+
+# 2. PREPARE THE DATA -----------------------------------------------------
+
+cat("Step 1: Preparing data...\n")
+
+# Rename columns
+species_data_clean <- species_data
+colnames(species_data_clean)[1] <- "Participant_ID"
+
+# Clean food_data_250
+if("freg0_pid" %in% colnames(food_data_250)) {
+  food_data_250_clean <- food_data_250 %>%
+    rename(Participant_ID = participant_id) %>%
+    dplyr::select(-freg0_pid)
+} else {
+  food_data_250_clean <- food_data_250 %>%
+    rename(Participant_ID = participant_id)
+}
+
+if(colnames(food_data)[1] != "Participant_ID") {
+  colnames(food_data)[1] <- "Participant_ID"
+}
+
+# 3. CREATE SEPARATE MERGED DATASETS ---------------------------------------
+
+cat("\nStep 2: Creating separate merged datasets...\n")
+
+merged_groups <- merge(species_data_clean, food_data, by = "Participant_ID", all = FALSE)
+merged_items <- merge(species_data_clean, food_data_250_clean, by = "Participant_ID", all = FALSE)
+
+cat("Food groups dataset:", dim(merged_groups), "\n")
+cat("Food items dataset:", dim(merged_items), "\n")
+
+# 4. PRECISE PSEUDOMONAS IDENTIFICATION -----------------------------------
+
+cat("\nStep 3: Precise Pseudomonas identification...\n")
+
+# Get all species columns
+all_species <- colnames(species_data_clean)[-1]
+
+# STRATEGY:
+# 1. First find all columns that start with "Pseudomonas" (case insensitive)
+# 2. Remove those that are actually other genera (like Rhodopseudomonas)
+# 3. Separate into species-level and genus-level entries
+
+# Find all columns containing "pseudomonas" (case insensitive)
+all_pseudo_cols <- all_species[grepl("pseudomonas", all_species, ignore.case = TRUE)]
+
+cat("\nAll columns containing 'pseudomonas':\n")
+print(all_pseudo_cols)
+
+# Filter 1: Keep only those that START with Pseudomonas (case insensitive)
+# This removes things like "Rhodopseudomonas" which starts with Rhodopseudomonas
+true_pseudomonas <- all_pseudo_cols[grepl("^pseudomonas", all_pseudo_cols, ignore.case = TRUE)]
+
+cat("\nColumns starting with 'Pseudomonas':\n")
+print(true_pseudomonas)
+
+# Filter 2: Separate into proper species and "sp." entries
+# Proper species: Pseudomonas followed by space and a lowercase word (species name)
+# "sp." entries: Pseudomonas followed by "sp."
+# Unidentified: Pseudomonas with numbers or other patterns
+
+# Pattern for proper species: "Pseudomonas amygdali", "Pseudomonas aeruginosa", etc.
+# Should have: Pseudomonas + space + word (not starting with sp, SP, or numbers)
+species_pattern <- "^[Pp]seudomonas\\s+[a-z]"
+proper_species <- true_pseudomonas[grepl(species_pattern, true_pseudomonas, ignore.case = TRUE) & 
+                                   !grepl("\\s+sp\\.", true_pseudomonas, ignore.case = TRUE)]
+
+# Pattern for "sp." entries
+sp_pattern <- "\\s+sp\\.|\\s+SP\\.|\\s+Sp\\."
+sp_entries <- true_pseudomonas[grepl(sp_pattern, true_pseudomonas, ignore.case = TRUE)]
+
+# Other patterns (numbers, etc.)
+other_pseudo <- setdiff(true_pseudomonas, c(proper_species, sp_entries))
+
+cat("\n=== Pseudomonas Classification Results ===\n")
+cat("\nProper Pseudomonas species (identified species):\n")
+if(length(proper_species) > 0) {
+  for(s in proper_species) cat("  -", s, "\n")
+} else {
+  cat("  None found\n")
+}
+
+cat("\nPseudomonas sp. entries (unidentified species):\n")
+if(length(sp_entries) > 0) {
+  for(s in sp_entries) cat("  -", s, "\n")
+} else {
+  cat("  None found\n")
+}
+
+cat("\nOther Pseudomonas patterns:\n")
+if(length(other_pseudo) > 0) {
+  for(s in other_pseudo) cat("  -", s, "\n")
+} else {
+  cat("  None found\n")
+}
+
+# Save classification info
+pseudo_classification <- data.frame(
+  Original_Name = c(proper_species, sp_entries, other_pseudo),
+  Type = c(rep("Proper_Species", length(proper_species)),
+           rep("Sp_Entry", length(sp_entries)),
+           rep("Other_Pattern", length(other_pseudo))),
+  Included_in_Species_Analysis = c(rep("YES", length(proper_species)),
+                                   rep("NO", length(sp_entries)),
+                                   rep("NO", length(other_pseudo))),
+  Included_in_Genus_Analysis = c(rep("YES", length(proper_species)),
+                                 rep("YES", length(sp_entries)),
+                                 rep("YES", length(other_pseudo)))
+)
+
+write.csv(pseudo_classification, 
+          file.path(table_dir, "01_pseudomonas_classification.csv"), 
+          row.names = FALSE)
+
+# 5. CREATE ANALYSIS VARIABLES --------------------------------------------
+
+cat("\nStep 4: Creating analysis variables...\n")
+
+# For SPECIES-LEVEL analysis: only proper species
+target_species <- proper_species
+cat("\nSpecies for individual analysis:", length(target_species), "\n")
+if(length(target_species) > 0) print(target_species)
+
+# For GENUS-LEVEL analysis: ALL Pseudomonas (proper species + sp. entries + others)
+# But we need to check which ones are actually in our merged data
+all_pseudomonas_for_genus <- true_pseudomonas  # All that start with Pseudomonas
+
+# Check availability in merged data
+available_in_groups <- intersect(all_pseudomonas_for_genus, colnames(merged_groups))
+available_in_items <- intersect(all_pseudomonas_for_genus, colnames(merged_items))
+
+cat("\nAvailable for genus analysis in groups data:", length(available_in_groups), "/", length(all_pseudomonas_for_genus), "\n")
+cat("Available for genus analysis in items data:", length(available_in_items), "/", length(all_pseudomonas_for_genus), "\n")
+
+# Create Pseudomonas genus column for both datasets
+create_pseudomonas_genus_column <- function(data, pseudo_cols) {
+  available_cols <- intersect(pseudo_cols, colnames(data))
+  cat("  Using", length(available_cols), "Pseudomonas columns for genus sum\n")
+  if(length(available_cols) > 0) {
+    data$Pseudomonas_genus <- rowSums(data[, available_cols, drop = FALSE], na.rm = TRUE)
+    
+    # Also add a presence/absence column
+    data$Pseudomonas_genus_presence <- as.numeric(data$Pseudomonas_genus > 0)
+    
+    # Log summary
+    cat("  Genus summary - Mean:", mean(data$Pseudomonas_genus, na.rm = TRUE), 
+        "Prevalence:", mean(data$Pseudomonas_genus_presence, na.rm = TRUE)*100, "%\n")
+  } else {
+    cat("  WARNING: No Pseudomonas columns found for genus calculation\n")
+    data$Pseudomonas_genus <- NA
+    data$Pseudomonas_genus_presence <- NA
+  }
+  return(data)
+}
+
+cat("\nCreating Pseudomonas genus column for groups data...\n")
+merged_groups <- create_pseudomonas_genus_column(merged_groups, all_pseudomonas_for_genus)
+
+cat("\nCreating Pseudomonas genus column for items data...\n")
+merged_items <- create_pseudomonas_genus_column(merged_items, all_pseudomonas_for_genus)
+
+# Final target variables
+target_vars_groups <- c(intersect(target_species, colnames(merged_groups)), 
+                       "Pseudomonas_genus", "Pseudomonas_genus_presence")
+target_vars_items <- c(intersect(target_species, colnames(merged_items)), 
+                      "Pseudomonas_genus", "Pseudomonas_genus_presence")
+
+cat("\n=== Final Target Variables ===\n")
+cat("\nFor Food Groups analysis:\n")
+for(v in target_vars_groups) cat("  -", v, "\n")
+
+cat("\nFor Food Items analysis:\n")
+for(v in target_vars_items) cat("  -", v, "\n")
+
+# Save target variables
+write.csv(data.frame(Variable = target_vars_groups, Dataset = "Food_Groups"),
+          file.path(table_dir, "02_target_variables_groups.csv"), row.names = FALSE)
+write.csv(data.frame(Variable = target_vars_items, Dataset = "Food_Items"),
+          file.path(table_dir, "03_target_variables_items.csv"), row.names = FALSE)
+
+# 6. GET FOOD COLUMNS ------------------------------------------------------
+
+cat("\nStep 5: Identifying food columns...\n")
+
+food_group_cols <- setdiff(colnames(food_data), "Participant_ID")
+food_group_cols <- intersect(food_group_cols, colnames(merged_groups))
+
+food_item_cols <- setdiff(colnames(food_data_250_clean), "Participant_ID")
+food_item_cols <- intersect(food_item_cols, colnames(merged_items))
+
+cat("Food groups:", length(food_group_cols), "\n")
+cat("Food items:", length(food_item_cols), "\n")
+
+# 7. CORRELATION ANALYSIS FUNCTION ---------------------------------------
+
+calculate_correlations_precise <- function(pseudomonas_vars, food_cols, data, data_name = "") {
+  all_results <- data.frame()
+  
+  for(pseudo_var in pseudomonas_vars) {
+    cat("\n  Analyzing:", pseudo_var)
+    
+    if(!pseudo_var %in% colnames(data)) {
+      cat(" - NOT FOUND in data\n")
+      next
+    }
+    
+    var_results <- data.frame()
+    
+    for(food in food_cols) {
+      if(food %in% colnames(data)) {
+        # Remove NAs
+        complete_cases <- complete.cases(data[[pseudo_var]], data[[food]])
+        
+        if(sum(complete_cases) >= 10) {  # Minimum sample size
+          cor_test <- tryCatch({
+            cor.test(data[[pseudo_var]][complete_cases],
+                    data[[food]][complete_cases],
+                    method = "spearman")
+          }, error = function(e) NULL)
+          
+          if(!is.null(cor_test)) {
+            var_results <- rbind(var_results, data.frame(
+              Pseudomonas_var = pseudo_var,
+              Food = food,
+              Correlation = cor_test$estimate,
+              P_value = cor_test$p.value,
+              N = sum(complete_cases),
+              Data_type = data_name,
+              stringsAsFactors = FALSE
+            ))
+          }
+        }
+      }
+    }
+    
+    # Adjust p-values for this Pseudomonas variable
+    if(nrow(var_results) > 0) {
+      var_results$P_adj <- p.adjust(var_results$P_value, method = "BH")
+      all_results <- rbind(all_results, var_results)
+    }
+  }
+  
+  return(all_results)
+}
+
+# 8. RUN SEPARATE ANALYSES ------------------------------------------------
+
+cat("\n\nStep 6: Running correlation analyses...\n")
+
+cat("\nA) Food Groups analysis...\n")
+all_cor_groups <- calculate_correlations_precise(target_vars_groups, food_group_cols, 
+                                                 merged_groups, "Food_Group")
+
+cat("\nB) Food Items analysis...\n")
+all_cor_items <- calculate_correlations_precise(target_vars_items, food_item_cols,
+                                                merged_items, "Food_Item")
+
+cat("\nCorrelations calculated:\n")
+cat("  Food groups:", nrow(all_cor_groups), "\n")
+cat("  Food items:", nrow(all_cor_items), "\n")
+
+# 9. IDENTIFY SIGNIFICANT ASSOCIATIONS -----------------------------------
+
+sig_threshold <- 0.05
+
+sig_cor_groups <- all_cor_groups %>%
+  filter(P_adj < sig_threshold) %>%
+  arrange(P_adj, desc(abs(Correlation)))
+
+sig_cor_items <- all_cor_items %>%
+  filter(P_adj < sig_threshold) %>%
+  arrange(P_adj, desc(abs(Correlation)))
+
+cat("\nSignificant associations (FDR < 0.05):\n")
+cat("  Food groups:", nrow(sig_cor_groups), "\n")
+cat("  Food items:", nrow(sig_cor_items), "\n")
+
+# 10. SAVE RESULTS --------------------------------------------------------
+
+write.csv(all_cor_groups, file.path(table_dir, "04_all_correlations_groups.csv"), row.names = FALSE)
+write.csv(all_cor_items, file.path(table_dir, "05_all_correlations_items.csv"), row.names = FALSE)
+
+if(nrow(sig_cor_groups) > 0) {
+  write.csv(sig_cor_groups, file.path(table_dir, "06_significant_groups.csv"), row.names = FALSE)
+}
+if(nrow(sig_cor_items) > 0) {
+  write.csv(sig_cor_items, file.path(table_dir, "07_significant_items.csv"), row.names = FALSE)
+}
+```
+
+
+```{r}
+cat("\nStep 7: Creating visualizations...\n")
+
+# Function to create summary plot
+create_summary_plot <- function(sig_data, title_suffix, color_scheme) {
+  if(nrow(sig_data) == 0) return(NULL)
+  
+  summary_data <- sig_data %>%
+    group_by(Pseudomonas_var) %>%
+    summarise(
+      n_associations = n(),
+      mean_correlation = mean(Correlation),
+      perc_positive = sum(Correlation > 0) / n() * 100,
+      .groups = "drop"
+    )
+  
+  p <- ggplot(summary_data, aes(x = reorder(Pseudomonas_var, mean_correlation), 
+                                y = mean_correlation,
+                                fill = ifelse(mean_correlation > 0, "Positive", "Negative"))) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = n_associations), 
+              hjust = ifelse(summary_data$mean_correlation > 0, -0.2, 1.2),
+              size = 3) +
+    coord_flip() +
+    labs(title = paste("Summary:", title_suffix),
+         subtitle = paste("Total", nrow(sig_data), "significant associations"),
+         x = "Pseudomonas Variable", y = "Mean Correlation Coefficient",
+         fill = "Direction") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold")) +
+    scale_fill_manual(values = color_scheme)
+  
+  return(p)
+}
+
+# Plot for food groups
+if(nrow(sig_cor_groups) > 0) {
+  p1 <- create_summary_plot(sig_cor_groups, "Food Groups", 
+                           c("Positive" = "#2E86AB", "Negative" = "#A23B72"))
+  ggsave(file.path(plot_dir, "01_summary_food_groups.png"), p1, 
+         width = 10, height = 6, dpi = 300)
+  
+  # Heatmap for top associations
+  top_groups <- sig_cor_groups %>%
+    group_by(Pseudomonas_var) %>%
+    slice_max(order_by = abs(Correlation), n = 5) %>%
+    ungroup()
+  
+  heatmap_data <- top_groups %>%
+    dplyr::select(Pseudomonas_var, Food, Correlation) %>%
+    pivot_wider(names_from = Food, values_from = Correlation) %>%
+    column_to_rownames("Pseudomonas_var")
+  
+  if(ncol(heatmap_data) > 1) {
+    png(file.path(plot_dir, "02_heatmap_food_groups.png"), 
+        width = 10, height = 8, units = "in", res = 300)
+    pheatmap(heatmap_data,
+             main = "Top Associations: Food Groups",
+             color = colorRampPalette(c("#A23B72", "white", "#2E86AB"))(50))
+    dev.off()
+  }
+}
+
+# Plot for food items
+if(nrow(sig_cor_items) > 0) {
+  p2 <- create_summary_plot(sig_cor_items, "Food Items",
+                           c("Positive" = "#3D5A80", "Negative" = "#EE6C4D"))
+  ggsave(file.path(plot_dir, "03_summary_food_items.png"), p2,
+         width = 10, height = 8, dpi = 300)
+  
+  # Focus on top food items overall
+  top_items_summary <- sig_cor_items %>%
+    group_by(Food) %>%
+    summarise(
+      n_associations = n(),
+      mean_correlation = mean(Correlation),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(abs(mean_correlation))) %>%
+    head(20)
+  
+  p3 <- ggplot(top_items_summary, aes(x = reorder(Food, mean_correlation), 
+                                      y = mean_correlation,
+                                      fill = ifelse(mean_correlation > 0, "Positive", "Negative"))) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    labs(title = "Top Food Items Overall",
+         x = "Food Item", y = "Mean Correlation Coefficient") +
+    theme_minimal() +
+    scale_fill_manual(values = c("Positive" = "#3D5A80", "Negative" = "#EE6C4D"), guide = "none")
+  
+  ggsave(file.path(plot_dir, "04_top_food_items.png"), p3, 
+         width = 10, height = 8, dpi = 300)
+}
+
+# 12. COMPARISON: SPECIES VS GENUS ----------------------------------------
+
+cat("\nStep 8: Comparing species vs genus associations...\n")
+
+# Separate species and genus results
+if(nrow(sig_cor_groups) > 0) {
+  sig_cor_groups <- sig_cor_groups %>%
+    mutate(Var_type = ifelse(grepl("genus", Pseudomonas_var, ignore.case = TRUE), 
+                            "Genus", "Species"))
+  
+  # Compare number of associations
+  comp_groups <- sig_cor_groups %>%
+    group_by(Var_type) %>%
+    summarise(
+      n_variables = n_distinct(Pseudomonas_var),
+      n_associations = n(),
+      mean_abs_cor = mean(abs(Correlation)),
+      .groups = "drop"
+    )
+  
+  cat("\nFood Groups - Species vs Genus:\n")
+  print(comp_groups)
+}
+
+if(nrow(sig_cor_items) > 0) {
+  sig_cor_items <- sig_cor_items %>%
+    mutate(Var_type = ifelse(grepl("genus", Pseudomonas_var, ignore.case = TRUE), 
+                            "Genus", "Species"))
+  
+  comp_items <- sig_cor_items %>%
+    group_by(Var_type) %>%
+    summarise(
+      n_variables = n_distinct(Pseudomonas_var),
+      n_associations = n(),
+      mean_abs_cor = mean(abs(Correlation)),
+      .groups = "drop"
+    )
+  
+  cat("\nFood Items - Species vs Genus:\n")
+  print(comp_items)
+}
+
+```
+
+
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(openxlsx)
+
+# 1. SETUP OUTPUT DIRECTORY ------------------------------------------------
+
+output_dir <- "Pseudomonas_Genus_Associations"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+cat("Creating Pseudomonas genus association table...\n")
+
+# 2. PREPARE THE DATA -----------------------------------------------------
+
+# Rename columns
+species_data_clean <- species_data
+colnames(species_data_clean)[1] <- "Participant_ID"
+
+# Clean food_data_250
+if("freg0_pid" %in% colnames(food_data_250)) {
+  food_data_250_clean <- food_data_250 %>%
+    rename(Participant_ID = participant_id) %>%
+    dplyr::select(-freg0_pid)
+} else {
+  food_data_250_clean <- food_data_250 %>%
+    rename(Participant_ID = participant_id)
+}
+
+if(colnames(food_data)[1] != "Participant_ID") {
+  colnames(food_data)[1] <- "Participant_ID"
+}
+
+# 3. CREATE PSEUDOMONAS GENUS COLUMN --------------------------------------
+
+# Find all Pseudomonas columns (proper ones that start with Pseudomonas)
+all_species <- colnames(species_data_clean)[-1]
+pseudomonas_cols <- all_species[grepl("^pseudomonas", all_species, ignore.case = TRUE)]
+
+cat("\nFound", length(pseudomonas_cols), "Pseudomonas columns for genus calculation\n")
+
+# Merge with food groups
+merged_groups <- merge(species_data_clean, food_data, by = "Participant_ID", all = FALSE)
+# Merge with food items
+merged_items <- merge(species_data_clean, food_data_250_clean, by = "Participant_ID", all = FALSE)
+
+# Create Pseudomonas genus column
+create_genus_column <- function(data) {
+  available_cols <- intersect(pseudomonas_cols, colnames(data))
+  if(length(available_cols) > 0) {
+    data$Pseudomonas_genus <- rowSums(data[, available_cols, drop = FALSE], na.rm = TRUE)
+    cat("  Used", length(available_cols), "columns for genus calculation\n")
+  } else {
+    stop("No Pseudomonas columns found for genus calculation")
+  }
+  return(data)
+}
+
+merged_groups <- create_genus_column(merged_groups)
+merged_items <- create_genus_column(merged_items)
+
+# 4. FUNCTION TO TEST GENUS ASSOCIATIONS ---------------------------------
+
+test_genus_associations <- function(merged_data, food_cols, data_name) {
+  results <- data.frame(
+    Food = character(),
+    Correlation = numeric(),
+    P_value = numeric(),
+    P_adj = numeric(),
+    N = integer(),
+    Data_type = character(),
+    stringsAsFactors = FALSE
+  )
+  
+  cat("\nTesting Pseudomonas genus associations with", length(food_cols), data_name, "...\n")
+  pb <- txtProgressBar(min = 0, max = length(food_cols), style = 3)
+  
+  for(i in seq_along(food_cols)) {
+    food <- food_cols[i]
+    
+    if("Pseudomonas_genus" %in% colnames(merged_data) && food %in% colnames(merged_data)) {
+      complete_cases <- complete.cases(merged_data$Pseudomonas_genus, merged_data[[food]])
+      
+      if(sum(complete_cases) >= 10) {
+        cor_test <- tryCatch({
+          cor.test(merged_data$Pseudomonas_genus[complete_cases],
+                  merged_data[[food]][complete_cases],
+                  method = "spearman", exact = FALSE)  # exact = FALSE to handle ties
+        }, error = function(e) NULL)
+        
+        if(!is.null(cor_test)) {
+          results <- rbind(results, data.frame(
+            Food = food,
+            Correlation = cor_test$estimate,
+            P_value = cor_test$p.value,
+            P_adj = NA,  # Will adjust later
+            N = sum(complete_cases),
+            Data_type = data_name,
+            stringsAsFactors = FALSE
+          ))
+        }
+      }
+    }
+    setTxtProgressBar(pb, i)
+  }
+  close(pb)
+  
+  # Adjust p-values
+  if(nrow(results) > 0) {
+    results$P_adj <- p.adjust(results$P_value, method = "BH")
+  }
+  
+  return(results)
+}
+
+# 5. RUN ASSOCIATION TESTS ------------------------------------------------
+
+# Get food columns
+food_group_cols <- setdiff(colnames(food_data), "Participant_ID")
+food_group_cols <- intersect(food_group_cols, colnames(merged_groups))
+
+food_item_cols <- setdiff(colnames(food_data_250_clean), "Participant_ID")
+food_item_cols <- intersect(food_item_cols, colnames(merged_items))
+
+cat("\nNumber of food groups:", length(food_group_cols))
+cat("\nNumber of food items:", length(food_item_cols))
+
+# Test associations
+genus_groups <- test_genus_associations(merged_groups, food_group_cols, "Food_Group")
+genus_items <- test_genus_associations(merged_items, food_item_cols, "Food_Item")
+
+# Combine results
+all_genus_results <- rbind(genus_groups, genus_items)
+
+# 6. CREATE SIGNIFICANCE TABLE -------------------------------------------
+
+cat("\n\nCreating significance tables...\n")
+
+# Vectorized function to get significance symbol
+get_significance_vectorized <- function(p_values) {
+  sapply(p_values, function(p) {
+    if(is.na(p)) return(NA)
+    if(p < 0.001) return("***")
+    if(p < 0.01) return("**")
+    if(p < 0.05) return("*")
+    if(p < 0.1) return(".")
+    return("ns")
+  })
+}
+
+# Add significance columns
+all_genus_results <- all_genus_results %>%
+  mutate(
+    P_signif = get_significance_vectorized(P_value),
+    P_adj_signif = get_significance_vectorized(P_adj),
+    Direction = ifelse(Correlation > 0, "Positive", "Negative"),
+    Effect_size = case_when(
+      abs(Correlation) >= 0.5 ~ "Large",
+      abs(Correlation) >= 0.3 ~ "Medium",
+      abs(Correlation) >= 0.1 ~ "Small",
+      TRUE ~ "Very small"
+    )
+  )
+
+# 7. CREATE FORMATTED TABLES ---------------------------------------------
+
+# Table 1: All results
+table_all <- all_genus_results %>%
+  dplyr::select(Food, Data_type, Correlation, Direction, P_value, P_adj, 
+                P_adj_signif, N, Effect_size) %>%
+  arrange(Data_type, P_adj, desc(abs(Correlation)))
+
+# Table 2: Significant results only (FDR < 0.05)
+table_sig <- all_genus_results %>%
+  filter(P_adj < 0.05) %>%
+  dplyr::select(Food, Data_type, Correlation, Direction, P_value, P_adj, 
+                P_adj_signif, N, Effect_size) %>%
+  arrange(Data_type, P_adj, desc(abs(Correlation)))
+
+# Table 3: Summary by data type
+
+summary_by_type <- all_genus_results %>%
+  dplyr::group_by(Data_type, P_adj_signif, Direction) %>%
+  dplyr::summarise(
+    Count = n(),
+    Mean_correlation = mean(Correlation),
+    Min_correlation = min(Correlation),
+    Max_correlation = max(Correlation),
+    .groups = "drop"
+  ) %>%
+  arrange(Data_type, P_adj_signif, Direction)
+
+# Table 4: Top associations
+top_associations <- bind_rows(
+  all_genus_results %>%
+    filter(Data_type == "Food_Group") %>%
+    arrange(P_adj, desc(abs(Correlation))) %>%
+    head(10) %>%
+    mutate(Rank = row_number()),
+  all_genus_results %>%
+    filter(Data_type == "Food_Item") %>%
+    arrange(P_adj, desc(abs(Correlation))) %>%
+    head(20) %>%  # More for food items since there are more
+    mutate(Rank = row_number())
+) %>%
+  dplyr::select(Rank, Food, Data_type, Correlation, Direction, P_adj, P_adj_signif, N)
+
+# 8. SAVE TABLES ---------------------------------------------------------
+
+cat("\nSaving tables to Excel file...\n")
+
+# Create a workbook
+wb <- createWorkbook()
+
+# Add worksheets
+addWorksheet(wb, "All_Associations")
+addWorksheet(wb, "Significant_FDR_0.05")
+addWorksheet(wb, "Summary_by_Type")
+addWorksheet(wb, "Top_Associations")
+addWorksheet(wb, "Pseudomonas_Info")
+addWorksheet(wb, "Analysis_Info")
+
+# Write data
+writeData(wb, "All_Associations", table_all)
+writeData(wb, "Significant_FDR_0.05", table_sig)
+writeData(wb, "Summary_by_Type", summary_by_type)
+writeData(wb, "Top_Associations", top_associations)
+
+# Add Pseudomonas information
+pseudomonas_info <- data.frame(
+  Item = c("Pseudomonas columns used", "Total food groups tested", 
+           "Total food items tested", "Significant food groups (FDR<0.05)",
+           "Significant food items (FDR<0.05)", "Analysis date"),
+  Value = c(length(pseudomonas_cols), length(food_group_cols), length(food_item_cols),
+            nrow(filter(table_sig, Data_type == "Food_Group")),
+            nrow(filter(table_sig, Data_type == "Food_Item")),
+            as.character(Sys.time()))
+)
+writeData(wb, "Pseudomonas_Info", pseudomonas_info)
+
+# Add analysis information
+analysis_info <- data.frame(
+  Parameter = c("Correlation method", "P-value adjustment", 
+                "Significance threshold", "Minimum sample size",
+                "Pseudomonas genus calculation", "Columns excluded"),
+  Value = c("Spearman correlation", "Benjamini-Hochberg (FDR)", 
+            "P_adj < 0.05", "n >= 10", 
+            "Sum of all Pseudomonas columns", 
+            "Non-Pseudomonas (e.g., Rhodopseudomonas)")
+)
+writeData(wb, "Analysis_Info", analysis_info)
+
+# Apply some formatting
+# Format p-values
+pval_style <- createStyle(numFmt = "0.00E+00")
+if(nrow(table_all) > 0) {
+  addStyle(wb, "All_Associations", style = pval_style, 
+           rows = 2:(nrow(table_all)+1), cols = 5:6, gridExpand = TRUE)
+}
+if(nrow(table_sig) > 0) {
+  addStyle(wb, "Significant_FDR_0.05", style = pval_style,
+           rows = 2:(nrow(table_sig)+1), cols = 5:6, gridExpand = TRUE)
+}
+if(nrow(top_associations) > 0) {
+  addStyle(wb, "Top_Associations", style = pval_style,
+           rows = 2:(nrow(top_associations)+1), cols = 6, gridExpand = TRUE)
+}
+
+# Color code for significance
+sig_style <- createStyle(fontColour = "#006400", textDecoration = "bold")
+for(sheet in c("All_Associations", "Significant_FDR_0.05", "Top_Associations")) {
+  if(sheet == "All_Associations" && nrow(table_all) > 0) {
+    sig_rows <- which(table_all$P_adj < 0.05) + 1
+  } else if(sheet == "Significant_FDR_0.05" && nrow(table_sig) > 0) {
+    sig_rows <- 2:(nrow(table_sig)+1)  # All rows are significant
+  } else if(sheet == "Top_Associations" && nrow(top_associations) > 0) {
+    sig_rows <- 2:(nrow(top_associations)+1)  # All rows in top associations
+  } else {
+    sig_rows <- numeric(0)
+  }
+  
+  if(length(sig_rows) > 0) {
+    addStyle(wb, sheet, style = sig_style, rows = sig_rows, cols = 1:9, gridExpand = TRUE)
+  }
+}
+
+# Save the workbook
+excel_file <- file.path(output_dir, "Pseudomonas_genus_associations.xlsx")
+saveWorkbook(wb, excel_file, overwrite = TRUE)
+cat("Saved to:", excel_file, "\n")
+
+# 9. CREATE SIMPLIFIED CSV FILES -----------------------------------------
+
+cat("\nCreating simplified CSV files...\n")
+
+# CSV 1: Significant associations only
+if(nrow(table_sig) > 0) {
+  write.csv(table_sig, 
+            file.path(output_dir, "Pseudomonas_genus_significant_associations.csv"),
+            row.names = FALSE)
+  cat("Saved significant associations to CSV\n")
+} else {
+  cat("No significant associations found\n")
+}
+
+# CSV 2: Summary table
+# CSV 2: Summary table
+summary_table <- all_genus_results %>%
+  dplyr::mutate(Significant = ifelse(P_adj < 0.05, "Yes", "No")) %>%
+  dplyr::group_by(Data_type, Significant, Direction) %>%
+  dplyr::summarise(
+    Count = n(),
+    Percentage = n() / nrow(all_genus_results) * 100,
+    Mean_abs_correlation = mean(abs(Correlation)),
+    .groups = "drop"
+  )
+
+write.csv(summary_table,
+          file.path(output_dir, "Pseudomonas_genus_summary_table.csv"),
+          row.names = FALSE)
+cat("Saved summary table to CSV\n")
+
+# 10. CREATE VISUALIZATION OF RESULTS ------------------------------------
+
+cat("\nCreating visualization of results...\n")
+
+# Plot 1: Volcano plot
+if(nrow(all_genus_results) > 0) {
+  p_volcano <- ggplot(all_genus_results, aes(x = Correlation, y = -log10(P_adj), 
+                                             color = Data_type, shape = P_adj < 0.05)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.3) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", alpha = 0.3) +
+    labs(title = "Pseudomonas Genus Associations with Foods",
+         subtitle = paste("Total tests:", nrow(all_genus_results), 
+                         "| Significant (FDR<0.05):", nrow(table_sig)),
+         x = "Correlation Coefficient", y = "-log10(Adjusted P-value)",
+         color = "Data Type", shape = "FDR < 0.05") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold")) +
+    scale_color_manual(values = c("Food_Group" = "#2E86AB", "Food_Item" = "#A23B72"))
+  
+  ggsave(file.path(output_dir, "volcano_plot_genus.png"), p_volcano, 
+         width = 10, height = 6, dpi = 300)
+  cat("Saved volcano plot\n")
+}
+
+# Plot 2: Top associations
+if(nrow(table_sig) > 0) {
+  # Get top 20 associations overall
+  top_20 <- table_sig %>%
+    arrange(P_adj, desc(abs(Correlation))) %>%
+    head(20)
+  
+  p_top <- ggplot(top_20, aes(x = reorder(Food, Correlation), y = Correlation, 
+                              fill = Data_type)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    labs(title = "Top 20 Significant Associations with Pseudomonas Genus",
+         x = "Food", y = "Correlation Coefficient",
+         fill = "Data Type") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"),
+          axis.text.y = element_text(size = 9)) +
+    scale_fill_manual(values = c("Food_Group" = "#2E86AB", "Food_Item" = "#A23B72"))
+  
+  ggsave(file.path(output_dir, "top_associations_genus.png"), p_top, 
+         width = 10, height = 8, dpi = 300)
+  cat("Saved top associations plot\n")
+}
+
+# 11. CREATE TEXT SUMMARY -------------------------------------------------
+
+cat("\nCreating text summary...\n")
+
+sink(file.path(output_dir, "summary_report.txt"))
+cat("PSEUDOMONAS GENUS ASSOCIATION ANALYSIS\n")
+cat("======================================\n")
+cat("Analysis date:", Sys.time(), "\n\n")
+
+cat("OVERVIEW\n")
+cat("--------\n")
+cat("Pseudomonas columns used for genus:", length(pseudomonas_cols), "\n")
+cat("Food groups tested:", length(food_group_cols), "\n")
+cat("Food items tested:", length(food_item_cols), "\n")
+cat("Total associations tested:", nrow(all_genus_results), "\n")
+cat("Significant associations (FDR < 0.05):", nrow(table_sig), "\n\n")
+
+cat("BREAKDOWN BY DATA TYPE\n")
+cat("---------------------\n")
+for(data_type in c("Food_Group", "Food_Item")) {
+  type_data <- filter(all_genus_results, Data_type == data_type)
+  type_sig <- filter(table_sig, Data_type == data_type)
+  
+  cat("\n", data_type, ":\n", sep = "")
+  cat("  Total tested:", nrow(type_data), "\n")
+  cat("  Significant:", nrow(type_sig), "\n")
+  if(nrow(type_data) > 0) {
+    cat("  Percentage significant:", round(nrow(type_sig)/nrow(type_data)*100, 1), "%\n")
+  }
+  if(nrow(type_sig) > 0) {
+    cat("  Mean |correlation|:", round(mean(abs(type_sig$Correlation)), 3), "\n")
+  }
+}
+
+cat("\nTOP ASSOCIATIONS\n")
+cat("---------------\n")
+if(nrow(table_sig) > 0) {
+  if(nrow(filter(table_sig, Data_type == "Food_Group")) > 0) {
+    cat("\nFood Groups (Top 5):\n")
+    top_groups <- table_sig %>%
+      filter(Data_type == "Food_Group") %>%
+      arrange(P_adj) %>%
+      head(5)
+    for(i in 1:nrow(top_groups)) {
+      cat(sprintf("  %2d. %-30s: r = %6.3f, p.adj = %7.2e\n", 
+                  i, top_groups$Food[i], top_groups$Correlation[i], top_groups$P_adj[i]))
+    }
+  }
+  
+  if(nrow(filter(table_sig, Data_type == "Food_Item")) > 0) {
+    cat("\nFood Items (Top 5):\n")
+    top_items <- table_sig %>%
+      filter(Data_type == "Food_Item") %>%
+      arrange(P_adj) %>%
+      head(5)
+    for(i in 1:nrow(top_items)) {
+      cat(sprintf("  %2d. %-30s: r = %6.3f, p.adj = %7.2e\n", 
+                  i, top_items$Food[i], top_items$Correlation[i], top_items$P_adj[i]))
+    }
+  }
+} else {
+  cat("No significant associations found at FDR < 0.05\n")
+}
+
+cat("\nSTRONGEST CORRELATIONS\n")
+cat("---------------------\n")
+if(nrow(all_genus_results) > 0) {
+  # Strongest positive
+  strongest_pos <- all_genus_results %>%
+    arrange(desc(Correlation)) %>%
+    head(1)
+  cat("Strongest positive correlation:\n")
+  cat("  ", strongest_pos$Food, " (", strongest_pos$Data_type, "): ", 
+      "r = ", round(strongest_pos$Correlation, 3), 
+      ", p.adj = ", format(strongest_pos$P_adj, scientific = TRUE, digits = 2), "\n", sep = "")
+  
+  # Strongest negative
+  strongest_neg <- all_genus_results %>%
+    arrange(Correlation) %>%
+    head(1)
+  cat("Strongest negative correlation:\n")
+  cat("  ", strongest_neg$Food, " (", strongest_neg$Data_type, "): ", 
+      "r = ", round(strongest_neg$Correlation, 3), 
+      ", p.adj = ", format(strongest_neg$P_adj, scientific = TRUE, digits = 2), "\n", sep = "")
+}
+
+sink()
+
+# 12. PRINT COMPLETION MESSAGE -------------------------------------------
+
+cat("\n" + strrep("=", 60) + "\n")
+cat("ANALYSIS COMPLETE!\n")
+cat(strrep("=", 60) + "\n")
+cat("Output folder:", output_dir, "\n\n")
+
+cat("MAIN OUTPUT FILES:\n")
+cat("1. Pseudomonas_genus_associations.xlsx - Complete results in Excel\n")
+cat("2. volcano_plot_genus.png - Visualization of all results\n")
+cat("3. top_associations_genus.png - Top associations bar plot\n")
+cat("4. summary_report.txt - Text summary of findings\n")
+cat("5. Various CSV files for simplified data\n\n")
+
+if(nrow(all_genus_results) > 0) {
+  cat("KEY FINDINGS:\n")
+  cat("- Total associations tested:", nrow(all_genus_results), "\n")
+  cat("- Significant at FDR < 0.05:", nrow(table_sig), "\n")
+  if(nrow(table_sig) > 0) {
+    cat("- Top food group association:", 
+        table_sig %>% filter(Data_type == "Food_Group") %>% 
+          slice(1) %>% pull(Food), "\n")
+    cat("- Top food item association:", 
+        table_sig %>% filter(Data_type == "Food_Item") %>% 
+          slice(1) %>% pull(Food), "\n")
+  }
+}
+cat("\nCheck the Excel file for complete results!\n")
+```
+```{r}
+# Load libraries
+library(tidyverse)
+library(openxlsx)
+library(Hmisc)
+
+# 1. Setup
+output_dir <- "Pseudomonas_Genus_Results"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# 2. Prepare data
+# Create Pseudomonas genus column
+species_data_clean <- species_data
+colnames(species_data_clean)[1] <- "Participant_ID"
+
+# Get all Pseudomonas columns
+pseudomonas_cols <- colnames(species_data_clean)[-1]
+pseudomonas_cols <- pseudomonas_cols[grepl("^pseudomonas", pseudomonas_cols, ignore.case = TRUE)]
+
+# Merge datasets
+merged_groups <- merge(species_data_clean, food_data, by = "Participant_ID", all = FALSE)
+merged_items <- merge(species_data_clean, food_data_250, by.x = "Participant_ID", 
+                      by.y = "participant_id", all = FALSE)
+
+# Create genus columns
+merged_groups$Pseudomonas_genus <- rowSums(merged_groups[, pseudomonas_cols, drop = FALSE], na.rm = TRUE)
+merged_items$Pseudomonas_genus <- rowSums(merged_items[, pseudomonas_cols, drop = FALSE], na.rm = TRUE)
+
+# 3. Function to test associations
+test_associations <- function(data, food_cols, data_name) {
+  results <- data.frame()
+  
+  for(food in food_cols) {
+    if(food %in% colnames(data)) {
+      complete_cases <- complete.cases(data$Pseudomonas_genus, data[[food]])
+      
+      if(sum(complete_cases) >= 10) {
+        cor_test <- tryCatch({
+          cor.test(data$Pseudomonas_genus[complete_cases],
+                  data[[food]][complete_cases],
+                  method = "spearman", exact = FALSE)
+        }, error = function(e) NULL)
+        
+        if(!is.null(cor_test)) {
+          results <- rbind(results, data.frame(
+            Food = food,
+            Correlation = cor_test$estimate,
+            P_value = cor_test$p.value,
+            N = sum(complete_cases),
+            Data_type = data_name,
+            stringsAsFactors = FALSE
+          ))
+        }
+      }
+    }
+  }
+  
+  if(nrow(results) > 0) {
+    results$P_adj <- p.adjust(results$P_value, method = "BH")
+    results$Significant <- ifelse(results$P_adj < 0.05, "Yes", "No")
+  }
+  
+  return(results)
+}
+
+# 4. Run tests
+# Food groups
+food_group_cols <- colnames(food_data)[-1]
+genus_groups <- test_associations(merged_groups, food_group_cols, "Food_Group")
+
+# Food items
+food_item_cols <- colnames(food_data_250)[3:ncol(food_data_250)]  # Skip participant_id and freg0_pid
+genus_items <- test_associations(merged_items, food_item_cols, "Food_Item")
+
+# Combine results
+all_results <- rbind(genus_groups, genus_items)
+
+# 5. Create Excel file
+wb <- createWorkbook()
+
+# Sheet 1: All results
+addWorksheet(wb, "All_Associations")
+all_results_sorted <- all_results %>%
+  arrange(Data_type, P_adj, desc(abs(Correlation))) %>%
+  mutate(Direction = ifelse(Correlation > 0, "Positive", "Negative"))
+writeData(wb, "All_Associations", all_results_sorted)
+
+# Sheet 2: Food Groups only
+addWorksheet(wb, "Food_Groups")
+food_groups_sig <- genus_groups %>%
+  arrange(P_adj, desc(abs(Correlation))) %>%
+  mutate(Direction = ifelse(Correlation > 0, "Positive", "Negative"))
+writeData(wb, "Food_Groups", food_groups_sig)
+
+# Sheet 3: Food Items only
+addWorksheet(wb, "Food_Items")
+food_items_sig <- genus_items %>%
+  arrange(P_adj, desc(abs(Correlation))) %>%
+  mutate(Direction = ifelse(Correlation > 0, "Positive", "Negative"))
+writeData(wb, "Food_Items", food_items_sig)
+
+# Sheet 4: Significant only (FDR < 0.05)
+addWorksheet(wb, "Significant_FDR_0.05")
+sig_results <- all_results %>%
+  filter(P_adj < 0.05) %>%
+  arrange(Data_type, P_adj, desc(abs(Correlation))) %>%
+  mutate(Direction = ifelse(Correlation > 0, "Positive", "Negative"))
+writeData(wb, "Significant_FDR_0.05", sig_results)
+
+# Sheet 5: Summary
+addWorksheet(wb, "Summary")
+summary_data <- data.frame(
+  Category = c("Pseudomonas columns used", 
+               "Food groups tested", 
+               "Food items tested",
+               "Total associations",
+               "Significant food groups (FDR<0.05)",
+               "Significant food items (FDR<0.05)",
+               "Analysis date"),
+  Value = c(length(pseudomonas_cols),
+            nrow(genus_groups),
+            nrow(genus_items),
+            nrow(all_results),
+            sum(genus_groups$P_adj < 0.05),
+            sum(genus_items$P_adj < 0.05),
+            as.character(Sys.time()))
+)
+writeData(wb, "Summary", summary_data)
+
+# 6. Save Excel file
+excel_file <- file.path(output_dir, "Pseudomonas_genus_associations.xlsx")
+saveWorkbook(wb, excel_file, overwrite = TRUE)
+
+cat("Analysis complete!\n")
+cat("Excel file saved to:", excel_file, "\n")
+cat("\nSheets created:\n")
+cat("1. All_Associations - All results\n")
+cat("2. Food_Groups - Food group results only\n")
+cat("3. Food_Items - Food item results only\n")
+cat("4. Significant_FDR_0.05 - Only FDR < 0.05\n")
+cat("5. Summary - Analysis summary\n")
+```
+
+
+

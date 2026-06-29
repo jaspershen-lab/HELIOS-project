@@ -1,0 +1,496 @@
+---
+title: "metabolic_adjust"
+author: "Ruwen Zhou"
+date: "6/11/2026"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggraph)
+library(igraph)
+library(Hmisc)
+library(writexl)
+library(ggpubr)
+library(MicrobiomeStat)
+
+library(tidygraph)
+
+```
+
+
+#demographic
+```{r}
+food_data = read_xlsx("data/FFQA862_new.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata_diabete = read_xlsx("data/helios800_diabetes.xlsx")
+
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms","Chapati"), as.numeric))
+
+species
+metadata_diabete
+```
+```{r}
+species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+species_filtered1
+#species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+#species_filtered2
+species_filtered1 <- species_filtered1[, !names(species_filtered1) %in% c("unclassified", "others", "Homo sapiens")]
+species_filtered1
+```
+
+
+```{r}
+library(dplyr)
+
+# Step 1: inner_join to get only participants with BOTH species + metadata (~800)
+combined <- metadata_diabete %>%
+  mutate(
+    BMI = DBI14_Weight / (DBI13_Height / 100)^2,
+    BMI_category = case_when(
+      BMI < 18.5                ~ "Underweight",
+      BMI >= 18.5 & BMI < 23   ~ "Normal",
+      BMI >= 23   & BMI < 27.5 ~ "Overweight",
+      BMI >= 27.5               ~ "Obese",
+      TRUE ~ NA_character_
+    ),
+    diabetes_status = case_when(
+      DLAB27_Hba1C_Percent < 5.7                               ~ "Normal",
+      DLAB27_Hba1C_Percent >= 5.7 & DLAB27_Hba1C_Percent < 6.5 ~ "Prediabetic",
+      DLAB27_Hba1C_Percent >= 6.5                              ~ "Diabetic",
+      TRUE ~ NA_character_
+    ),
+    BMI_category    = factor(BMI_category, levels = c("Underweight", "Normal", "Overweight", "Obese")),
+    diabetes_status = factor(diabetes_status, levels = c("Normal", "Prediabetic", "Diabetic"))
+  ) %>%
+  inner_join(species_filtered1, by = "FREG1_Barcode")  # only matched samples
+
+cat("Total matched samples:", nrow(combined), "\n")
+table(combined$BMI_category, useNA = "ifany")
+table(combined$diabetes_status, useNA = "ifany")
+
+
+# Step 2: Metabolically healthy subset for sensitivity analysis
+# Definition: Normal BMI (18.5–22.9) AND normoglycemic (HbA1c < 5.7%)
+metabolically_sensitive <- combined %>%
+  filter(
+    BMI_category != "Obese",
+    diabetes_status != "Diabetic",
+    # exclude NAs so you don't accidentally retain unclassified participants
+    !is.na(BMI_category),
+    !is.na(diabetes_status)
+  )
+
+cat("Sensitivity subset N:", nrow(metabolically_sensitive), "\n")
+table(metabolically_sensitive$FREG5_Ethnic_Group)
+table(metabolically_sensitive$BMI_category, useNA = "ifany")
+table(metabolically_sensitive$diabetes_status, useNA = "ifany")
+```
+
+```{r}
+
+sensitive_barcodes <- metabolically_sensitive$FREG1_Barcode
+
+species_sensitive  <- species_filtered1 %>% filter(FREG1_Barcode %in% sensitive_barcodes)
+metadata_sensitive <- metabolically_sensitive %>%
+  select(FREG0_PID, FREG1_Barcode, FREG5_Ethnic_Group, FREG7_Gender,
+         FREG8_Age, BMI, BMI_category, diabetes_status,
+         DLAB27_Hba1C_Percent, DLAB83_CRP, DLAB81_Insulin, DLAB25_Gluf_Mmol_L)
+metadata_sensitive
+species_sensitive
+```
+##redo alpha beta DA
+```{r}
+# ── 0. Prepare sensitivity subset ─────────────────────────
+# Exclude Obese, Diabetic, and ethnic O
+meta_sensitive <- metabolically_sensitive %>%
+  filter(FREG5_Ethnic_Group != "O") %>%
+  mutate(FREG5_Ethnic_Group = droplevels(factor(FREG5_Ethnic_Group)))
+
+sensitive_barcodes <- meta_sensitive$FREG1_Barcode
+
+# Subset and align species matrix (samples as rows)
+abund_sensitive <- species_sensitive %>%
+  filter(FREG1_Barcode %in% sensitive_barcodes) %>%
+  column_to_rownames("FREG1_Barcode")
+
+# Ensure row order matches between meta and abund
+meta_sensitive <- meta_sensitive %>%
+  filter(FREG1_Barcode %in% rownames(abund_sensitive)) %>%
+  arrange(match(FREG1_Barcode, rownames(abund_sensitive)))
+
+# Add Participant_ID column (used as rownames in phyloseq)
+meta_sensitive <- meta_sensitive %>%
+  mutate(Participant_ID = FREG1_Barcode)
+
+cat("Sensitivity N:", nrow(meta_sensitive), "\n")
+table(meta_sensitive$FREG5_Ethnic_Group)
+
+
+# ── 1. Phyloseq object ─────────────────────────────────────
+OTU_s  <- otu_table(t(abund_sensitive), taxa_are_rows = TRUE)
+META_s <- sample_data(meta_sensitive %>% column_to_rownames("Participant_ID"))
+ps_sensitive <- phyloseq(OTU_s, META_s)
+
+sensitive_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887")
+
+
+# ── 2. Alpha diversity ─────────────────────────────────────
+p_alpha_s <- plot_richness(ps_sensitive,
+              x        = "FREG5_Ethnic_Group",
+              color    = "FREG5_Ethnic_Group",
+              measures = c("Shannon", "Simpson")) +
+  geom_boxplot(aes(fill = FREG5_Ethnic_Group), alpha = 0.7, outlier.shape = NA) +
+  scale_color_manual(values = sensitive_colors) +
+  scale_fill_manual(values  = sensitive_colors) +
+  stat_compare_means(
+    method      = "kruskal.test",
+    label       = "p.format",
+    label.x     = 1.5,
+    label.y.npc = 0.95
+  ) +
+  stat_compare_means(
+    comparisons   = list(c("C","I")),
+    method        = "wilcox.test",
+    label         = "p.signif",
+    step.increase = 0.08
+  ) +
+  theme_bw() +
+  theme(
+    legend.position  = "right",
+    strip.background = element_rect(fill = "grey95"),
+    axis.text.x      = element_text(size = 10)
+  ) +
+  labs(x = "Ethnicity", color = "Ethnicity", fill = "Ethnicity",
+       title = "Alpha diversity — sensitivity analysis (excl. Obese & Diabetic)")
+
+p_alpha_s
+ggsave("figure/alpha_metabolic_healthy.pdf",
+       plot = p_alpha_s, width = 7, height = 5, dpi = 300)
+
+
+# ── 3. Beta diversity ──────────────────────────────────────
+bc_dist_s <- vegan::vegdist(abund_sensitive, method = "bray")
+
+abund_clr_s     <- t(apply(abund_sensitive, 1, clr_transform))  # reuse clr_transform from before
+aitchison_dist_s <- dist(abund_clr_s, method = "euclidean")
+
+# PERMANOVA
+perm_bc_s  <- vegan::adonis2(bc_dist_s       ~ FREG5_Ethnic_Group, data = meta_sensitive, permutations = 999)
+perm_ait_s <- vegan::adonis2(aitchison_dist_s ~ FREG5_Ethnic_Group, data = meta_sensitive, permutations = 999)
+print(perm_bc_s)
+print(perm_ait_s)
+
+# PCoA plots — reuse plot_pcoa() but pass sensitive_colors
+plot_pcoa_s <- function(dist_obj, dist_name, meta) {
+  pcoa_obj <- ape::pcoa(dist_obj)
+  var_exp  <- round(pcoa_obj$values$Relative_eig[1:2] * 100, 1)
+  df <- data.frame(
+    PC1       = pcoa_obj$vectors[, 1],
+    PC2       = pcoa_obj$vectors[, 2],
+    Ethnicity = meta$FREG5_Ethnic_Group
+  )
+  perm_obj <- vegan::adonis2(dist_obj ~ FREG5_Ethnic_Group, data = meta,
+                            permutations = 999, by = "terms")
+  r2  <- round(perm_obj["FREG5_Ethnic_Group", "R2"], 3)
+  pv  <- perm_obj["FREG5_Ethnic_Group", "Pr(>F)"]
+  lab <- paste0("PERMANOVA: R²=", r2,
+                ", p=", ifelse(pv < 0.001, "<0.001", round(pv, 3)))
+  ggplot(df, aes(PC1, PC2, color = Ethnicity)) +
+    geom_point(alpha = 0.7, size = 2) +
+    stat_ellipse(level = 0.95, linewidth = 0.7) +
+    scale_color_manual(values = sensitive_colors) +
+    annotate("text", x = -Inf, y = Inf, hjust = -0.05, vjust = 1.5,
+             label = lab, size = 3.2, color = "grey30") +
+    labs(
+      title = paste0("Beta diversity — ", dist_name, " (sensitivity analysis excl. Obese & Diabetic)"),
+      x     = paste0("PC1 (", var_exp[1], "%)"),
+      y     = paste0("PC2 (", var_exp[2], "%)")
+    ) +
+    theme_bw() +
+    theme(legend.position = "right")
+}
+
+p_bc_s  <- plot_pcoa_s(bc_dist_s,        "Bray-Curtis", meta_sensitive)
+p_ait_s <- plot_pcoa_s(aitchison_dist_s,  "Aitchison",  meta_sensitive)
+
+p_bc_s
+p_ait_s
+ggsave("figure/beta_metabolic_bc.pdf",
+       plot = p_bc_s, width = 8, height = 5, dpi = 300)
+ggsave("figure/beta_metabolic_ait.pdf",
+       plot = p_ait_s, width = 8, height = 5, dpi = 300)
+
+# ── 4. DA analysis (LinDA, one-vs-rest) ────────────────────
+meta_sensitive <- meta_sensitive %>%
+  mutate(
+    C_vs_rest = ifelse(FREG5_Ethnic_Group == "C", "C", "non-C"),
+    I_vs_rest = ifelse(FREG5_Ethnic_Group == "I", "I", "non-I"),
+    M_vs_rest = ifelse(FREG5_Ethnic_Group == "M", "M", "non-M")
+  )
+
+run_linda_s <- function(group_var, label) {
+  res <- linda(
+    feature.dat  = t(abund_sensitive),
+    meta.dat     = meta_sensitive %>% column_to_rownames("Participant_ID"),
+    formula      = paste0("~ ", group_var),
+    alpha        = 0.05,
+    p.adj.method = "BH",
+    prev.filter  = 0.10
+  )
+  contrast_name <- names(res$output)[1]
+  res$output[[contrast_name]] %>%
+    rownames_to_column("Species") %>%
+    mutate(contrast = label) %>%
+    filter(reject == TRUE) %>%
+    arrange(padj)
+}
+
+res_C_s <- run_linda_s("C_vs_rest", "C vs non-C")
+res_I_s <- run_linda_s("I_vs_rest", "I vs non-I")
+res_M_s <- run_linda_s("M_vs_rest", "M vs non-M")
+
+cat("C vs non-C:", nrow(res_C_s), "\n")
+cat("I vs non-I:", nrow(res_I_s), "\n")
+cat("M vs non-M:", nrow(res_M_s), "\n")
+
+sig_all_s <- bind_rows(res_C_s, res_I_s, res_M_s)
+print(sig_all_s %>% select(Species, log2FoldChange, padj, contrast))
+```
+
+```{r}
+library(ggrepel)
+# ── 1. Extract FULL results (all species, not just sig) ────
+extract_linda_full <- function(group_var, label, focal) {
+  res <- linda(
+    feature.dat  = t(abund_sensitive),
+    meta.dat     = meta_sensitive %>% column_to_rownames("Participant_ID"),
+    formula      = paste0("~ ", group_var),
+    alpha        = 0.05,
+    p.adj.method = "BH",
+    prev.filter  = 0.10
+  )
+  contrast_name <- names(res$output)[1]
+  res$output[[contrast_name]] %>%
+    rownames_to_column("Species") %>%
+    mutate(
+      contrast = label,
+      sig      = reject == TRUE & !is.na(padj)
+    )
+}
+
+df_C_full <- extract_linda_full("C_vs_rest", "C vs non-C", "C")
+df_I_full <- extract_linda_full("I_vs_rest", "I vs non-I", "I")
+df_M_full <- extract_linda_full("M_vs_rest", "M vs non-M", "M")
+
+cat("C sig:", sum(df_C_full$sig), "\n")
+cat("I sig:", sum(df_I_full$sig), "\n")
+cat("M sig:", sum(df_M_full$sig), "\n")
+
+
+# ── 2. Updated plot_volcano (sensitivity labels) ───────────
+plot_volcano <- function(df, focal_group) {
+  
+  df <- df %>%
+    mutate(
+      neg_log10_padj = pmin(-log10(padj), 10),
+      label_species  = ifelse(sig, Species, NA),
+      dot_color = case_when(
+        sig & log2FoldChange < 0 ~ "red3",
+        sig & log2FoldChange > 0 ~ "steelblue",
+        TRUE                     ~ "grey80"
+      )
+    )
+  
+  ggplot(df, aes(x = log2FoldChange, y = neg_log10_padj,
+                 label = label_species)) +
+    
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed",
+               color = "grey60", linewidth = 0.4) +
+    geom_vline(xintercept = 0, linetype = "solid",
+               color = "grey60", linewidth = 0.4) +
+    
+    geom_point(aes(color = I(dot_color),
+                   size  = sig,
+                   alpha = sig)) +
+    scale_size_manual(values  = c("TRUE" = 2.8, "FALSE" = 1.2), guide = "none") +
+    scale_alpha_manual(values = c("TRUE" = 0.9, "FALSE" = 0.4), guide = "none") +
+    
+    geom_text_repel(
+      data          = df %>% filter(sig),
+      size          = 3,
+      max.overlaps  = Inf,
+      box.padding   = 0.8,
+      point.padding = 0.5,
+      force         = 10,
+      force_pull    = 0.5,
+      segment.color = "grey50",
+      segment.size  = 0.3,
+      fontface      = "italic",
+      direction     = "both"
+    ) +
+    
+    labs(
+      title    = paste0("Differential abundance: ", focal_group,
+                        " vs non-", focal_group),
+      subtitle = paste0("Sensitivity analysis (excl. Obese & Diabetic) · LinDA · BH-corrected  |  ",
+                        sum(df$sig & df$log2FoldChange < 0),
+                        " enriched in ", focal_group, "  ·  ",
+                        sum(df$sig & df$log2FoldChange > 0),
+                        " depleted in ", focal_group),
+      x        = paste0("Log2 fold change (negative = enriched in ", focal_group, ")"),
+      y        = expression(-log[10](p[adj]))
+    ) +
+    
+    scale_color_identity(
+      guide  = "legend",
+      labels = c("red3"     = paste0("Enriched in ", focal_group),
+                 "steelblue" = paste0("Depleted in ", focal_group),
+                 "grey80"   = "Not significant"),
+      breaks = c("red3", "steelblue", "grey80")
+    ) +
+    
+    theme_bw() +
+    theme(
+      plot.title       = element_text(size = 13, face = "bold"),
+      plot.subtitle    = element_text(size = 10, color = "grey40"),
+      panel.grid.minor = element_blank(),
+      legend.position  = "right",
+      legend.title     = element_blank(),
+      legend.text      = element_text(size = 10),
+      legend.key       = element_blank()
+    ) +
+    guides(color = guide_legend(
+      override.aes = list(size = 3, alpha = 1)
+    ))
+}
+
+
+# ── 3. Plot ────────────────────────────────────────────────
+p_volcano_C_s <- plot_volcano(df_C_full, "C")
+p_volcano_I_s <- plot_volcano(df_I_full, "I")
+p_volcano_M_s <- plot_volcano(df_M_full, "M")
+
+p_volcano_C_s
+p_volcano_I_s
+p_volcano_M_s
+
+
+```
+```{r}
+plot_lollipop <- function(df, focal_group, top_n = 30) {
+  
+  df_sig <- df %>%
+    filter(sig) %>%
+    mutate(
+      log2FoldChange = -log2FoldChange,   # flip sign
+      direction = ifelse(log2FoldChange > 0,   # enriched is now positive
+                         paste0("Enriched in ", focal_group), 
+                         paste0("Depleted in ", focal_group)),
+      Species = gsub("_", " ", Species),
+      Species = factor(Species, levels = Species[order(log2FoldChange)])
+    )
+  
+  if (nrow(df_sig) > top_n) {
+    df_sig <- df_sig %>%
+      arrange(desc(abs(log2FoldChange))) %>%
+      slice_head(n = top_n) %>%
+      arrange(log2FoldChange) %>%
+      mutate(Species = factor(Species, levels = Species))
+    subtitle_note <- paste0("Top ", top_n, " by |log2FC| shown")
+  } else {
+    subtitle_note <- paste0(nrow(df_sig), " significant species")
+  }
+  
+  ggplot(df_sig, aes(x = log2FoldChange, y = Species, color = direction)) +
+    
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+    
+    geom_segment(aes(x = 0, xend = log2FoldChange,
+                     y = Species, yend = Species),
+                 linewidth = 0.6, alpha = 0.7) +
+    
+    geom_point(aes(size = -log10(padj)), alpha = 0.9) +
+    
+    scale_color_manual(
+      values = setNames(
+        c("red3", "steelblue"),
+        c(paste0("Enriched in ", focal_group), paste0("Depleted in ", focal_group))
+      )
+    ) +
+    scale_size_continuous(
+      name   = expression(-log[10](p[adj])),
+      range  = c(2, 6),
+      breaks = c(2, 4, 6, 8)
+    ) +
+    
+    labs(
+      title    = paste0("Differential abundance: ", focal_group, " vs non-", focal_group),
+      subtitle = "Sensitivity analysis (excl. Obese & Diabetic) · LinDA · Top 30",
+      x        = paste0("Log2 fold change (positive = enriched in ", focal_group, ")"),
+      y        = NULL,
+      color    = NULL
+    ) +
+    
+    theme_bw() +
+    theme(
+      plot.title         = element_text(size = 13, face = "bold"),
+      plot.subtitle      = element_text(size = 10, color = "grey40"),
+      panel.grid.minor   = element_blank(),
+      panel.grid.major.y = element_line(linetype = "dotted", color = "grey90"),
+      axis.text.y        = element_text(size = 9, face = "italic"),
+      legend.position    = "right"
+    )
+}
+
+# ── Plot ───────────────────────────────────────────────────
+p_lollipop_C_s <- plot_lollipop(df_C_full, "C", top_n = 30)
+p_lollipop_I_s <- plot_lollipop(df_I_full, "I", top_n = 30)
+p_lollipop_M_s <- plot_lollipop(df_M_full, "M", top_n = 30)
+
+p_lollipop_C_s
+p_lollipop_I_s
+p_lollipop_M_s
+
+
+ggsave("figure/da_metabolic_C.pdf",
+       plot = p_lollipop_C_s, width = 8, height = 5, dpi = 300)
+ggsave("figure/da_metabolic_I.pdf",
+       plot = p_lollipop_I_s, width = 8, height = 5, dpi = 300)
+```
+
+```{r}
+table(meta_sensitive$FREG5_Ethnic_Group)
+perm_bc_s
+perm_ait_s
+sum(df_C_full$sig)
+sum(df_I_full$sig)
+sum(df_M_full$sig)
+```
+
+
+
+
+
+
+
+
+
+

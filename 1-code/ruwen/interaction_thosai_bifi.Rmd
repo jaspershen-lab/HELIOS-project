@@ -1,0 +1,1532 @@
+---
+title: "interaction_analysis"
+author: "Ruwen Zhou"
+date: "6/12/2026"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+## --- load order matters: maskers first, tidyverse last ---
+library(plyr)  # BEFORE dplyr/tidyverse (avoids select/summarise masking)
+library(MASS)          # also masks select(); load before tidyverse
+
+## --- Bioconductor / analysis packages ---
+library(phyloseq)
+library(vegan)         # pulls in 'permute' automatically — do NOT load permute separately
+library(DESeq2)
+library(MicrobiomeStat)
+
+## --- plotting / io / graph ---
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(Hmisc)
+library(readr)
+library(readxl)
+library(writexl)
+library(dplyr)
+library(tibble)
+
+## --- tidyverse LAST so dplyr wins the namespace ---
+library(tidyverse)
+
+```
+#demographic
+```{r}
+food_data = read_xlsx("data/FFQA862_new.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata_diabete = read_xlsx("data/helios800_diabetes.xlsx")
+
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms","Chapati"), as.numeric))
+
+species
+food_data
+metadata_diabete
+```
+```{r}
+
+species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+species_filtered1
+#species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+#species_filtered2
+species_filtered1 <- species_filtered1[, !names(species_filtered1) %in% c("unclassified", "others", "Homo sapiens")]
+species_filtered1
+```
+
+
+```{r}
+library(MicrobiomeStat)
+
+
+## 0. Fix species table orientation -------------------------------
+## species_filtered1 is samples-in-rows with barcodes in column "FREG1_Barcode".
+## LinDA needs features-in-rows, samples-in-columns.
+sp_df <- as.data.frame(species_filtered1)
+stopifnot(!any(duplicated(sp_df$FREG1_Barcode)))   # error early if dup barcodes
+rownames(sp_df) <- sp_df$FREG1_Barcode
+sp_df$FREG1_Barcode <- NULL
+species_mat <- t(as.matrix(sp_df))                 # rows = species, cols = barcodes
+
+stopifnot(is.numeric(species_mat))                 # catch accidental char coercion
+cat("species_mat:", nrow(species_mat), "features x",
+    ncol(species_mat), "samples\n")
+
+## 1. Combined per-barcode metadata --------------------------------
+food_thosai <- food_data %>%
+  transmute(FREG1_Barcode = as.character(Participant_ID),
+            Idli_Thosai   = as.numeric(Idli_Thosai))
+
+meta <- metadata_diabete %>%
+  mutate(FREG1_Barcode = as.character(FREG1_Barcode),
+         BMI          = DBI14_Weight / (DBI13_Height/100)^2,   # assumes height in cm
+         FREG7_Gender = factor(FREG7_Gender),
+         FREG8_Age    = as.numeric(FREG8_Age),
+         HbA1c        = as.numeric(DLAB27_Hba1C_Percent),
+         FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group)) %>%
+  inner_join(food_thosai, by = "FREG1_Barcode")
+
+cat("Rows after join:", nrow(meta), "\n")
+
+## 2. Per-group LinDA dose-response --------------------------------
+run_group <- function(grp) {
+  m <- meta %>%
+    filter(FREG5_Ethnic_Group == grp,
+           !is.na(Idli_Thosai), !is.na(FREG8_Age),
+           !is.na(FREG7_Gender), !is.na(BMI), !is.na(HbA1c))
+  m <- as.data.frame(m)                          # drop tibble (rownames work)
+
+  keep <- base::intersect(m$FREG1_Barcode, colnames(species_mat))
+  cat(grp, ": meta n =", nrow(m),
+      "| overlap with species table =", length(keep), "\n")
+  if (length(keep) == 0) stop("No barcode overlap for group ", grp)
+
+  m    <- m[match(keep, m$FREG1_Barcode), ]
+  rownames(m) <- m$FREG1_Barcode
+  feat <- species_mat[, keep, drop = FALSE]
+
+  fit <- linda(
+    feature.dat = feat,
+    meta.dat    = m,
+    formula     = "~ Idli_Thosai + FREG8_Age + FREG7_Gender + BMI + HbA1c",
+    feature.dat.type = "count",                  # "proportion" if MetaPhlAn rel-abund
+    prev.filter = 0.10,                          # present in >=10% of THIS group
+    is.winsor   = TRUE
+  )
+
+  res         <- fit$output$Idli_Thosai
+  res$feature <- rownames(res)
+  res$ethnic  <- grp
+  res$n       <- nrow(m)
+  res
+}
+
+all_res <- lapply(c("C","I","M"), run_group)
+
+## 3. Pull Bifidobacterium across the 3 groups ---------------------
+bifido <- do.call(rbind, all_res) %>%
+  filter(grepl("Bifidobacterium", feature, ignore.case = TRUE)) %>%
+  select(ethnic, feature, n, log2FoldChange, lfcSE, stat, pvalue, padj) %>%
+  arrange(feature, ethnic)
+
+print(bifido)
+
+## 4. Optional: full significant hits per group -------------------
+sig <- do.call(rbind, all_res) %>%
+  filter(padj < 0.05) %>%
+  select(ethnic, feature, n, log2FoldChange, lfcSE, pvalue, padj) %>%
+  arrange(ethnic, padj)
+
+print(sig)
+```
+
+```{r}
+library(ggplot2); library(dplyr); library(tibble)
+
+pal <- c(Chinese = "#999999", Indian = "#D55E00", Malay = "#0072B2")
+
+## --- Build plotting df: genus-summed Bifido relative abundance ----
+rel <- sweep(species_mat, 2, colSums(species_mat), "/")   # skip if already proportion
+bifido_rows <- grep("Bifidobacterium", rownames(rel), ignore.case = TRUE, value = TRUE)
+bifido_sum  <- colSums(rel[bifido_rows, , drop = FALSE])
+
+plot_df <- tibble(FREG1_Barcode = names(bifido_sum),
+                  Bifido = as.numeric(bifido_sum)) %>%
+  inner_join(meta, by = "FREG1_Barcode") %>%
+  mutate(ethnic = factor(FREG5_Ethnic_Group, levels = c("C","I","M"),
+                         labels = c("Chinese","Indian","Malay")))
+
+pseudo <- min(plot_df$Bifido[plot_df$Bifido > 0]) / 2   # for log axis
+
+## --- Figure 1: dose-response overlay ------------------------------
+p_dose <- ggplot(plot_df, aes(Idli_Thosai, Bifido + pseudo,
+                              color = ethnic, fill = ethnic)) +
+  geom_point(alpha = 0.30, size = 1.3,
+             position = position_jitter(width = 0.4, height = 0)) +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 1, alpha = 0.15) +
+  scale_y_log10() +
+  scale_color_manual(values = pal) + scale_fill_manual(values = pal) +
+  labs(x = "Idli/Thosai intake (g/day)",
+       y = expression(log[10]~"Bifidobacterium relative abundance"),
+       color = NULL, fill = NULL,
+       title = "Bifidobacterium dose-response to Idli/Thosai intake by ethnicity") +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+p_dose
+#ggsave("bifido_doseresponse.pdf", p_dose, width = 7, height = 5)
+
+## --- Figure 2: forest plot of adjusted LinDA slopes ---------------
+fp_df <- do.call(rbind, all_res) %>%
+  filter(grepl("Bifidobacterium", feature, ignore.case = TRUE)) %>%
+  mutate(lo = log2FoldChange - 1.96 * lfcSE,
+         hi = log2FoldChange + 1.96 * lfcSE,
+         sig = ifelse(padj < 0.05, "padj<0.05", "ns"),
+         ethnic = factor(ethnic, levels = c("C","I","M"),
+                         labels = c("Chinese","Indian","Malay")))
+
+p_forest <- ggplot(fp_df, aes(log2FoldChange, feature, color = ethnic)) +
+  geom_vline(xintercept = 0, linetype = 2, color = "grey50") +
+  geom_pointrange(aes(xmin = lo, xmax = hi, shape = sig),
+                  position = position_dodge(width = 0.6), linewidth = 0.7) +
+  scale_color_manual(values = pal) +
+  scale_shape_manual(values = c("padj<0.05" = 16, "ns" = 1)) +
+  labs(x = "Adjusted log2 fold-change per g/day Idli/Thosai",
+       y = NULL, color = NULL, shape = NULL,
+       title = "Adjusted Idli/Thosai-Bifidobacterium association by ethnicity") +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+p_forest
+#ggsave("bifido_forest.pdf", p_forest, width = 7.5, height = 4)
+```
+```{r}
+## Genus-summed Bifido as a single feature, per group, adjusted
+rel <- sweep(species_mat, 2, colSums(species_mat), "/")   # skip if already proportion
+bifido_rows <- grep("Bifidobacterium", rownames(species_mat), ignore.case = TRUE, value = TRUE)
+bifido_genus <- colSums(species_mat[bifido_rows, , drop = FALSE])   # raw counts summed
+
+genus_test <- function(grp) {
+  m <- meta %>%
+    filter(FREG5_Ethnic_Group == grp,
+           !is.na(Idli_Thosai), !is.na(FREG8_Age),
+           !is.na(FREG7_Gender), !is.na(BMI), !is.na(HbA1c)) %>%
+    as.data.frame()
+  keep <- base::intersect(m$FREG1_Barcode, names(bifido_genus))
+  m <- m[match(keep, m$FREG1_Barcode), ]; rownames(m) <- m$FREG1_Barcode
+  feat <- rbind(Bifidobacterium = bifido_genus[keep],
+                .dummy          = bifido_genus[keep])   # linda needs >1 row; ignore .dummy
+  fit <- linda(feature.dat = feat, meta.dat = m,
+               formula = "~ Idli_Thosai + FREG8_Age + FREG7_Gender + BMI + HbA1c",
+               feature.dat.type = "count", prev.filter = 0, is.winsor = TRUE)
+  out <- fit$output$Idli_Thosai["Bifidobacterium", ]
+  out$ethnic <- grp; out
+}
+
+do.call(rbind, lapply(c("C","I","M"), genus_test))
+```
+
+## try other
+```{r}
+library(dplyr)
+library(stringr)
+library(purrr)
+library(broom)
+library(ggplot2)
+library(tidyr)
+library(tibble)
+library(pheatmap)
+
+# ============================================================
+# 1. Prepare metadata
+# ============================================================
+
+metadata_simple <- metadata_diabete %>%
+  mutate(
+    BMI = DBI14_Weight / (DBI13_Height / 100)^2
+  ) %>%
+  select(
+    FREG1_Barcode,
+    FREG5_Ethnic_Group,
+    FREG7_Gender,
+    FREG8_Age,
+    DLAB27_Hba1C_Percent,
+    BMI
+  )
+
+# ============================================================
+# 2. Prepare food data
+# food_data uses Participant_ID, rename it to FREG1_Barcode
+# ============================================================
+
+food_simple <- food_data %>%
+  rename(FREG1_Barcode = Participant_ID) %>%
+  select(FREG1_Barcode, Idli_Thosai)
+
+# ============================================================
+# 3. Merge species + food + metadata
+# ============================================================
+
+df <- species_filtered1 %>%
+  inner_join(food_simple, by = "FREG1_Barcode") %>%
+  inner_join(metadata_simple, by = "FREG1_Barcode") %>%
+  filter(FREG5_Ethnic_Group %in% c("C", "I", "M")) %>%
+  mutate(
+    FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group, levels = c("C", "I", "M")),
+    FREG7_Gender = factor(FREG7_Gender),
+    log_Idli_Thosai = log1p(Idli_Thosai)
+  )
+
+# Check sample size
+table(df$FREG5_Ethnic_Group)
+```
+
+```{r}
+# Species columns are all columns from species_filtered1 except barcode
+species_cols <- base::setdiff(colnames(species_filtered1), "FREG1_Barcode")
+
+# Find Bifidobacterium species
+bifido_species <- species_cols[
+  str_detect(species_cols, regex("Bifidobacterium", ignore_case = TRUE))
+]
+
+bifido_species
+```
+```{r}
+run_bifido_model <- function(ethnic_group, species_name) {
+  
+  dat <- df %>%
+    filter(FREG5_Ethnic_Group == ethnic_group) %>%
+    select(
+      species_abundance = all_of(species_name),
+      Idli_Thosai_log,
+      FREG8_Age,
+      FREG7_Gender,
+      BMI,
+      DLAB27_Hba1C_Percent
+    ) %>%
+    filter(
+      !is.na(species_abundance),
+      !is.na(Idli_Thosai_log),
+      !is.na(FREG8_Age),
+      !is.na(FREG7_Gender),
+      !is.na(BMI),
+      !is.na(DLAB27_Hba1C_Percent)
+    )
+  
+  # skip if too few samples or species has no variation
+  if (nrow(dat) < 20) return(NULL)
+  if (sd(dat$species_abundance, na.rm = TRUE) == 0) return(NULL)
+  
+  fit <- lm(
+    species_abundance ~ Idli_Thosai_log + FREG8_Age + FREG7_Gender + BMI + DLAB27_Hba1C_Percent,
+    data = dat
+  )
+  
+  result <- tidy(fit) %>%
+    filter(term == "Idli_Thosai_log") %>%
+    mutate(
+      Ethnicity = ethnic_group,
+      Species = species_name,
+      N = nrow(dat)
+    )
+  
+  return(result)
+}
+```
+
+```{r}
+idli_bifido_results <- expand.grid(
+  Ethnicity = c("C", "I", "M"),
+  Species = bifido_species,
+  stringsAsFactors = FALSE
+) %>%
+  pmap_dfr(function(Ethnicity, Species) {
+    run_bifido_model(Ethnicity, Species)
+  }) %>%
+  group_by(Ethnicity) %>%
+  mutate(
+    p_adj = p.adjust(p.value, method = "BH"),
+    Direction = case_when(
+      estimate > 0 & p_adj < 0.05 ~ "Positive significant",
+      estimate < 0 & p_adj < 0.05 ~ "Negative significant",
+      estimate > 0 ~ "Positive non-significant",
+      estimate < 0 ~ "Negative non-significant",
+      TRUE ~ "No direction"
+    )
+  ) %>%
+  ungroup() %>%
+  arrange(Ethnicity, p_adj)
+
+idli_bifido_results
+```
+
+```{r}
+ggplot(
+  idli_bifido_results,
+  aes(x = estimate, y = reorder(Species, estimate))
+) +
+  geom_point(aes(size = -log10(p.value), shape = p_adj < 0.05)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  facet_wrap(~ Ethnicity, scales = "free_y") +
+  labs(
+    x = "Association estimate for log1p(Idli_Thosai)",
+    y = "Bifidobacterium species",
+    size = "-log10(p-value)",
+    shape = "FDR < 0.05",
+    title = "Within-ethnicity association between Idli/Thosai intake and Bifidobacterium species",
+    subtitle = "Adjusted for age, gender, BMI, and HbA1c"
+  ) +
+  theme_bw()
+
+# ggsave(
+#   "figure/Idli_Thosai_Bifidobacterium_within_ethnicity_forestplot.pdf",
+#   width = 10,
+#   height = 6
+# )
+```
+```{r}
+heatmap_df <- idli_bifido_results %>%
+  select(Ethnicity, Species, estimate) %>%
+  pivot_wider(names_from = Ethnicity, values_from = estimate) %>%
+  column_to_rownames("Species")
+
+pheatmap(
+  heatmap_df,
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  main = "Idli/Thosai association with Bifidobacterium species"
+)
+```
+
+## show higher thosai means higher bifido
+```{r}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(broom)
+library(purrr)
+library(tidyr)
+
+# ============================================================
+# Prepare metadata
+# ============================================================
+
+metadata_simple <- metadata_diabete %>%
+  mutate(
+    BMI = DBI14_Weight / (DBI13_Height / 100)^2
+  ) %>%
+  select(
+    FREG1_Barcode,
+    FREG5_Ethnic_Group,
+    FREG7_Gender,
+    FREG8_Age,
+    DLAB27_Hba1C_Percent,
+    BMI
+  )
+
+# ============================================================
+# Prepare food data
+# ============================================================
+
+food_simple <- food_data %>%
+  rename(FREG1_Barcode = Participant_ID) %>%
+  select(FREG1_Barcode, Idli_Thosai)
+
+# ============================================================
+# Merge data
+# ============================================================
+
+df <- species_filtered1 %>%
+  inner_join(food_simple, by = "FREG1_Barcode") %>%
+  inner_join(metadata_simple, by = "FREG1_Barcode") %>%
+  filter(FREG5_Ethnic_Group %in% c("C", "I", "M")) %>%
+  mutate(
+    FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group, levels = c("C", "I", "M")),
+    FREG7_Gender = factor(FREG7_Gender),
+    Idli_Thosai_log = log1p(Idli_Thosai)
+  )
+
+table(df$FREG5_Ethnic_Group)
+```
+```{r}
+# Identify species columns
+species_cols <- base::setdiff(colnames(species_filtered1), "FREG1_Barcode")
+
+# Identify Bifidobacterium species
+bifido_species <- species_cols[
+  str_detect(species_cols, regex("Bifidobacterium", ignore_case = TRUE))
+]
+
+bifido_species
+
+# Make sure species columns are numeric
+df <- df %>%
+  mutate(across(all_of(bifido_species), as.numeric))
+
+# Total Bifidobacterium abundance
+df <- df %>%
+  mutate(
+    Bifido_total = rowSums(across(all_of(bifido_species)), na.rm = TRUE),
+    Bifido_total_log = log1p(Bifido_total)
+  )
+```
+```{r}
+p1 <- ggplot(
+  df,
+  aes(x = Idli_Thosai_log, y = Bifido_total_log)
+) +
+  geom_point(alpha = 0.65, size = 2) +
+  geom_smooth(method = "lm", se = TRUE) +
+  facet_wrap(~ FREG5_Ethnic_Group, scales = "free") +
+  theme_bw() +
+  labs(
+    title = "Idli/Thosai intake and total Bifidobacterium abundance within ethnicity",
+    subtitle = "Each point represents one participant",
+    x = "log1p(Idli/Thosai intake)",
+    y = "log1p(total Bifidobacterium absolute abundance)"
+  )
+
+p1
+
+# ggsave(
+#   "Idli_Thosai_vs_total_Bifidobacterium_raw_scatter.pdf",
+#   p1,
+#   width = 9,
+#   height = 4.5
+# )
+```
+```{r}
+run_total_bifido_model <- function(ethnic_group) {
+  
+  dat <- df %>%
+    filter(FREG5_Ethnic_Group == ethnic_group) %>%
+    select(
+      Bifido_total_log,
+      Idli_Thosai_log,
+      FREG8_Age,
+      FREG7_Gender,
+      BMI,
+      DLAB27_Hba1C_Percent
+    ) %>%
+    filter(complete.cases(.))
+  
+  fit <- lm(
+    Bifido_total_log ~ Idli_Thosai_log + FREG8_Age + FREG7_Gender + BMI + DLAB27_Hba1C_Percent,
+    data = dat
+  )
+  
+  tidy(fit) %>%
+    filter(term == "Idli_Thosai_log") %>%
+    mutate(
+      Ethnicity = ethnic_group,
+      N = nrow(dat)
+    )
+}
+
+total_bifido_results <- map_dfr(
+  c("C", "I", "M"),
+  run_total_bifido_model
+) %>%
+  mutate(
+    p_adj = p.adjust(p.value, method = "BH"),
+    Direction = ifelse(estimate > 0, "Positive", "Negative")
+  ) %>%
+  select(
+    Ethnicity,
+    N,
+    estimate,
+    std.error,
+    statistic,
+    p.value,
+    p_adj,
+    Direction
+  )
+
+total_bifido_results
+
+# write.csv(
+#   total_bifido_results,
+#   "Idli_Thosai_total_Bifidobacterium_adjusted_within_ethnicity.csv",
+#   row.names = FALSE
+# )
+```
+```{r}
+make_partial_residual_data <- function(ethnic_group) {
+  
+  dat <- df %>%
+    filter(FREG5_Ethnic_Group == ethnic_group) %>%
+    select(
+      FREG1_Barcode,
+      Bifido_total_log,
+      Idli_Thosai_log,
+      FREG8_Age,
+      FREG7_Gender,
+      BMI,
+      DLAB27_Hba1C_Percent
+    ) %>%
+    filter(complete.cases(.))
+  
+  # Remove covariate effects from Bifidobacterium
+  fit_y <- lm(
+    Bifido_total_log ~ FREG8_Age + FREG7_Gender + BMI + DLAB27_Hba1C_Percent,
+    data = dat
+  )
+  
+  # Remove covariate effects from Idli/Thosai
+  fit_x <- lm(
+    Idli_Thosai_log ~ FREG8_Age + FREG7_Gender + BMI + DLAB27_Hba1C_Percent,
+    data = dat
+  )
+  
+  dat %>%
+    mutate(
+      Bifido_adjusted_residual = resid(fit_y),
+      Idli_Thosai_adjusted_residual = resid(fit_x),
+      Ethnicity = ethnic_group
+    )
+}
+
+partial_df <- map_dfr(
+  c("C", "I", "M"),
+  make_partial_residual_data
+)
+```
+```{r}
+p2 <- ggplot(
+  partial_df,
+  aes(x = Idli_Thosai_adjusted_residual, y = Bifido_adjusted_residual)
+) +
+  geom_point(alpha = 0.65, size = 2) +
+  geom_smooth(method = "lm", se = TRUE) +
+  facet_wrap(~ Ethnicity, scales = "free") +
+  theme_bw() +
+  labs(
+    title = "Adjusted association between Idli/Thosai intake and total Bifidobacterium abundance",
+    subtitle = "Residual-residual plot adjusted for age, gender, BMI, and HbA1c",
+    x = "Adjusted Idli/Thosai intake residual",
+    y = "Adjusted total Bifidobacterium abundance residual"
+  )
+
+p2
+
+# ggsave(
+#   "Idli_Thosai_total_Bifidobacterium_adjusted_partial_residual_plot.pdf",
+#   p2,
+#   width = 9,
+#   height = 4.5
+# )
+```
+```{r}
+partial_stats <- partial_df %>%
+  group_by(Ethnicity) %>%
+  do({
+    fit <- lm(Bifido_adjusted_residual ~ Idli_Thosai_adjusted_residual, data = .)
+    tidy(fit)
+  }) %>%
+  filter(term == "Idli_Thosai_adjusted_residual") %>%
+  mutate(
+    label = paste0(
+      "beta = ", signif(estimate, 3),
+      "\np = ", signif(p.value, 3)
+    )
+  )
+
+partial_stats
+```
+```{r}
+p2_annotated <- p2 +
+  geom_text(
+    data = partial_stats,
+    aes(
+      x = Inf,
+      y = Inf,
+      label = label
+    ),
+    inherit.aes = FALSE,
+    hjust = 1.1,
+    vjust = 1.2,
+    size = 4
+  )
+
+p2_annotated
+
+# ggsave(
+#   "Idli_Thosai_total_Bifidobacterium_adjusted_partial_residual_plot_with_pvalue.pdf",
+#   p2_annotated,
+#   width = 9,
+#   height = 4.5
+# )
+```
+```{r}
+library(dplyr)
+library(broom)
+library(stringr)
+library(purrr)
+library(ggplot2)
+
+# Make sure ethnicity and gender are factors
+df <- df %>%
+  filter(FREG5_Ethnic_Group %in% c("C", "I", "M")) %>%
+  mutate(
+    FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group, levels = c("C", "I", "M")),
+    FREG7_Gender = factor(FREG7_Gender)
+  )
+
+# Full interaction model
+fit_interaction <- lm(
+  Bifido_total_log ~ Idli_Thosai_log * FREG5_Ethnic_Group +
+    FREG8_Age + FREG7_Gender + BMI + DLAB27_Hba1C_Percent,
+  data = df
+)
+
+summary(fit_interaction)
+
+interaction_results <- tidy(fit_interaction)
+interaction_results
+
+# write.csv(
+#   interaction_results,
+#   "Interaction_model_Idli_Thosai_Bifidobacterium_by_ethnicity.csv",
+#   row.names = FALSE
+# )
+```
+```{r}
+interaction_results %>%
+  filter(str_detect(term, "Idli_Thosai_log"))
+```
+
+```{r}
+library(emmeans)
+
+emm_slopes <- emtrends(
+  fit_interaction,
+  specs = "FREG5_Ethnic_Group",
+  var = "Idli_Thosai_log"
+)
+
+ethnicity_slopes <- summary(emm_slopes, infer = TRUE) %>%
+  as.data.frame()
+
+ethnicity_slopes
+
+# write.csv(
+#   ethnicity_slopes,
+#   "Ethnicity_specific_slopes_from_interaction_model.csv",
+#   row.names = FALSE
+# )
+```
+```{r}
+slope_comparisons <- pairs(emm_slopes) %>%
+  summary(infer = TRUE) %>%
+  as.data.frame()
+
+slope_comparisons
+
+# write.csv(
+#   slope_comparisons,
+#   "Pairwise_comparison_of_Idli_Thosai_slopes_by_ethnicity.csv",
+#   row.names = FALSE
+# )
+```
+
+```{r}
+df_consumer <- df %>%
+  mutate(
+    Idli_Thosai_consumer = ifelse(Idli_Thosai > 0, "Consumer", "Non-consumer"),
+    Idli_Thosai_consumer = factor(Idli_Thosai_consumer, levels = c("Non-consumer", "Consumer"))
+  )
+
+table(df_consumer$FREG5_Ethnic_Group, df_consumer$Idli_Thosai_consumer)
+```
+```{r}
+run_consumer_model <- function(ethnic_group) {
+  
+  dat <- df_consumer %>%
+    filter(FREG5_Ethnic_Group == ethnic_group) %>%
+    select(
+      Bifido_total_log,
+      Idli_Thosai_consumer,
+      FREG8_Age,
+      FREG7_Gender,
+      BMI,
+      DLAB27_Hba1C_Percent
+    ) %>%
+    filter(complete.cases(.))
+  
+  if (length(unique(dat$Idli_Thosai_consumer)) < 2) return(NULL)
+  
+  fit <- lm(
+    Bifido_total_log ~ Idli_Thosai_consumer +
+      FREG8_Age + FREG7_Gender + BMI + DLAB27_Hba1C_Percent,
+    data = dat
+  )
+  
+  tidy(fit) %>%
+    filter(term == "Idli_Thosai_consumerConsumer") %>%
+    mutate(
+      Ethnicity = ethnic_group,
+      N = nrow(dat),
+      N_consumer = sum(dat$Idli_Thosai_consumer == "Consumer"),
+      N_nonconsumer = sum(dat$Idli_Thosai_consumer == "Non-consumer")
+    )
+}
+
+consumer_results <- map_dfr(
+  c("C", "I", "M"),
+  run_consumer_model
+) %>%
+  mutate(
+    p_adj = p.adjust(p.value, method = "BH"),
+    Direction = ifelse(estimate > 0, "Higher in consumers", "Lower in consumers")
+  )
+
+consumer_results
+
+# write.csv(
+#   consumer_results,
+#   "Consumer_vs_nonconsumer_Bifidobacterium_within_ethnicity.csv",
+#   row.names = FALSE
+# )
+```
+```{r}
+p_consumer <- ggplot(
+  df_consumer,
+  aes(x = Idli_Thosai_consumer, y = Bifido_total_log)
+) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.6, size = 1.8) +
+  facet_wrap(~ FREG5_Ethnic_Group, scales = "free_y") +
+  theme_bw() +
+  labs(
+    title = "Total Bifidobacterium abundance by Idli/Thosai consumption status",
+    subtitle = "Shown within each ethnic group",
+    x = "Idli/Thosai consumption",
+    y = "log1p(total Bifidobacterium absolute abundance)"
+  )
+
+p_consumer
+
+# ggsave(
+#   "Bifidobacterium_consumer_vs_nonconsumer_within_ethnicity.pdf",
+#   p_consumer,
+#   width = 9,
+#   height = 4.5
+# )
+```
+```{r}
+df_grouped <- df %>%
+  group_by(FREG5_Ethnic_Group) %>%
+  mutate(
+    positive_median = median(Idli_Thosai[Idli_Thosai > 0], na.rm = TRUE),
+    Idli_Thosai_group = case_when(
+      is.na(Idli_Thosai) ~ NA_character_,
+      Idli_Thosai == 0 ~ "None",
+      Idli_Thosai > 0 & Idli_Thosai <= positive_median ~ "Low",
+      Idli_Thosai > positive_median ~ "High"
+    ),
+    Idli_Thosai_group = factor(Idli_Thosai_group, levels = c("None", "Low", "High"))
+  ) %>%
+  ungroup()
+
+table(df_grouped$FREG5_Ethnic_Group, df_grouped$Idli_Thosai_group)
+```
+```{r}
+run_group_model <- function(ethnic_group) {
+  
+  dat <- df_grouped %>%
+    filter(FREG5_Ethnic_Group == ethnic_group) %>%
+    select(
+      Bifido_total_log,
+      Idli_Thosai_group,
+      FREG8_Age,
+      FREG7_Gender,
+      BMI,
+      DLAB27_Hba1C_Percent
+    ) %>%
+    filter(complete.cases(.))
+  
+  if (length(unique(dat$Idli_Thosai_group)) < 2) return(NULL)
+  
+  fit <- lm(
+    Bifido_total_log ~ Idli_Thosai_group +
+      FREG8_Age + FREG7_Gender + BMI + DLAB27_Hba1C_Percent,
+    data = dat
+  )
+  
+  tidy(fit) %>%
+    filter(str_detect(term, "Idli_Thosai_group")) %>%
+    mutate(
+      Ethnicity = ethnic_group,
+      N = nrow(dat),
+      N_none = sum(dat$Idli_Thosai_group == "None"),
+      N_low = sum(dat$Idli_Thosai_group == "Low"),
+      N_high = sum(dat$Idli_Thosai_group == "High")
+    )
+}
+
+group_results <- map_dfr(
+  c("C", "I", "M"),
+  run_group_model
+) %>%
+  group_by(Ethnicity) %>%
+  mutate(p_adj = p.adjust(p.value, method = "BH")) %>%
+  ungroup()
+
+group_results
+
+# write.csv(
+#   group_results,
+#   "None_low_high_Idli_Thosai_Bifidobacterium_within_ethnicity.csv",
+#   row.names = FALSE
+# )
+```
+```{r}
+p_group <- ggplot(
+  df_grouped,
+  aes(x = Idli_Thosai_group, y = Bifido_total_log)
+) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.6, size = 1.8) +
+  facet_wrap(~ FREG5_Ethnic_Group, scales = "free_y") +
+  theme_bw() +
+  labs(
+    title = "Total Bifidobacterium abundance across Idli/Thosai intake groups",
+    subtitle = "Groups defined separately within each ethnicity",
+    x = "Idli/Thosai intake group",
+    y = "log1p(total Bifidobacterium absolute abundance)"
+  )
+
+p_group
+
+# ggsave(
+#   "Bifidobacterium_none_low_high_Idli_Thosai_within_ethnicity.pdf",
+#   p_group,
+#   width = 9,
+#   height = 4.5
+# )
+```
+## all food and species
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(broom)
+library(ggplot2)
+
+# ============================================================
+# 1. Prepare metadata
+# ============================================================
+
+metadata_simple <- metadata_diabete %>%
+  mutate(
+    BMI = DBI14_Weight / (DBI13_Height / 100)^2
+  ) %>%
+  select(
+    FREG1_Barcode,
+    FREG5_Ethnic_Group,
+    FREG7_Gender,
+    FREG8_Age,
+    DLAB27_Hba1C_Percent,
+    BMI
+  )
+
+# ============================================================
+# 2. Prepare food data
+# ============================================================
+
+food_simple <- food_data %>%
+  rename(FREG1_Barcode = Participant_ID)
+
+# food columns
+food_cols <- base::setdiff(colnames(food_simple), "FREG1_Barcode")
+
+# species columns
+species_cols <- base::setdiff(colnames(species_filtered1), "FREG1_Barcode")
+
+# ============================================================
+# 3. Merge data
+# ============================================================
+
+df_all <- species_filtered1 %>%
+  inner_join(food_simple, by = "FREG1_Barcode") %>%
+  inner_join(metadata_simple, by = "FREG1_Barcode") %>%
+  filter(FREG5_Ethnic_Group %in% c("C", "I", "M")) %>%
+  mutate(
+    FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group, levels = c("C", "I", "M")),
+    FREG7_Gender = factor(FREG7_Gender)
+  )
+
+table(df_all$FREG5_Ethnic_Group)
+```
+```{r}
+df_all <- df_all %>%
+  mutate(across(all_of(food_cols), ~ suppressWarnings(as.numeric(.x)))) %>%
+  mutate(across(all_of(species_cols), ~ suppressWarnings(as.numeric(.x))))
+```
+```{r}
+# log-transform food variables only
+df_all <- df_all %>%
+  mutate(across(all_of(food_cols), ~ log1p(.x), .names = "log_{.col}"))
+
+food_log_cols <- paste0("log_", food_cols)
+```
+```{r}
+run_one_association <- function(data, ethnic_group, food_var, species_var) {
+  
+  dat <- data %>%
+    filter(FREG5_Ethnic_Group == ethnic_group) %>%
+    transmute(
+      y = .data[[species_var]],
+      x = .data[[food_var]],
+      Age = FREG8_Age,
+      Gender = FREG7_Gender,
+      BMI = BMI,
+      HbA1c = DLAB27_Hba1C_Percent
+    ) %>%
+    filter(complete.cases(.))
+  
+  # skip small sample size
+  if (nrow(dat) < 30) return(NULL)
+  
+  # skip if food has no variation
+  if (sd(dat$x, na.rm = TRUE) == 0) return(NULL)
+  
+  # skip if species has no variation
+  if (sd(dat$y, na.rm = TRUE) == 0) return(NULL)
+  
+  # skip if too few food consumers
+  # because log food > 0 means original food intake > 0
+  if (sum(dat$x > 0, na.rm = TRUE) < 5) return(NULL)
+  
+  # skip if species is almost always zero
+  if (sum(dat$y > 0, na.rm = TRUE) < 5) return(NULL)
+  
+  fit <- lm(
+    y ~ x + Age + Gender + BMI + HbA1c,
+    data = dat
+  )
+  
+  tidy(fit) %>%
+    filter(term == "x") %>%
+    mutate(
+      Ethnicity = ethnic_group,
+      Food = str_remove(food_var, "^log_"),
+      Species = species_var,
+      N = nrow(dat),
+      N_food_positive = sum(dat$x > 0, na.rm = TRUE),
+      N_species_positive = sum(dat$y > 0, na.rm = TRUE)
+    )
+}
+```
+```{r}
+# all_food_species_results <- expand.grid(
+#   Ethnicity = c("C", "I", "M"),
+#   Food_var = food_log_cols,
+#   Species = species_cols,
+#   stringsAsFactors = FALSE
+# ) %>%
+#   pmap_dfr(function(Ethnicity, Food_var, Species) {
+#     run_one_association(
+#       data = df_all,
+#       ethnic_group = Ethnicity,
+#       food_var = Food_var,
+#       species_var = Species
+#     )
+#   })
+foods_of_interest <- c("log_Idli_Thosai", "log_Chapati")
+
+bifido_species <- species_cols[
+  stringr::str_detect(species_cols, regex("Bifidobacterium", ignore_case = TRUE))
+]
+
+focused_results <- expand.grid(
+  Ethnicity = c("C", "I", "M"),
+  Food_var = foods_of_interest,
+  Species = bifido_species,
+  stringsAsFactors = FALSE
+) %>%
+  purrr::pmap_dfr(function(Ethnicity, Food_var, Species) {
+    run_one_association(
+      data = df_all,
+      ethnic_group = Ethnicity,
+      food_var = Food_var,
+      species_var = Species
+    )
+  }) %>%
+  group_by(Ethnicity, Food) %>%
+  mutate(p_adj = p.adjust(p.value, method = "BH")) %>%
+  ungroup() %>%
+  arrange(Ethnicity, Food, p_adj)
+
+focused_results
+```
+```{r}
+all_food_species_results <- all_food_species_results %>%
+  group_by(Ethnicity) %>%
+  mutate(
+    p_adj = p.adjust(p.value, method = "BH"),
+    Direction = case_when(
+      estimate > 0 & p_adj < 0.05 ~ "Positive significant",
+      estimate < 0 & p_adj < 0.05 ~ "Negative significant",
+      estimate > 0 ~ "Positive non-significant",
+      estimate < 0 ~ "Negative non-significant",
+      TRUE ~ "No direction"
+    )
+  ) %>%
+  ungroup() %>%
+  arrange(Ethnicity, p_adj)
+all_food_species_results
+# write.csv(
+#   all_food_species_results,
+#   "Supplementary_all_food_all_species_adjusted_within_ethnicity.csv",
+#   row.names = FALSE
+# )
+```
+
+## for response
+```{r}
+# ============================================================
+# Final outputs for reviewer rebuttal: collinearity / ethnicity-diet interaction
+# ============================================================
+
+library(dplyr)
+library(stringr)
+library(broom)
+
+# ------------------------------------------------------------
+# 1. Basic sample size by ethnicity
+# ------------------------------------------------------------
+
+cat("\n==============================\n")
+cat("1. Sample size by ethnicity\n")
+cat("==============================\n")
+
+print(table(df$FREG5_Ethnic_Group))
+
+
+# ------------------------------------------------------------
+# 2. Idli/Thosai consumer distribution by ethnicity
+# ------------------------------------------------------------
+
+cat("\n=============================================\n")
+cat("2. Idli/Thosai consumer distribution by ethnicity\n")
+cat("=============================================\n")
+
+df_consumer <- df %>%
+  mutate(
+    Idli_Thosai_consumer = ifelse(Idli_Thosai > 0, "Consumer", "Non-consumer"),
+    Idli_Thosai_consumer = factor(
+      Idli_Thosai_consumer,
+      levels = c("Non-consumer", "Consumer")
+    )
+  )
+
+consumer_table <- table(
+  df_consumer$FREG5_Ethnic_Group,
+  df_consumer$Idli_Thosai_consumer
+)
+
+print(consumer_table)
+
+consumer_prop <- prop.table(consumer_table, margin = 1)
+print(round(consumer_prop, 3))
+
+
+# ------------------------------------------------------------
+# 3. Chapati consumer distribution by ethnicity
+# ------------------------------------------------------------
+
+cat("\n======================================\n")
+cat("3. Chapati consumer distribution by ethnicity\n")
+cat("======================================\n")
+
+df_consumer_chapati <- df_all %>%
+  mutate(
+    Chapati_consumer = ifelse(Chapati > 0, "Consumer", "Non-consumer"),
+    Chapati_consumer = factor(
+      Chapati_consumer,
+      levels = c("Non-consumer", "Consumer")
+    )
+  )
+
+chapati_table <- table(
+  df_consumer_chapati$FREG5_Ethnic_Group,
+  df_consumer_chapati$Chapati_consumer
+)
+
+print(chapati_table)
+
+chapati_prop <- prop.table(chapati_table, margin = 1)
+print(round(chapati_prop, 3))
+
+
+# ------------------------------------------------------------
+# 4. Focused food x Bifidobacterium species results
+# ------------------------------------------------------------
+
+cat("\n================================================\n")
+cat("4. Focused food x Bifidobacterium species results\n")
+cat("================================================\n")
+
+focused_results_summary <- focused_results %>%
+  mutate(
+    Direction = case_when(
+      estimate > 0 & p_adj < 0.05 ~ "Positive significant",
+      estimate < 0 & p_adj < 0.05 ~ "Negative significant",
+      estimate > 0 ~ "Positive non-significant",
+      estimate < 0 ~ "Negative non-significant",
+      TRUE ~ "No direction"
+    )
+  ) %>%
+  select(
+    Ethnicity,
+    Food,
+    Species,
+    N,
+    N_food_positive,
+    N_species_positive,
+    estimate,
+    std.error,
+    statistic,
+    p.value,
+    p_adj,
+    Direction
+  ) %>%
+  arrange(Food, Ethnicity, p_adj)
+
+
+print(focused_results_summary, n = Inf)
+
+
+# ------------------------------------------------------------
+# 5. Significant focused food x Bifidobacterium species results
+# ------------------------------------------------------------
+
+cat("\n============================================================\n")
+cat("5. Significant focused food x Bifidobacterium species results\n")
+cat("============================================================\n")
+
+focused_sig <- focused_results_summary %>%
+  filter(p_adj < 0.05) %>%
+  arrange(Food, Ethnicity, p_adj)
+
+
+print(focused_sig, n = Inf)
+
+
+# ------------------------------------------------------------
+# 6. Number of positive / negative associations by food and ethnicity
+# ------------------------------------------------------------
+
+cat("\n=====================================================\n")
+cat("6. Direction summary of focused Bifidobacterium results\n")
+cat("=====================================================\n")
+
+direction_summary <- focused_results_summary %>%
+  mutate(
+    Direction_simple = case_when(
+      estimate > 0 & p_adj < 0.05 ~ "Positive significant",
+      estimate < 0 & p_adj < 0.05 ~ "Negative significant",
+      estimate > 0 ~ "Positive non-significant",
+      estimate < 0 ~ "Negative non-significant",
+      TRUE ~ "No direction"
+    )
+  ) %>%
+  count(Food, Ethnicity, Direction_simple)
+
+print(direction_summary, n = Inf)
+
+
+# ------------------------------------------------------------
+# 7. Total Bifidobacterium model for Idli/Thosai and Chapati
+# ------------------------------------------------------------
+
+cat("\n=================================================\n")
+cat("7. Total Bifidobacterium ~ selected foods by ethnicity\n")
+cat("=================================================\n")
+
+# Make sure total Bifidobacterium exists
+if (!"Bifido_total_log" %in% colnames(df_all)) {
+  
+  bifido_species <- species_cols[
+    stringr::str_detect(
+      species_cols,
+      regex("Bifidobacterium", ignore_case = TRUE)
+    )
+  ]
+  
+  df_all <- df_all %>%
+    mutate(
+      Bifido_total = rowSums(across(all_of(bifido_species)), na.rm = TRUE),
+      Bifido_total_log = log1p(Bifido_total)
+    )
+}
+
+foods_of_interest <- c("log_Idli_Thosai", "log_Chapati")
+
+run_food_total_bifido <- function(data, ethnic_group, food_var) {
+  
+  dat <- data %>%
+    filter(FREG5_Ethnic_Group == ethnic_group) %>%
+    transmute(
+      y = Bifido_total_log,
+      x = .data[[food_var]],
+      Age = FREG8_Age,
+      Gender = FREG7_Gender,
+      BMI = BMI,
+      HbA1c = DLAB27_Hba1C_Percent
+    ) %>%
+    filter(complete.cases(.))
+  
+  if (nrow(dat) < 30) return(NULL)
+  if (sd(dat$x, na.rm = TRUE) == 0) return(NULL)
+  if (sd(dat$y, na.rm = TRUE) == 0) return(NULL)
+  if (sum(dat$x > 0, na.rm = TRUE) < 5) return(NULL)
+  
+  fit <- lm(y ~ x + Age + Gender + BMI + HbA1c, data = dat)
+  
+  broom::tidy(fit) %>%
+    filter(term == "x") %>%
+    mutate(
+      Ethnicity = ethnic_group,
+      Food = stringr::str_remove(food_var, "^log_"),
+      N = nrow(dat),
+      N_food_positive = sum(dat$x > 0, na.rm = TRUE)
+    )
+}
+
+food_total_bifido_results <- expand.grid(
+  Ethnicity = c("C", "I", "M"),
+  Food_var = foods_of_interest,
+  stringsAsFactors = FALSE
+) %>%
+  purrr::pmap_dfr(function(Ethnicity, Food_var) {
+    run_food_total_bifido(
+      data = df_all,
+      ethnic_group = Ethnicity,
+      food_var = Food_var
+    )
+  }) %>%
+  group_by(Food) %>%
+  mutate(p_adj = p.adjust(p.value, method = "BH")) %>%
+  ungroup() %>%
+  select(
+    Food,
+    Ethnicity,
+    N,
+    N_food_positive,
+    estimate,
+    std.error,
+    statistic,
+    p.value,
+    p_adj
+  ) %>%
+  arrange(Food, Ethnicity)
+
+print(food_total_bifido_results, n = Inf)
+
+
+# ------------------------------------------------------------
+# 8. Interaction model: Idli/Thosai x Ethnicity
+# ------------------------------------------------------------
+
+cat("\n========================================\n")
+cat("8. Interaction model: Idli/Thosai x Ethnicity\n")
+cat("========================================\n")
+
+fit_interaction_idli <- lm(
+  Bifido_total_log ~ log_Idli_Thosai * FREG5_Ethnic_Group +
+    FREG8_Age + FREG7_Gender + BMI + DLAB27_Hba1C_Percent,
+  data = df_all
+)
+
+interaction_idli_terms <- broom::tidy(fit_interaction_idli) %>%
+  filter(str_detect(term, "log_Idli_Thosai"))
+
+print(interaction_idli_terms, n = Inf)
+
+
+# ------------------------------------------------------------
+# 9. Ethnicity-specific slopes from Idli/Thosai interaction model
+# ------------------------------------------------------------
+
+cat("\n========================================================\n")
+cat("9. Ethnicity-specific Idli/Thosai slopes from interaction model\n")
+cat("========================================================\n")
+
+library(emmeans)
+
+emm_slopes_idli <- emtrends(
+  fit_interaction_idli,
+  specs = "FREG5_Ethnic_Group",
+  var = "log_Idli_Thosai"
+)
+
+ethnicity_slopes_idli <- summary(emm_slopes_idli, infer = TRUE) %>%
+  as.data.frame()
+
+print(ethnicity_slopes_idli, n = Inf)
+
+
+# ------------------------------------------------------------
+# 10. Pairwise comparison of Idli/Thosai slopes between ethnicities
+# ------------------------------------------------------------
+
+cat("\n=========================================================\n")
+cat("10. Pairwise comparison of Idli/Thosai slopes by ethnicity\n")
+cat("=========================================================\n")
+
+slope_comparisons_idli <- pairs(emm_slopes_idli) %>%
+  summary(infer = TRUE) %>%
+  as.data.frame()
+
+print(slope_comparisons_idli, n = Inf)
+
+
+# ------------------------------------------------------------
+# 11. Interaction model: Chapati x Ethnicity
+# ------------------------------------------------------------
+
+cat("\n====================================\n")
+cat("11. Interaction model: Chapati x Ethnicity\n")
+cat("====================================\n")
+
+fit_interaction_chapati <- lm(
+  Bifido_total_log ~ log_Chapati * FREG5_Ethnic_Group +
+    FREG8_Age + FREG7_Gender + BMI + DLAB27_Hba1C_Percent,
+  data = df_all
+)
+
+interaction_chapati_terms <- broom::tidy(fit_interaction_chapati) %>%
+  filter(str_detect(term, "log_Chapati"))
+
+print(interaction_chapati_terms, n = Inf)
+
+
+# ------------------------------------------------------------
+# 12. Ethnicity-specific slopes from Chapati interaction model
+# ------------------------------------------------------------
+
+cat("\n====================================================\n")
+cat("12. Ethnicity-specific Chapati slopes from interaction model\n")
+cat("====================================================\n")
+
+emm_slopes_chapati <- emtrends(
+  fit_interaction_chapati,
+  specs = "FREG5_Ethnic_Group",
+  var = "log_Chapati"
+)
+
+ethnicity_slopes_chapati <- summary(emm_slopes_chapati, infer = TRUE) %>%
+  as.data.frame()
+
+print(ethnicity_slopes_chapati, n = Inf)
+
+
+# ------------------------------------------------------------
+# 13. Pairwise comparison of Chapati slopes between ethnicities
+# ------------------------------------------------------------
+
+cat("\n=====================================================\n")
+cat("13. Pairwise comparison of Chapati slopes by ethnicity\n")
+cat("=====================================================\n")
+
+slope_comparisons_chapati <- pairs(emm_slopes_chapati) %>%
+  summary(infer = TRUE) %>%
+  as.data.frame()
+
+print(slope_comparisons_chapati, n = Inf)
+
+
+# ------------------------------------------------------------
+# 14. Optional: disease-status sensitivity model
+# ------------------------------------------------------------
+
+cat("\n==========================================================\n")
+cat("14. Disease-status sensitivity model: Idli/Thosai x Ethnicity\n")
+cat("==========================================================\n")
+
+df_all <- df_all %>%
+  mutate(
+    Diabetes = ifelse(DLAB27_Hba1C_Percent >= 6.5, 1, 0),
+    Obesity = ifelse(BMI >= 27.5, 1, 0)
+  )
+
+fit_interaction_idli_disease <- lm(
+  Bifido_total_log ~ log_Idli_Thosai * FREG5_Ethnic_Group +
+    FREG8_Age + FREG7_Gender + Diabetes + Obesity,
+  data = df_all
+)
+
+interaction_idli_disease_terms <- broom::tidy(fit_interaction_idli_disease) %>%
+  filter(str_detect(term, "log_Idli_Thosai"))
+
+print(interaction_idli_disease_terms, n = Inf)
+
+
+cat("\n==========================================================\n")
+cat("15. Disease-status sensitivity model: Chapati x Ethnicity\n")
+cat("==========================================================\n")
+
+fit_interaction_chapati_disease <- lm(
+  Bifido_total_log ~ log_Chapati * FREG5_Ethnic_Group +
+    FREG8_Age + FREG7_Gender + Diabetes + Obesity,
+  data = df_all
+)
+
+interaction_chapati_disease_terms <- broom::tidy(fit_interaction_chapati_disease) %>%
+  filter(str_detect(term, "log_Chapati"))
+
+print(interaction_chapati_disease_terms, n = Inf)
+
+
+# ------------------------------------------------------------
+# 16. Save all reviewer-related tables
+# ------------------------------------------------------------
+
+cat("\n============================\n")
+cat("16. Saving reviewer tables\n")
+cat("============================\n")
+
+reviewer_tables <- list(
+  focused_results_summary = focused_results_summary,
+  focused_significant_results = focused_sig,
+  direction_summary = direction_summary,
+  food_total_bifido_results = food_total_bifido_results,
+  interaction_idli_terms = interaction_idli_terms,
+  ethnicity_slopes_idli = ethnicity_slopes_idli,
+  slope_comparisons_idli = slope_comparisons_idli,
+  interaction_chapati_terms = interaction_chapati_terms,
+  ethnicity_slopes_chapati = ethnicity_slopes_chapati,
+  slope_comparisons_chapati = slope_comparisons_chapati,
+  interaction_idli_disease_terms = interaction_idli_disease_terms,
+  interaction_chapati_disease_terms = interaction_chapati_disease_terms
+)
+
+writexl::write_xlsx(
+  reviewer_tables,
+  "figure/reviewer_collinearity_interaction_results.xlsx"
+)
+
+cat("\nDone. Results saved to: reviewer_collinearity_interaction_results.xlsx\n")
+```
+
+
+
+
+```{r}
+grep("Idli", colnames(df_all), value = TRUE)
+grep("Chapati", colnames(df_all), value = TRUE)
+```
+
+
+
+
+
