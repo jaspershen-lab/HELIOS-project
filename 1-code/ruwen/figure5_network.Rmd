@@ -1110,7 +1110,7 @@ species_filtered3 = subset(species_filtered1, select = -c(`Homo sapiens`))
 #set.seed(456)
 result5 = create_microbiome_knowledge_graph4(food_data, nutrition_data, 
                                                 species_filtered3, metadata,
-                                                species_threshold = 0.16)
+                                                species_threshold = 0.13)
 # View the plot
 
 ggsave("figure/figure5_network15.pdf", result5$plot, width = 24, height = 20)

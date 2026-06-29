@@ -1,0 +1,639 @@
+---
+title: "balance_sample_size"
+author: "Ruwen Zhou"
+date: "6/10/2026"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggraph)
+library(igraph)
+library(Hmisc)
+library(writexl)
+
+library(tidygraph)
+
+```
+
+
+#demographic
+```{r}
+food_data = read_xlsx("data/FFQA862_new.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata = read_xlsx("data/ethnicity_866.xlsx")
+
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms","Chapati"), as.numeric))
+food_data
+nutrition_data
+species
+metadata
+```
+
+```{r}
+colnames(species)[1] = "Participant_ID"
+colnames(metadata)[1] = "Participant_ID"
+threshold <- nrow(species) * 0.5
+
+species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+species_filtered1
+species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+#species_filtered2
+species_filtered2 <- species_filtered2[, !names(species_filtered2) %in% c("unclassified", "others", "Homo sapiens")]
+#species_filtered2$`Homo sapiens`
+#species_filtered2
+#food_data[is.na(food_data)] <- 0
+#food_data <- data.frame(lapply(food_data, function(x) as.numeric(as.character(x))))
+nutrition_data[is.na(nutrition_data)] <- 0
+```
+
+
+```{r}
+food_data
+nutrition_data
+species_filtered2
+species_filtered1
+metadata
+```
+
+## match sample sizes
+```{r}
+library(MatchIt)
+library(dplyr)
+
+# Step 1: filter to C/I/M only
+meta_cim <- metadata %>%
+  filter(FREG5_Ethnic_Group %in% c("C", "I", "M")) %>%
+  mutate(
+    FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group, levels = c("C", "I", "M")),
+    FREG7_Gender = base::as.factor(FREG7_Gender)
+  )
+
+# Step 2 & 3: propensity score matching function
+# Matches C and I to M (smallest group, n=69)
+run_matched_sample <- function(data, seed) {
+  set.seed(seed)
+  
+  match_out <- matchit(
+    FREG5_Ethnic_Group ~ FREG8_Age + FREG7_Gender + BMI,
+    data = data,
+    method = "nearest",
+    distance = "glm",        # multinomial logistic PS
+    ratio = 1,               # 1:1:1 matching
+    replace = FALSE,
+    caliper = 0.2,           # 0.2 SD of logit(PS)
+    std.caliper = TRUE
+  )
+  
+  matched_data <- match.data(match_out)
+  return(matched_data$Participant_ID)
+}
+```
+
+
+```{r}
+# Step 4: check balance on one run first
+library(MatchIt)
+library(dplyr)
+
+# --- helper: match one group to Malay reference ---
+match_to_malay <- function(data, group_label, seed) {
+  set.seed(seed)
+  
+  df <- data %>%
+    filter(FREG5_Ethnic_Group %in% c("M", group_label)) %>%
+    mutate(is_malay = as.integer(FREG5_Ethnic_Group == "M"))
+  
+  m <- matchit(
+    is_malay ~ FREG8_Age + FREG7_Gender + BMI,
+    data       = df,
+    method     = "nearest",
+    distance   = "glm",
+    ratio      = 1,
+    replace    = FALSE,
+    caliper    = 0.2,
+    std.caliper = TRUE
+  )
+  
+  match.data(m)$Participant_ID
+}
+
+# --- single run to check balance first ---
+ids_I <- match_to_malay(meta_cim, "I", seed = 42)
+ids_C <- match_to_malay(meta_cim, "C", seed = 42)
+
+# combined matched set: all M + matched I + matched C
+# M appears in both calls — deduplicate
+matched_ids <- unique(c(ids_I, ids_C))
+meta_matched <- meta_cim %>% filter(Participant_ID %in% matched_ids)
+
+table(meta_matched$FREG5_Ethnic_Group)  # should be ~69 / 69 / 69
+```
+
+```{r}
+# rerun matchit objects explicitly for balance diagnostics
+m_I <- matchit(
+  is_malay ~ FREG8_Age + FREG7_Gender + BMI,
+  data = meta_cim %>%
+    filter(FREG5_Ethnic_Group %in% c("M", "I")) %>%
+    mutate(is_malay = as.integer(FREG5_Ethnic_Group == "M")),
+  method = "nearest", distance = "glm",
+  ratio = 1, replace = FALSE, caliper = 0.2, std.caliper = TRUE
+)
+
+m_C <- matchit(
+  is_malay ~ FREG8_Age + FREG7_Gender + BMI,
+  data = meta_cim %>%
+    filter(FREG5_Ethnic_Group %in% c("M", "C")) %>%
+    mutate(is_malay = as.integer(FREG5_Ethnic_Group == "M")),
+  method = "nearest", distance = "glm",
+  ratio = 1, replace = FALSE, caliper = 0.2, std.caliper = TRUE
+)
+
+summary(m_I)   # check SMD < 0.1 for I vs M
+summary(m_C)   # check SMD < 0.1 for C vs M
+```
+
+```{r}
+# Keep only Malays matched in both comparisons
+malay_both <- base::intersect(
+  ids_I[meta_cim$FREG5_Ethnic_Group[
+    match(ids_I, meta_cim$Participant_ID)] == "M"],
+  ids_C[meta_cim$FREG5_Ethnic_Group[
+    match(ids_C, meta_cim$Participant_ID)] == "M"]
+)
+
+# Then rebuild matched set
+matched_ids <- c(
+  malay_both,
+  ids_I[meta_cim$FREG5_Ethnic_Group[
+    match(ids_I, meta_cim$Participant_ID)] == "I"],
+  ids_C[meta_cim$FREG5_Ethnic_Group[
+    match(ids_C, meta_cim$Participant_ID)] == "C"]
+)
+
+meta_matched <- meta_cim %>% filter(Participant_ID %in% matched_ids)
+table(meta_matched$FREG5_Ethnic_Group)
+```
+```{r}
+# Updated helper to extract matched IDs by group correctly
+get_matched_ids <- function(data, seed) {
+  
+  ids_I <- match_to_malay(data, "I", seed = seed)
+  ids_C <- match_to_malay(data, "C", seed = seed)
+  
+  # ethnicity lookup vector
+  eth <- setNames(data$FREG5_Ethnic_Group, data$Participant_ID)
+  
+  malay_I <- ids_I[eth[ids_I] == "M"]
+  malay_C <- ids_C[eth[ids_C] == "M"]
+  indian   <- ids_I[eth[ids_I] == "I"]
+  chinese  <- ids_C[eth[ids_C] == "C"]
+  
+  # only Malays matched in both comparisons
+  malay_both <- intersect(malay_I, malay_C)
+  
+  c(malay_both, indian, chinese)
+}
+```
+```{r}
+# 500-iteration loop
+set.seed(123)
+seeds <- sample(1:100000, 500)
+
+matched_id_list <- lapply(seeds, function(s) {
+  tryCatch(
+    get_matched_ids(meta_cim, s),
+    error = function(e) NULL
+  )
+})
+
+matched_id_list <- Filter(Negate(is.null), matched_id_list)
+cat("Successful iterations:", length(matched_id_list), "\n")
+
+# Quick sanity check on group sizes across iterations
+size_check <- sapply(matched_id_list, function(ids) {
+  table(meta_cim$FREG5_Ethnic_Group[
+    match(ids, meta_cim$Participant_ID)])
+})
+cat("Median per-group n across iterations:\n")
+print(apply(size_check, 1, median))
+```
+
+## redo with matched sample size
+```{r}
+# Step 1: set rownames to Participant_ID and convert to matrix
+abund_mat <- species_filtered1 %>%
+  column_to_rownames("Participant_ID") %>%
+  as.matrix()
+
+# confirm dimensions
+dim(abund_mat)  # should be 866 x 2110
+```
+
+```{r}
+# Step 2: subset to matched participants
+# make sure Participant_IDs are same type (both character or both numeric)
+meta_matched <- meta_matched %>%
+  mutate(Participant_ID = as.character(Participant_ID))
+
+rownames(abund_mat) <- as.character(rownames(abund_mat))
+
+abund_matched <- abund_mat[
+  rownames(abund_mat) %in% meta_matched$Participant_ID, ]
+
+# reorder rows to match meta_matched row order — important for adonis2
+abund_matched <- abund_matched[meta_matched$Participant_ID, ]
+
+dim(abund_matched)        # should be ~197 x 2110
+table(meta_matched$FREG5_Ethnic_Group)  # confirm 64/66/67
+
+```
+
+```{r}
+library(phyloseq)
+
+# build phyloseq from matched data
+OTU  <- otu_table(t(abund_matched), taxa_are_rows = TRUE)
+META <- sample_data(meta_matched %>% 
+                      column_to_rownames("Participant_ID"))
+ps_matched <- phyloseq(OTU, META)
+
+# plot
+
+library(phyloseq)
+library(ggplot2)
+library(ggpubr)
+ethnicity_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887", "O" = "#80796BFF")
+# subset colors to matched groups only
+matched_colors <- ethnicity_colors[c("C", "I", "M")]
+# build or subset phyloseq
+ps_matched <- prune_samples(meta_matched$Participant_ID, phyloseq_filtered)
+# plot
+p_alpha <- plot_richness(ps_matched,
+              x        = "FREG5_Ethnic_Group",
+              color    = "FREG5_Ethnic_Group",
+              measures = c("Shannon", "Simpson")) +
+  geom_boxplot(aes(fill = FREG5_Ethnic_Group), alpha = 0.6, outlier.shape = NA) +
+  scale_color_manual(values = matched_colors) +
+  scale_fill_manual(values  = matched_colors) +
+  stat_compare_means(
+    method       = "kruskal.test",
+    label        = "p.format",
+    label.x      = 1.5,
+    label.y.npc  = 0.95
+  ) +
+  stat_compare_means(
+    comparisons = list(c("C","I"), c("C","M"), c("I","M")),
+    method      = "wilcox.test",
+    label       = "p.signif",   # stars
+    step.increase = 0.08
+  ) +
+  theme_bw() +
+  theme(
+    legend.position  = "right",
+    strip.background = element_rect(fill = "grey95"),
+    axis.text.x      = element_text(size = 10)
+  ) +
+  labs(x = "Ethnicity", color = "Ethnicity", fill = "Ethnicity",
+       title = "Alpha diversity — matched cohort")
+p_alpha
+```
+```{r}
+alpha_long_sub <- alpha_long %>%
+  filter(measure %in% c("Shannon", "Simpson"))
+
+p_alpha_sub <- ggplot(alpha_long_sub, aes(FREG5_Ethnic_Group, value,
+                                           color = FREG5_Ethnic_Group, fill = FREG5_Ethnic_Group)) +
+  geom_jitter(width = 0.15, alpha = 0.5, size = 1.5) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  scale_color_manual(values = matched_colors) +
+  scale_fill_manual(values  = matched_colors) +
+  geom_segment(data = sig_df, aes(x = x, xend = xend, y = y, yend = y),
+               inherit.aes = FALSE, color = "black") +
+  geom_text(data = sig_df, aes(x = (x + xend) / 2, y = y + 0.02, label = label),
+            inherit.aes = FALSE, size = 5) +
+  facet_wrap(~measure, scales = "free_y", nrow = 1) +
+  theme_bw() +
+  theme(
+    legend.position  = "right",
+    strip.background = element_rect(fill = "grey95"),
+    axis.text.x      = element_text(size = 10)
+  ) +
+  labs(x = "Ethnicity", color = "Ethnicity", fill = "Ethnicity",
+       title = "Alpha diversity — matched cohort")
+
+p_alpha_sub
+ggsave(
+  filename = "figure/balanced_size_alpha.png",
+  plot     = p_alpha_sub,
+  width    = 6, height = 5, dpi = 300
+)
+
+```
+## beta diveresity
+```{r}
+library(vegan)
+library(ape)
+library(patchwork)
+
+# ── distances ──────────────────────────────────────────────
+bc_dist <- vegan::vegdist(abund_matched, method = "bray")
+
+clr_transform <- function(x) {
+  x <- x + 0.5
+  log(x) - mean(log(x))
+}
+abund_clr     <- t(apply(abund_matched, 1, clr_transform))
+aitchison_dist <- dist(abund_clr, method = "euclidean")
+
+# ── PERMANOVA ──────────────────────────────────────────────
+perm_bc <- vegan::adonis2(
+  bc_dist ~ FREG5_Ethnic_Group,
+  data = meta_matched, permutations = 999
+)
+
+perm_ait <- vegan::adonis2(
+  aitchison_dist ~ FREG5_Ethnic_Group,
+  data = meta_matched, permutations = 999
+)
+
+print(perm_bc)
+print(perm_ait)
+
+# ── PCoA plot function ─────────────────────────────────────
+plot_pcoa <- function(dist_obj, dist_name, meta) {
+  
+  pcoa_obj <- ape::pcoa(dist_obj)
+  var_exp  <- round(pcoa_obj$values$Relative_eig[1:2] * 100, 1)
+  
+  df <- data.frame(
+    PC1       = pcoa_obj$vectors[, 1],
+    PC2       = pcoa_obj$vectors[, 2],
+    Ethnicity = meta$FREG5_Ethnic_Group
+  )
+  
+  # PERMANOVA label
+  perm_obj <- vegan::adonis2(
+  dist_obj ~ FREG5_Ethnic_Group,
+  data = meta, permutations = 999, by = "terms"
+  )
+  r2 <- round(perm_obj["FREG5_Ethnic_Group", "R2"], 3)
+  pv <- perm_obj["FREG5_Ethnic_Group", "Pr(>F)"]
+  lab <- paste0("PERMANOVA: R²=", r2,
+                ", p=", ifelse(pv < 0.001, "<0.001", round(pv, 3)))
+  
+  ggplot(df, aes(PC1, PC2, color = Ethnicity)) +
+    geom_point(alpha = 0.7, size = 2) +
+    stat_ellipse(level = 0.95, linewidth = 0.7) +
+    scale_color_manual(values = matched_colors) +
+    annotate("text", x = -Inf, y = Inf, hjust = -0.05, vjust = 1.5,
+             label = lab, size = 3.2, color = "grey30") +
+    labs(
+      title = paste0("Beta diversity — ", dist_name, " (matched cohort)"),
+      x     = paste0("PC1 (", var_exp[1], "%)"),
+      y     = paste0("PC2 (", var_exp[2], "%)")
+    ) +
+    theme_bw() +
+    theme(legend.position = "right")
+}
+
+# ── generate and combine plots ─────────────────────────────
+p_bc  <- plot_pcoa(bc_dist,       "Bray-Curtis", meta_matched)
+p_ait <- plot_pcoa(aitchison_dist, "Aitchison",  meta_matched)
+
+p_bc
+p_ait   # stacked; use p_bc | p_ait for side by side
+```
+```{r}
+ggsave(
+  filename = "figure/balanced_size_betea.png",
+  plot     = p_ait,
+  width    = 8, height = 5, dpi = 300
+)
+```
+
+
+## da analysis
+```{r}
+library(phyloseq)
+
+library(MicrobiomeStat)
+
+linda_out <- linda(
+  feature.dat  = t(abund_matched),   # taxa as rows, samples as columns
+  meta.dat     = meta_matched %>% column_to_rownames("Participant_ID"),
+  formula      = "~ FREG5_Ethnic_Group",
+  alpha        = 0.05,
+  p.adj.method = "BH",
+  prev.filter  = 0.10
+)
+
+names(linda_out$output) 
+linda_out$output# check contrast names
+```
+
+```{r}
+# create one-vs-rest groupings
+meta_matched <- meta_matched %>%
+  mutate(
+    C_vs_rest = ifelse(FREG5_Ethnic_Group == "C", "C", "non-C"),
+    I_vs_rest = ifelse(FREG5_Ethnic_Group == "I", "I", "non-I"),
+    M_vs_rest = ifelse(FREG5_Ethnic_Group == "M", "M", "non-M")
+  )
+
+# update phyloseq metadata
+sample_data(ps_matched) <- sample_data(
+  meta_matched %>% column_to_rownames("Participant_ID")
+)
+
+# ── function to run LinDA for one contrast ─────────────────
+run_linda <- function(group_var, label) {
+  
+  res <- linda(
+    feature.dat  = t(abund_matched),
+    meta.dat     = meta_matched %>% column_to_rownames("Participant_ID"),
+    formula      = paste0("~ ", group_var),
+    alpha        = 0.05,
+    p.adj.method = "BH",
+    prev.filter  = 0.10
+  )
+  
+  # extract the contrast (second level vs first)
+  contrast_name <- names(res$output)[1]
+  df <- res$output[[contrast_name]] %>%
+    rownames_to_column("Species") %>%
+    mutate(contrast = label) %>%
+    filter(reject == TRUE) %>%        # significant after BH correction
+    arrange(padj)
+  
+  return(df)
+}
+
+# ── run all three contrasts ────────────────────────────────
+res_C <- run_linda("C_vs_rest", "C vs non-C")
+res_I <- run_linda("I_vs_rest", "I vs non-I")
+res_M <- run_linda("M_vs_rest", "M vs non-M")
+
+# ── summarise ──────────────────────────────────────────────
+cat("C vs non-C significant species:", nrow(res_C), "\n")
+cat("I vs non-I significant species:", nrow(res_I), "\n")
+cat("M vs non-M significant species:", nrow(res_M), "\n")
+
+# combine all significant species
+sig_all <- bind_rows(res_C, res_I, res_M)
+print(sig_all %>% select(Species, log2FoldChange, padj, contrast))
+```
+```{r}
+library(ggplot2)
+library(ggrepel)
+
+# ── function to extract full LinDA results (significant + not) ──
+get_linda_full <- function(group_var, focal_group) {
+  
+  res <- linda(
+    feature.dat  = t(abund_matched),
+    meta.dat     = meta_matched %>% column_to_rownames("Participant_ID"),
+    formula      = paste0("~ ", group_var),
+    alpha        = 0.05,
+    p.adj.method = "BH",
+    prev.filter  = 0.10
+  )
+  
+  contrast_name <- names(res$output)[1]
+  df <- res$output[[contrast_name]] %>%
+    rownames_to_column("Species") %>%
+    mutate(
+      sig      = reject == TRUE,
+      direction = case_when(
+        reject == TRUE & log2FoldChange > 0 ~ paste0("Enriched in ", focal_group),
+        reject == TRUE & log2FoldChange < 0 ~ paste0("Depleted in ", focal_group),
+        TRUE ~ "Not significant"
+      )
+    )
+  return(df)
+}
+
+df_C <- get_linda_full("C_vs_rest", "C")
+df_I <- get_linda_full("I_vs_rest", "I")
+df_I
+
+```
+```{r}
+plot_volcano <- function(df, focal_group) {
+  
+  df <- df %>%
+    mutate(
+      neg_log10_padj = pmin(-log10(padj), 10),
+      label_species  = ifelse(sig, Species, NA),
+      dot_color = case_when(
+        sig & log2FoldChange < 0 ~ "red3",      # enriched in C
+        sig & log2FoldChange > 0 ~ "steelblue", # depleted in C
+        TRUE                     ~ "grey80"
+)
+    )
+  
+  ggplot(df, aes(x = log2FoldChange, y = neg_log10_padj,
+                 label = label_species)) +
+    
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed",
+               color = "grey60", linewidth = 0.4) +
+    geom_vline(xintercept = 0, linetype = "solid",
+               color = "grey60", linewidth = 0.4) +
+    
+    geom_point(aes(color = I(dot_color),
+                   size  = sig,
+                   alpha = sig)) +
+    scale_size_manual(values  = c("TRUE" = 2.8, "FALSE" = 1.2), guide = "none") +
+    scale_alpha_manual(values = c("TRUE" = 0.9, "FALSE" = 0.4), guide = "none") +
+    
+    geom_text_repel(
+      data          = df %>% filter(sig),
+      size          = 3,
+      max.overlaps  = Inf,
+      box.padding   = 0.8,
+      point.padding = 0.5,
+      force         = 10,
+      force_pull    = 0.5,
+      segment.color = "grey50",
+      segment.size  = 0.3,
+      fontface      = "italic",
+      direction     = "both"
+    ) +
+    
+    labs(
+      title    = paste0("Differential abundance: ", focal_group,
+                        " vs non-", focal_group),
+      subtitle = paste0("Matched cohort · LinDA · BH-corrected  |  ",
+                        sum(df$sig & df$log2FoldChange < 0),
+                        " enriched in ", focal_group, "  ·  ",
+                        sum(df$sig & df$log2FoldChange > 0),
+                        " depleted in ", focal_group),
+      x        = paste0("Log2 fold change (negative = enriched in ", focal_group, ")"),
+      y        = expression(-log[10](p[adj]))
+    ) +
+    
+    # legend as colored text outside plot in top right
+    scale_color_identity(
+      guide  = "legend",
+      labels = c("red3" = paste0("Enriched in ", focal_group),
+                 "steelblue" = paste0("Depleted in ", focal_group),
+                 "grey80" = "Not significant"),
+      breaks = c("red3", "steelblue", "grey80")
+    ) +
+    
+    theme_bw() +
+    theme(
+      plot.title       = element_text(size = 13, face = "bold"),
+      plot.subtitle    = element_text(size = 10, color = "grey40"),
+      panel.grid.minor = element_blank(),
+      legend.position  = "right",
+      legend.title     = element_blank(),
+      legend.text      = element_text(size = 10),
+      legend.key       = element_blank()
+    ) +
+    guides(color = guide_legend(
+      override.aes = list(size = 3, alpha = 1)
+    ))
+}
+
+p_volcano_C <- plot_volcano(df_C, "C")
+p_volcano_I <- plot_volcano(df_I, "I")
+
+p_volcano_C
+p_volcano_I
+```
+```{r}
+ggsave(
+  filename = "figure/balanced_size_volcanoC.png",
+  plot     = p_volcano_C,
+  width    = 8, height = 5, dpi = 300
+)
+ggsave(
+  filename = "figure/balanced_size_volcanoI.png",
+  plot     = p_volcano_I,
+  width    = 8, height = 5, dpi = 300
+)
+```
+
+
+
+
+

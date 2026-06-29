@@ -1,0 +1,1251 @@
+---
+title: "Aitchison"
+author: "Ruwen Zhou"
+date: "6/15/2026"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+## --- load order matters: maskers first, tidyverse last ---
+library(plyr)          # BEFORE dplyr/tidyverse (avoids select/summarise masking)
+library(MASS)          # also masks select(); load before tidyverse
+
+## --- Bioconductor / analysis packages ---
+library(phyloseq)
+library(vegan)         # pulls in 'permute' automatically — do NOT load permute separately
+library(DESeq2)
+library(MicrobiomeStat)
+
+## --- plotting / io / graph ---
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(Hmisc)
+library(readr)
+library(readxl)
+library(writexl)
+library(dplyr)
+library(tibble)
+
+## --- tidyverse LAST so dplyr wins the namespace ---
+library(tidyverse)
+
+## --- enforce the winners explicitly ---
+library(conflicted)
+conflict_prefer("select",    "dplyr")
+conflict_prefer("filter",    "dplyr")
+conflict_prefer("mutate",    "dplyr")
+conflict_prefer("summarise", "dplyr")
+conflict_prefer("summarize", "dplyr")
+conflict_prefer("rename",    "dplyr")
+conflict_prefer("arrange",   "dplyr")
+conflict_prefer("count",     "dplyr")
+conflict_prefer("desc",      "dplyr")
+```
+
+#demographic
+```{r}
+food_data = read_xlsx("data/FFQA862_new.xlsx")
+nutrition_data = read_xlsx("data/FFQB800.xlsx")
+species = read_xlsx("data/species_866.xlsx")
+metadata_diabete = read_xlsx("data/helios800_diabetes.xlsx")
+
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms","Chapati"), as.numeric))
+
+species
+metadata_diabete
+```
+```{r}
+species_filtered1 <- species %>% select_if(function(x) sum(x > 0) > nrow(species) * 0.2)
+species_filtered1
+#species_filtered2 <- species %>% select_if(function(x) sum(x > 0) > threshold)
+
+#abundance_threshold <- 0.0001
+#species_filtered2 <- species_filtered %>% select_if(function(x) sum(x) > (abundance_threshold * sum(species)))
+#species_filtered2
+species_filtered1 <- species_filtered1[, !names(species_filtered1) %in% c("unclassified", "others", "Homo sapiens")]
+species_filtered1
+```
+
+```{r}
+# Step 1: inner_join to get only participants with BOTH species + metadata (~800)
+combined <- metadata_diabete %>%
+  mutate(
+    BMI = DBI14_Weight / (DBI13_Height / 100)^2,
+    BMI_category = case_when(
+      BMI < 18.5                ~ "Underweight",
+      BMI >= 18.5 & BMI < 23   ~ "Normal",
+      BMI >= 23   & BMI < 27.5 ~ "Overweight",
+      BMI >= 27.5               ~ "Obese",
+      TRUE ~ NA_character_
+    ),
+    diabetes_status = case_when(
+      DLAB27_Hba1C_Percent < 5.7                               ~ "Normal",
+      DLAB27_Hba1C_Percent >= 5.7 & DLAB27_Hba1C_Percent < 6.5 ~ "Prediabetic",
+      DLAB27_Hba1C_Percent >= 6.5                              ~ "Diabetic",
+      TRUE ~ NA_character_
+    ),
+    BMI_category    = factor(BMI_category, levels = c("Underweight", "Normal", "Overweight", "Obese")),
+    diabetes_status = factor(diabetes_status, levels = c("Normal", "Prediabetic", "Diabetic"))
+  ) %>%
+  inner_join(species_filtered1, by = "FREG1_Barcode")  # only matched samples
+
+cat("Total matched samples:", nrow(combined), "\n")
+table(combined$BMI_category, useNA = "ifany")
+table(combined$diabetes_status, useNA = "ifany")
+
+```
+## beta diversity with aitchson
+```{r}
+library(zCompositions)
+library(vegan)
+library(dplyr)
+library(tibble)
+
+## --- 1. Clean count matrix (samples x species), aligned to metadata ---
+sp_cols <- base::setdiff(colnames(species_filtered1), "FREG1_Barcode")
+
+mat <- combined %>%
+  dplyr::select(FREG1_Barcode, all_of(sp_cols)) %>%
+  column_to_rownames("FREG1_Barcode") %>%
+  as.matrix()
+
+# sanity: counts vs proportions?
+cat("max value:", max(mat), "| looks like",
+    ifelse(max(mat) > 1.5, "COUNTS", "PROPORTIONS"), "\n")
+cat("dim:", nrow(mat), "samples x", ncol(mat), "species\n")
+
+## --- 2. Zero replacement + CLR  (= Aitchison geometry) ----------------
+# CZM = Bayesian-multiplicative replacement for count zeros
+mat_repl <- cmultRepl(mat, label = 0, method = "CZM",
+                      z.warning = 0.99, z.delete = FALSE)
+clr_mat  <- t(apply(mat_repl, 1, function(x) log(x) - mean(log(x))))
+#  (if your data are PROPORTIONS not counts, tell me — swap CZM for a
+#   pseudocount approach; CLR itself is scale-invariant so the rest holds)
+
+## --- 3. Metadata aligned + complete cases for covariates --------------
+
+meta <- combined %>%
+  mutate(FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group),
+         FREG7_Gender       = factor(FREG7_Gender),
+         FREG8_Age          = as.numeric(FREG8_Age),
+         HbA1c              = as.numeric(DLAB27_Hba1C_Percent)) %>%
+  filter(FREG1_Barcode %in% rownames(clr_mat))
+meta <- meta[match(rownames(clr_mat), meta$FREG1_Barcode), ]   # same order
+
+## drop "Others" ethnicity, keep C/I/M only
+keep_eth <- meta$FREG5_Ethnic_Group %in% c("C", "I", "M")
+clr_mat <- clr_mat[keep_eth, ]
+meta     <- meta[keep_eth, ]
+meta$FREG5_Ethnic_Group <- droplevels(factor(meta$FREG5_Ethnic_Group))
+cat("after dropping Others:", nrow(meta), "samples |",
+    paste(levels(meta$FREG5_Ethnic_Group), collapse = "/"), "\n")
+
+stopifnot(all(meta$FREG1_Barcode == rownames(clr_mat)))
+
+keep <- complete.cases(meta[, c("FREG5_Ethnic_Group","FREG7_Gender",
+                                "FREG8_Age","BMI","HbA1c")])
+clr_cc  <- clr_mat[keep, ]
+meta_cc <- meta[keep, ]
+cat("complete-case n:", nrow(meta_cc), "\n")
+```
+
+
+```{r}
+## --- 4. Aitchison PERMANOVA (primary: ethnicity, adjusted) ------------
+aitchison <- dist(clr_cc, method = "euclidean")
+
+set.seed(123)
+adonis2(aitchison ~ FREG5_Ethnic_Group + FREG8_Age + FREG7_Gender + BMI + HbA1c,
+        data = meta_cc, by = "margin", permutations = 100)
+
+## --- 5. Bray-Curtis on the SAME samples (rebuild from filtered set) ---
+common <- rownames(clr_cc)
+rel    <- mat_repl[common, ] / rowSums(mat_repl[common, ])
+set.seed(123)
+adonis2(vegdist(rel, "bray") ~ FREG5_Ethnic_Group + FREG8_Age +
+          FREG7_Gender + BMI + HbA1c,
+        data = meta_cc, by = "margin", permutations = 100)
+```
+
+
+```{r}
+library(ggplot2)
+
+## --- CLR-PCA = Aitchison ordination (compositional analog of PCoA) ---
+pca <- prcomp(clr_cc)                         # features auto-centered
+ve  <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)   # % variance per PC
+
+# map ethnicity codes -> labels (check codes first if unsure: table(meta_cc$FREG5_Ethnic_Group))
+eth_lab <- c(C = "Chinese", I = "Indian", M = "Malay")
+pal     <- c(Chinese = "#9FDDCA", Indian = "#9EA3F1",Malay   = "#E17887")
+#ethnicity_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887", "O" = "#80796BFF")
+
+pca_df <- data.frame(PC1 = pca$x[, 1], PC2 = pca$x[, 2],
+                     ethnic = factor(eth_lab[as.character(meta_cc$FREG5_Ethnic_Group)]))
+
+p_pca <- ggplot(pca_df, aes(PC1, PC2, color = ethnic)) +
+  geom_point(alpha = 0.55, size = 1.5) +
+  stat_ellipse(level = 0.95, linewidth = 0.8) +     # 0.68 for tighter ellipses
+  scale_color_manual(values = pal) +
+  labs(x = sprintf("PC1 (%.1f%%)", ve[1]),
+       y = sprintf("PC2 (%.1f%%)", ve[2]),
+       color = NULL,
+       title = "Aitchison PCA (CLR-transformed) by ethnicity") +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+
+#ggsave("figure/aitchison_pca.pdf", p_pca, width = 6.5, height = 5.5)
+p_pca
+```
+#diet pc for comment 5
+```{r}
+## --- Build diet PCs from the FFQ items -------------------------------
+diet_raw <- food_data %>% mutate(FREG1_Barcode = as.character(Participant_ID))
+
+food_cols <- diet_raw %>% dplyr::select(where(is.numeric)) %>% colnames()
+cat("numeric food columns:", length(food_cols), "\n")   # sanity-check this count
+
+diet_mat <- diet_raw %>%
+  dplyr::filter(FREG1_Barcode %in% meta_cc$FREG1_Barcode) %>%
+  dplyr::select(FREG1_Barcode, all_of(food_cols)) %>%
+  column_to_rownames("FREG1_Barcode") %>%
+  as.matrix()
+
+# median-impute sparse NAs, drop zero-variance items (prcomp scale needs sd>0)
+for (j in seq_len(ncol(diet_mat))) {
+  v <- diet_mat[, j]; v[is.na(v)] <- median(v, na.rm = TRUE); diet_mat[, j] <- v
+}
+diet_mat <- diet_mat[, apply(diet_mat, 2, sd) > 0]
+
+diet_pca <- prcomp(diet_mat, center = TRUE, scale. = TRUE)
+print(round(summary(diet_pca)$importance[2, 1:6], 3))   # variance per diet PC
+
+diet_pcs <- as.data.frame(diet_pca$x[, 1:4])
+colnames(diet_pcs) <- paste0("diet_PC", 1:4)
+diet_pcs$FREG1_Barcode <- rownames(diet_pcs)
+
+## --- Combined multivariable PERMANOVA on Aitchison -------------------
+model_df <- meta_cc %>% inner_join(diet_pcs, by = "FREG1_Barcode")
+
+terms_needed <- c("FREG5_Ethnic_Group","FREG8_Age","FREG7_Gender","BMI","HbA1c",
+                  paste0("diet_PC", 1:4))
+model_df <- model_df[complete.cases(model_df[, terms_needed]), ]
+
+clr_sub <- clr_cc[match(model_df$FREG1_Barcode, rownames(clr_cc)), ]
+stopifnot(all(rownames(clr_sub) == model_df$FREG1_Barcode))
+cat("samples in combined model:", nrow(clr_sub), "\n")
+
+set.seed(123)
+adonis2(dist(clr_sub) ~ FREG5_Ethnic_Group + diet_PC1 + diet_PC2 + diet_PC3 + diet_PC4 +
+          FREG8_Age + FREG7_Gender + BMI + HbA1c,
+        data = model_df, by = "margin", permutations = 100)
+```
+```{r}
+library(ggplot2); library(dplyr)
+
+# rerun storing the result if you didn't keep it
+set.seed(123)
+res5 <- adonis2(dist(clr_sub) ~ FREG5_Ethnic_Group + diet_PC1 + diet_PC2 +
+                  diet_PC3 + diet_PC4 + FREG8_Age + FREG7_Gender + BMI + HbA1c,
+                data = model_df, by = "margin", permutations = 100)
+
+r2_df <- as.data.frame(res5) %>%
+  tibble::rownames_to_column("term") %>%
+  filter(!term %in% c("Residual", "Total")) %>%
+  mutate(
+    label = recode(term,
+      FREG5_Ethnic_Group = "Ethnicity", FREG8_Age = "Age",
+      FREG7_Gender = "Sex", BMI = "BMI", HbA1c = "HbA1c",
+      diet_PC1 = "Diet PC1", diet_PC2 = "Diet PC2",
+      diet_PC3 = "Diet PC3", diet_PC4 = "Diet PC4"),
+    sig = ifelse(`Pr(>F)` < 0.05, "p < 0.05", "ns")) %>%
+  arrange(R2)
+
+p_var <- ggplot(r2_df, aes(reorder(label, R2), R2 * 100, fill = sig)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = sprintf("%.2f%%", R2 * 100)), hjust = -0.15, size = 3.3) +
+  coord_flip() +
+  scale_fill_manual(values = c("p < 0.05" = "#D55E00", "ns" = "grey75")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.18))) +
+  labs(x = NULL, y = "Variance explained (% of total, Aitchison)",
+       fill = NULL,
+       title = "Host and dietary contributions to microbiome composition",
+       subtitle = "Multivariable PERMANOVA, marginal (adjusted) effects, n = 856") +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "top", panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank())
+
+#ggsave("figure/variance_partition.pdf", p_var, width = 7, height = 4.5)
+p_var
+```
+
+## change deseq2 to linda
+```{r}
+library(MicrobiomeStat)
+
+## --- Count matrix (features x samples) + metadata, C/I/M only -------
+sp_cols <- base::setdiff(colnames(species_filtered1), "FREG1_Barcode")  # redefine if needed
+
+cim <- combined %>%
+  mutate(FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group),
+         FREG7_Gender = factor(FREG7_Gender),
+         FREG8_Age    = as.numeric(FREG8_Age),
+         HbA1c        = as.numeric(DLAB27_Hba1C_Percent)) %>%
+  filter(FREG5_Ethnic_Group %in% c("C","I","M"),
+         !is.na(FREG8_Age), !is.na(FREG7_Gender), !is.na(BMI), !is.na(HbA1c)) %>%
+  droplevels()
+
+feat_mat <- cim %>%
+  dplyr::select(FREG1_Barcode, all_of(sp_cols)) %>%
+  column_to_rownames("FREG1_Barcode") %>%
+  as.matrix() %>% t()                         # rows = species, cols = barcodes
+
+meta_da <- cim %>% as.data.frame() %>% column_to_rownames("FREG1_Barcode")
+stopifnot(all(colnames(feat_mat) == rownames(meta_da)))
+cat("DA cohort:", ncol(feat_mat), "samples x", nrow(feat_mat), "species\n")
+
+## --- One-vs-rest LinDA per ethnicity, adjusted ---------------------
+run_linda_ovr <- function(grp) {
+  md <- meta_da
+  md$grp <- factor(ifelse(md$FREG5_Ethnic_Group == grp, grp, "Other"),
+                   levels = c("Other", grp))   # grp = the contrast level
+  fit <- linda(feature.dat = feat_mat, meta.dat = md,
+               formula = "~ grp + FREG8_Age + FREG7_Gender + BMI + HbA1c",
+               feature.dat.type = "count",
+               prev.filter = 0.10, is.winsor = TRUE)
+  res <- fit$output[[paste0("grp", grp)]]
+  res$feature    <- rownames(res)
+  res$comparison <- paste0(grp, " vs rest")
+  res
+}
+
+linda_all <- lapply(c("C","I","M"), run_linda_ovr)
+names(linda_all) <- c("C","I","M")
+
+## --- Significant-hit counts per comparison -------------------------
+sapply(linda_all, function(x) sum(x$padj < 0.05, na.rm = TRUE))
+
+## --- Bifidobacterium results across the three ----------------------
+bifido_da <- do.call(rbind, lapply(linda_all, function(x)
+  x[grepl("Bifidobacterium", x$feature, ignore.case = TRUE), ])) %>%
+  dplyr::select(comparison, feature, log2FoldChange, lfcSE, stat, pvalue, padj) %>%
+  arrange(comparison, padj)
+
+# significant Bifido only:
+bifido_da %>% filter(padj < 0.05)
+```
+
+```{r}
+library(ggplot2); library(dplyr)
+
+N_TOP <- 30   # change to 25 if panels feel crowded
+
+lolli_sig <- function(comp_code, title_grp, n_top = N_TOP) {
+  df <- linda_all[[comp_code]] %>%
+    filter(padj < 0.05) %>%
+    slice_min(padj, n = n_top, with_ties = FALSE) %>%
+    mutate(
+      # shorten genus names for readability: "Bifidobacterium longum" -> "B. longum"
+      #feature = gsub("^([A-Z])[a-z]+ ", "\\1. ", feature),
+      direction = ifelse(log2FoldChange > 0, "Enriched", "Depleted"),
+      feature = reorder(feature, log2FoldChange))
+
+  n_sig <- sum(linda_all[[comp_code]]$padj < 0.05, na.rm = TRUE)
+  subtitle <- sprintf("LinDA, adj. age/sex/BMI/HbA1c | %d significant; top %d shown",
+                      n_sig, nrow(df))
+
+  ggplot(df, aes(log2FoldChange, feature, color = direction)) +
+    geom_vline(xintercept = 0, linetype = 2, color = "grey60") +
+    geom_segment(aes(x = 0, xend = log2FoldChange, yend = feature), linewidth = 0.5) +
+    geom_point(aes(size = pmin(-log10(padj), 10))) +
+    scale_color_manual(values = c("Enriched" = "#D55E00", "Depleted" = "#0072B2"),
+                       drop = FALSE) +
+    scale_size_continuous(range = c(1.8, 5), name = "-log10(padj)") +
+    labs(x = "log2 fold-change (adjusted)", y = NULL, color = NULL,
+         title = paste0(title_grp, " vs rest"), subtitle = subtitle) +
+    theme_bw(base_size = 10) +
+    theme(legend.position = "right", panel.grid.minor = element_blank(),
+          panel.grid.major.y = element_blank(),
+          axis.text.y = element_text(size = 7.5))   # smaller for ~30 labels
+}
+
+p_C <- lolli_sig("C", "Chinese")
+p_I <- lolli_sig("I", "Indian")
+p_M <- lolli_sig("M", "Malay")
+
+# height scales with how many species each panel shows
+h <- function(p) max(4, 0.22 * nrow(p$data) + 1.5)
+ggsave("figure/linda_lollipop_chinese.pdf", p_C, width = 8, height = h(p_C))
+ggsave("figure/linda_lollipop_indian.pdf",  p_I, width = 8, height = h(p_I))
+ggsave("figure/linda_lollipop_malay.pdf",   p_M, width = 8, height = h(p_M))
+p_C; p_I; p_M
+```
+# maaslin2
+```{r}
+library(Maaslin2)
+
+run_maaslin_ovr <- function(grp) {
+  md <- meta_da
+  md$grp <- factor(ifelse(md$FREG5_Ethnic_Group == grp, grp, "Other"),
+                   levels = c("Other", grp))   # Other = reference
+
+  fit <- Maaslin2(
+    input_data     = as.data.frame(t(feat_mat)),   # MaAsLin wants samples x features
+    input_metadata = md,
+    output          = paste0("maaslin_", grp),
+    fixed_effects   = c("grp", "FREG8_Age", "FREG7_Gender", "BMI", "HbA1c"),
+    reference       = c("grp,Other"),
+    normalization   = "TSS",
+    transform       = "LOG",
+    min_prevalence  = 0.10,
+    plot_heatmap    = FALSE, plot_scatter = FALSE)
+
+  res <- fit$results %>%
+    filter(metadata == "grp") %>%
+    transmute(feature = gsub("\\.", " ", feature),   # MaAsLin sanitizes names
+              coef_maaslin = coef, qval_maaslin = qval,
+              comparison = paste0(grp, " vs rest"))
+  res
+}
+
+maaslin_all <- lapply(c("C","I","M"), run_maaslin_ovr)
+names(maaslin_all) <- c("C","I","M")
+```
+
+```{r}
+library(dplyr)
+
+concord <- function(grp) {
+  l <- linda_all[[grp]] %>%
+    transmute(feature, linda_l2fc = log2FoldChange, linda_padj = padj)
+  m <- maaslin_all[[grp]] %>%
+    transmute(feature, maaslin_coef = coef_maaslin, maaslin_qval = qval_maaslin)
+  inner_join(l, m, by = "feature") %>%
+    mutate(both_sig = linda_padj < 0.05 & maaslin_qval < 0.05,
+           same_dir = sign(linda_l2fc) == sign(maaslin_coef),
+           comparison = paste0(grp, " vs rest"))
+}
+
+concord_all <- bind_rows(lapply(c("C","I","M"), concord))
+
+# headline numbers for the response:
+concord_all %>%
+  filter(linda_padj < 0.05 & maaslin_qval < 0.05) %>%   # significant in both
+  group_by(comparison) %>%
+  summarise(
+    n_both    = n(),
+    n_agree   = sum(sign(linda_l2fc) == sign(maaslin_coef)),
+    agree_pct = round(100 * n_agree / n_both, 1),
+    .groups = "drop")
+
+# Bifido specifically, both methods:
+concord_all %>% filter(grepl("Bifidobacterium", feature), both_sig)
+```
+```{r}
+library(ggplot2); library(dplyr)
+
+N_TOP <- 30
+
+lolli_maaslin <- function(grp, title_grp, n_top = N_TOP) {
+  d <- maaslin_all[[grp]] %>%
+    filter(qval_maaslin < 0.05) %>%
+    slice_min(qval_maaslin, n = n_top, with_ties = FALSE) %>%
+    mutate(
+      #feature   = gsub("^([A-Z])[a-z]+ ", "\\1. ", feature),
+      direction = ifelse(coef_maaslin > 0, "Enriched", "Depleted"),
+      feature   = reorder(feature, coef_maaslin))
+
+  n_sig <- sum(maaslin_all[[grp]]$qval_maaslin < 0.05, na.rm = TRUE)
+
+  ggplot(d, aes(coef_maaslin, feature, color = direction)) +
+    geom_vline(xintercept = 0, linetype = 2, color = "grey60") +
+    geom_segment(aes(x = 0, xend = coef_maaslin, yend = feature), linewidth = 0.5) +
+    geom_point(aes(size = pmin(-log10(qval_maaslin), 10))) +
+    scale_color_manual(values = c("Enriched" = "#D55E00", "Depleted" = "#0072B2"),
+                       drop = FALSE) +
+    scale_size_continuous(range = c(1.8, 5), name = "-log10(qval)") +
+    labs(x = "MaAsLin2 coefficient (adjusted)", y = NULL, color = NULL,
+         title = paste0(title_grp, " vs rest"),
+         subtitle = sprintf("MaAsLin2, adj. age/sex/BMI/HbA1c | %d significant; top %d shown",
+                            n_sig, nrow(d))) +
+    theme_bw(base_size = 10) +
+    theme(legend.position = "right", panel.grid.minor = element_blank(),
+          panel.grid.major.y = element_blank(),
+          axis.text.y = element_text(size = 7.5))
+}
+
+mp_C <- lolli_maaslin("C", "Chinese")
+mp_I <- lolli_maaslin("I", "Indian")
+mp_M <- lolli_maaslin("M", "Malay")
+
+h <- function(p) max(4, 0.22 * nrow(p$data) + 1.5)
+ggsave("figure/maaslin_lollipop_chinese.pdf", mp_C, width = 8, height = h(mp_C))
+ggsave("figure/maaslin_lollipop_indian.pdf",  mp_I, width = 8, height = h(mp_I))
+ggsave("figure/maaslin_lollipop_malay.pdf",   mp_M, width = 8, height = h(mp_M))
+mp_C; mp_I; mp_M
+```
+## ancom-bc2
+```{r}
+# ANCOM-BC2
+library(ANCOMBC)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+
+## ANCOM-BC2 uses natural-log fold change, not log2FC.
+## Here we keep the same data/covariates as LinDA and MaAsLin2.
+
+run_ancombc2_ovr <- function(grp) {
+  md <- meta_da
+  
+  md$grp <- factor(
+    ifelse(md$FREG5_Ethnic_Group == grp, grp, "Other"),
+    levels = c("Other", grp)
+  )
+  
+  # ANCOM-BC2 needs counts: features x samples
+  count_dat <- round(feat_mat)
+  mode(count_dat) <- "integer"
+  
+  # Remove samples with zero total counts, just in case
+  keep_samp <- colSums(count_dat, na.rm = TRUE) > 0
+  count_dat <- count_dat[, keep_samp]
+  md <- md[colnames(count_dat), , drop = FALSE]
+  
+  stopifnot(all(colnames(count_dat) == rownames(md)))
+  
+  set.seed(123)
+  fit <- ancombc2(
+    data = count_dat,
+    aggregate_data = count_dat,
+    meta_data = md,
+    fix_formula = "grp + FREG8_Age + FREG7_Gender + BMI + HbA1c",
+    rand_formula = NULL,
+    p_adj_method = "BH",
+    pseudo_sens = FALSE,   # much faster
+    prv_cut = 0.40,
+    lib_cut = 0,
+    s0_perc = 0.05,
+    group = "grp",
+    struc_zero = FALSE,    # faster
+    neg_lb = FALSE,        # faster
+    alpha = 0.05,
+    n_cl = 3,              # increase if your laptop can handle it
+    verbose = TRUE,
+    global = FALSE,
+    pairwise = FALSE,
+    dunnet = FALSE,
+    trend = FALSE,
+    iter_control = list(tol = 1e-4, max_iter = 20, verbose = FALSE),
+    em_control = list(tol = 1e-4, max_iter = 50),
+    lme_control = NULL,
+    mdfdr_control = list(fwer_ctrl_method = "BH", B = 100),
+    trend_control = NULL
+    )
+  
+  res <- fit$res
+  
+  # Column names are usually like:
+  # lfc_grpI, se_grpI, W_grpI, p_grpI, q_grpI, diff_grpI, passed_ss_grpI
+  effect_name <- paste0("grp", grp)
+  
+  out <- res %>%
+    transmute(
+      feature = taxon,
+      lfc_ancombc2 = .data[[paste0("lfc_", effect_name)]],
+      se_ancombc2 = .data[[paste0("se_", effect_name)]],
+      W_ancombc2 = .data[[paste0("W_", effect_name)]],
+      p_ancombc2 = .data[[paste0("p_", effect_name)]],
+      q_ancombc2 = .data[[paste0("q_", effect_name)]],
+      diff_ancombc2 = .data[[paste0("diff_", effect_name)]],
+      passed_ss_ancombc2 = if (paste0("passed_ss_", effect_name) %in% colnames(res)) {
+        .data[[paste0("passed_ss_", effect_name)]]
+      } else {
+        NA
+      },
+      comparison = paste0(grp, " vs rest")
+    )
+  
+  return(out)
+}
+
+ancombc2_all <- lapply(c("C", "I", "M"), run_ancombc2_ovr)
+names(ancombc2_all) <- c("C", "I", "M")
+```
+
+
+
+
+```{r}
+sapply(ancombc2_all, function(x) sum(x$q_ancombc2 < 0.05, na.rm = TRUE))
+
+# More conservative version: significant and passed pseudo-count sensitivity analysis
+sapply(ancombc2_all, function(x) {
+  sum(x$q_ancombc2 < 0.05 & 
+        (is.na(x$passed_ss_ancombc2) | x$passed_ss_ancombc2 == TRUE),
+      na.rm = TRUE)
+})
+```
+```{r}
+bifido_ancombc2 <- bind_rows(ancombc2_all) %>%
+  filter(grepl("Bifidobacterium", feature, ignore.case = TRUE)) %>%
+  arrange(comparison, q_ancombc2)
+
+bifido_ancombc2
+
+# significant Bifidobacterium only
+bifido_ancombc2 %>% filter(q_ancombc2 < 0.05)
+```
+```{r}
+N_TOP <- 30
+
+lolli_ancombc2 <- function(grp, title_grp, n_top = N_TOP) {
+  d <- ancombc2_all[[grp]] %>%
+    filter(q_ancombc2 < 0.05) %>%
+    slice_min(q_ancombc2, n = n_top, with_ties = FALSE) %>%
+    mutate(
+      direction = ifelse(lfc_ancombc2 > 0, "Enriched", "Depleted"),
+      feature = reorder(feature, lfc_ancombc2)
+    )
+  
+  n_sig <- sum(ancombc2_all[[grp]]$q_ancombc2 < 0.05, na.rm = TRUE)
+  
+  ggplot(d, aes(lfc_ancombc2, feature, color = direction)) +
+    geom_vline(xintercept = 0, linetype = 2, color = "grey60") +
+    geom_segment(aes(x = 0, xend = lfc_ancombc2, yend = feature), linewidth = 0.5) +
+    geom_point(aes(size = pmin(-log10(q_ancombc2), 10))) +
+    scale_color_manual(
+      values = c("Enriched" = "#D55E00", "Depleted" = "#0072B2"),
+      drop = FALSE
+    ) +
+    scale_size_continuous(range = c(1.8, 5), name = "-log10(q)") +
+    labs(
+      x = "ANCOM-BC2 log fold-change, natural log scale",
+      y = NULL,
+      color = NULL,
+      title = paste0(title_grp, " vs rest"),
+      subtitle = sprintf(
+        "ANCOM-BC2, adj. age/sex/BMI/HbA1c | %d significant; top %d shown",
+        n_sig, nrow(d)
+      )
+    ) +
+    theme_bw(base_size = 10) +
+    theme(
+      legend.position = "right",
+      panel.grid.minor = element_blank(),
+      panel.grid.major.y = element_blank(),
+      axis.text.y = element_text(size = 7.5)
+    )
+}
+
+ap_C <- lolli_ancombc2("C", "Chinese")
+ap_I <- lolli_ancombc2("I", "Indian")
+ap_M <- lolli_ancombc2("M", "Malay")
+
+h <- function(p) max(4, 0.22 * nrow(p$data) + 1.5)
+
+ggsave("figure/ancombc2_lollipop_chinese.pdf", ap_C, width = 8, height = h(ap_C))
+ggsave("figure/ancombc2_lollipop_indian.pdf",  ap_I, width = 8, height = h(ap_I))
+# ggsave("figure/ancombc2_lollipop_malay.pdf",   ap_M, width = 8, height = h(ap_M))
+
+ap_C
+ap_I
+
+```
+
+## ancombc2, linda, maaslin2
+```{r}
+concord3 <- function(grp) {
+  l <- linda_all[[grp]] %>%
+    transmute(
+      feature,
+      linda_l2fc = log2FoldChange,
+      linda_padj = padj
+    )
+  
+  m <- maaslin_all[[grp]] %>%
+    transmute(
+      feature,
+      maaslin_coef = coef_maaslin,
+      maaslin_qval = qval_maaslin
+    )
+  
+  a <- ancombc2_all[[grp]] %>%
+    transmute(
+      feature,
+      ancombc2_lfc = lfc_ancombc2,
+      ancombc2_q = q_ancombc2,
+      ancombc2_passed_ss = passed_ss_ancombc2
+    )
+  
+  l %>%
+    inner_join(m, by = "feature") %>%
+    inner_join(a, by = "feature") %>%
+    mutate(
+      sig_linda = linda_padj < 0.05,
+      sig_maaslin = maaslin_qval < 0.05,
+      sig_ancombc2 = ancombc2_q < 0.05,
+      sig_all3 = sig_linda & sig_maaslin & sig_ancombc2,
+      same_dir_all3 =
+        sign(linda_l2fc) == sign(maaslin_coef) &
+        sign(linda_l2fc) == sign(ancombc2_lfc),
+      comparison = paste0(grp, " vs rest")
+    )
+}
+
+concord3_all <- bind_rows(lapply(c("C", "I", "M"), concord3))
+
+# headline numbers
+concord3_all %>%
+  group_by(comparison) %>%
+  summarise(
+    n_linda = sum(sig_linda, na.rm = TRUE),
+    n_maaslin = sum(sig_maaslin, na.rm = TRUE),
+    n_ancombc2 = sum(sig_ancombc2, na.rm = TRUE),
+    n_all3 = sum(sig_all3, na.rm = TRUE),
+    n_all3_same_direction = sum(sig_all3 & same_dir_all3, na.rm = TRUE),
+    agree_pct_among_all3 = round(
+      100 * n_all3_same_direction / n_all3, 1
+    ),
+    .groups = "drop"
+  )
+
+# Bifidobacterium concordance
+concord3_all %>%
+  filter(grepl("Bifidobacterium", feature, ignore.case = TRUE)) %>%
+  arrange(comparison, ancombc2_q)
+```
+```{r}
+bifido_depleted_chinese <- bifido_concord %>%
+  filter(
+    comparison == "C vs rest",
+    linda_l2fc < 0,
+    maaslin_coef < 0,
+    ancombc2_lfc < 0,
+    all3_sig == TRUE
+  ) %>%
+  arrange(linda_padj)
+
+bifido_depleted_chinese
+
+bifido_enriched_indian <- bifido_concord %>%
+  filter(
+    comparison == "I vs rest",
+    linda_l2fc > 0,
+    maaslin_coef > 0,
+    ancombc2_lfc > 0,
+    all3_sig == TRUE
+  ) %>%
+  arrange(linda_padj)
+
+bifido_enriched_indian
+```
+
+
+```{r}
+############################################################
+## Reviewer 2: Aitchison analysis for rebuttal
+## No table files saved.
+## Figures saved only.
+############################################################
+
+library(readxl)
+library(dplyr)
+library(tibble)
+library(vegan)
+library(zCompositions)
+library(ggplot2)
+
+dir.create("figure", showWarnings = FALSE)
+
+############################################################
+## 1. Load data
+############################################################
+
+food_data <- read_xlsx("data/FFQA862_new.xlsx")
+species <- read_xlsx("data/species_866.xlsx")
+metadata_diabete <- read_xlsx("data/helios800_diabetes.xlsx")
+
+species <- species %>%
+  mutate(FREG1_Barcode = as.character(FREG1_Barcode))
+
+metadata_diabete <- metadata_diabete %>%
+  mutate(FREG1_Barcode = as.character(FREG1_Barcode))
+
+food_data <- food_data %>%
+  mutate(Participant_ID = as.character(Participant_ID))
+
+############################################################
+## 2. Filter species
+############################################################
+
+species_filtered <- species %>%
+  select_if(function(x) {
+    if (is.numeric(x)) {
+      sum(x > 0, na.rm = TRUE) > nrow(species) * 0.2
+    } else {
+      TRUE
+    }
+  })
+
+species_filtered <- species_filtered[, !names(species_filtered) %in%
+                                       c("unclassified", "others", "Homo sapiens")]
+```
+
+
+```{r}
+sp_cols <- base::setdiff(colnames(species_filtered), "FREG1_Barcode")
+
+cat("\nNumber of retained species:", length(sp_cols), "\n")
+
+############################################################
+## 3. Build metadata + microbiome matrix
+############################################################
+
+combined <- metadata_diabete %>%
+  mutate(
+    BMI = DBI14_Weight / (DBI13_Height / 100)^2,
+    HbA1c = as.numeric(DLAB27_Hba1C_Percent),
+    FREG8_Age = as.numeric(FREG8_Age),
+    FREG5_Ethnic_Group = factor(FREG5_Ethnic_Group),
+    FREG7_Gender = factor(FREG7_Gender)
+  ) %>%
+  inner_join(species_filtered, by = "FREG1_Barcode") %>%
+  filter(FREG5_Ethnic_Group %in% c("C", "I", "M")) %>%
+  droplevels()
+
+cat("\nSamples after keeping Chinese, Indian, Malay only:\n")
+print(table(combined$FREG5_Ethnic_Group))
+
+mat <- combined %>%
+  select(FREG1_Barcode, all_of(sp_cols)) %>%
+  column_to_rownames("FREG1_Barcode") %>%
+  as.matrix()
+
+storage.mode(mat) <- "numeric"
+
+cat("\nMicrobiome matrix:", nrow(mat), "samples x", ncol(mat), "species\n")
+cat("Maximum value in matrix:", max(mat, na.rm = TRUE), "\n")
+
+############################################################
+## 4. Zero replacement + CLR transformation
+############################################################
+
+mat_repl <- cmultRepl(
+  mat,
+  label = 0,
+  method = "CZM",
+  z.warning = 0.99,
+  z.delete = FALSE
+)
+
+clr_mat <- t(apply(mat_repl, 1, function(x) {
+  log(x) - mean(log(x))
+}))
+
+############################################################
+## 5. Align metadata and complete cases
+############################################################
+
+meta <- combined %>%
+  select(FREG1_Barcode, FREG5_Ethnic_Group, FREG7_Gender,
+         FREG8_Age, BMI, HbA1c)
+
+meta <- meta[match(rownames(clr_mat), meta$FREG1_Barcode), ]
+
+stopifnot(all(meta$FREG1_Barcode == rownames(clr_mat)))
+
+keep <- complete.cases(meta[, c("FREG5_Ethnic_Group", "FREG7_Gender",
+                                "FREG8_Age", "BMI", "HbA1c")])
+
+clr_cc <- clr_mat[keep, ]
+meta_cc <- meta[keep, ]
+
+cat("\nComplete-case samples for Aitchison PERMANOVA:", nrow(meta_cc), "\n")
+print(table(meta_cc$FREG5_Ethnic_Group))
+```
+
+
+```{r}
+############################################################
+## 6. Aitchison PERMANOVA: ethnicity adjusted for covariates
+############################################################
+
+aitchison_dist <- dist(clr_cc, method = "euclidean")
+
+set.seed(123)
+conflicts_prefer(car::recode)
+conflicts_prefer(base::setdiff)
+perm_aitchison <- adonis2(
+  aitchison_dist ~ FREG5_Ethnic_Group + FREG8_Age + FREG7_Gender + BMI + HbA1c,
+  data = meta_cc,
+  by = "margin",
+  permutations = 100
+)
+
+perm_aitchison_df <- as.data.frame(perm_aitchison) %>%
+  rownames_to_column("Variable") %>%
+  mutate(
+    R2_percent = R2 * 100,
+    p_value = `Pr(>F)`
+  )
+
+cat("\n============================================================\n")
+cat("1. Adjusted Aitchison PERMANOVA\n")
+cat("Model: Aitchison distance ~ ethnicity + age + sex + BMI + HbA1c\n")
+cat("============================================================\n")
+print(perm_aitchison_df)
+```
+
+
+```{r}
+############################################################
+## 7. Bray-Curtis sensitivity on the same samples
+############################################################
+
+common_samples <- rownames(clr_cc)
+
+rel_abund <- mat_repl[common_samples, ]
+rel_abund <- rel_abund / rowSums(rel_abund)
+
+set.seed(123)
+perm_bray <- adonis2(
+  vegdist(rel_abund, method = "bray") ~
+    FREG5_Ethnic_Group + FREG8_Age + FREG7_Gender + BMI + HbA1c,
+  data = meta_cc,
+  by = "margin",
+  permutations = 100
+)
+
+perm_bray_df <- as.data.frame(perm_bray) %>%
+  rownames_to_column("Variable") %>%
+  mutate(
+    R2_percent = R2 * 100,
+    p_value = `Pr(>F)`
+  )
+
+cat("\n============================================================\n")
+cat("2. Bray-Curtis PERMANOVA sensitivity analysis on same samples\n")
+cat("Model: Bray-Curtis distance ~ ethnicity + age + sex + BMI + HbA1c\n")
+cat("============================================================\n")
+print(perm_bray_df)
+```
+
+
+```{r}
+############################################################
+## 8. PERMDISP test for ethnicity
+############################################################
+
+disp_eth <- betadisper(aitchison_dist, meta_cc$FREG5_Ethnic_Group)
+
+set.seed(123)
+disp_eth_perm <- permutest(disp_eth, permutations = 100)
+
+cat("\n============================================================\n")
+cat("3. PERMDISP test for ethnicity using Aitchison distance\n")
+cat("This checks whether group dispersion differs by ethnicity.\n")
+cat("============================================================\n")
+print(disp_eth_perm)
+
+############################################################
+## 9. Aitchison PCA figure
+############################################################
+
+pca <- prcomp(clr_cc)
+
+ve <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+
+eth_lab <- c(C = "Chinese", I = "Indian", M = "Malay")
+
+pal <- c(
+  Chinese = "#9FDDCA",
+  Indian = "#9EA3F1",
+  Malay = "#E17887"
+)
+
+pca_df <- data.frame(
+  SampleID = rownames(clr_cc),
+  PC1 = pca$x[, 1],
+  PC2 = pca$x[, 2],
+  Ethnicity = factor(
+    eth_lab[as.character(meta_cc$FREG5_Ethnic_Group)],
+    levels = c("Chinese", "Indian", "Malay")
+  )
+)
+
+p_aitchison_pca <- ggplot(pca_df, aes(PC1, PC2, color = Ethnicity)) +
+  geom_point(alpha = 0.55, size = 1.5) +
+  stat_ellipse(level = 0.95, linewidth = 0.8) +
+  scale_color_manual(values = pal) +
+  labs(
+    x = paste0("PC1 (", ve[1], "%)"),
+    y = paste0("PC2 (", ve[2], "%)"),
+    color = NULL,
+    title = "Aitchison PCA of gut microbiome composition",
+    subtitle = paste0("CLR-transformed species abundance, n = ", nrow(meta_cc))
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(
+  "figure/Reviewer2_Aitchison_PCA_ethnicity.pdf",
+  p_aitchison_pca,
+  width = 6.5,
+  height = 5.5
+)
+
+ggsave(
+  "figure/Reviewer2_Aitchison_PCA_ethnicity.png",
+  p_aitchison_pca,
+  width = 6.5,
+  height = 5.5,
+  dpi = 300
+)
+
+cat("\nSaved figure:\n")
+cat("figure/Reviewer2_Aitchison_PCA_ethnicity.pdf\n")
+cat("figure/Reviewer2_Aitchison_PCA_ethnicity.png\n")
+
+print(p_aitchison_pca)
+```
+
+
+```{r}
+############################################################
+## 10. Diet PCs
+############################################################
+
+diet_raw <- food_data %>%
+  mutate(FREG1_Barcode = Participant_ID)
+
+food_cols <- diet_raw %>%
+  select(where(is.numeric)) %>%
+  colnames()
+
+cat("\nNumber of numeric food variables used for diet PCA:", length(food_cols), "\n")
+
+diet_mat <- diet_raw %>%
+  filter(FREG1_Barcode %in% meta_cc$FREG1_Barcode) %>%
+  select(FREG1_Barcode, all_of(food_cols)) %>%
+  column_to_rownames("FREG1_Barcode") %>%
+  as.matrix()
+
+storage.mode(diet_mat) <- "numeric"
+
+for (j in seq_len(ncol(diet_mat))) {
+  v <- diet_mat[, j]
+  v[is.na(v)] <- median(v, na.rm = TRUE)
+  diet_mat[, j] <- v
+}
+
+diet_mat <- diet_mat[, apply(diet_mat, 2, sd, na.rm = TRUE) > 0]
+
+cat("Number of food variables after removing zero-variance items:", ncol(diet_mat), "\n")
+
+diet_pca <- prcomp(diet_mat, center = TRUE, scale. = TRUE)
+
+diet_var <- summary(diet_pca)$importance[2, ]
+
+cat("\n============================================================\n")
+cat("4. Diet PCA variance explained\n")
+cat("============================================================\n")
+print(round(diet_var[1:10] * 100, 2))
+
+diet_pcs <- as.data.frame(diet_pca$x[, 1:4])
+colnames(diet_pcs) <- paste0("diet_PC", 1:4)
+diet_pcs$FREG1_Barcode <- rownames(diet_pcs)
+```
+
+
+```{r}
+############################################################
+## 11. Multivariable Aitchison PERMANOVA with diet PCs
+############################################################
+
+model_df <- meta_cc %>%
+  inner_join(diet_pcs, by = "FREG1_Barcode")
+
+terms_needed <- c(
+  "FREG5_Ethnic_Group",
+  "diet_PC1", "diet_PC2", "diet_PC3", "diet_PC4",
+  "FREG8_Age", "FREG7_Gender", "BMI", "HbA1c"
+)
+
+model_df <- model_df[complete.cases(model_df[, terms_needed]), ]
+
+clr_sub <- clr_cc[match(model_df$FREG1_Barcode, rownames(clr_cc)), ]
+
+stopifnot(all(rownames(clr_sub) == model_df$FREG1_Barcode))
+
+cat("\nSamples in multivariable diet-PC model:", nrow(model_df), "\n")
+
+set.seed(123)
+perm_multivar <- adonis2(
+  dist(clr_sub) ~ FREG5_Ethnic_Group +
+    diet_PC1 + diet_PC2 + diet_PC3 + diet_PC4 +
+    FREG8_Age + FREG7_Gender + BMI + HbA1c,
+  data = model_df,
+  by = "margin",
+  permutations = 100
+)
+
+perm_multivar_df <- as.data.frame(perm_multivar) %>%
+  rownames_to_column("Variable") %>%
+  mutate(
+    R2_percent = R2 * 100,
+    p_value = `Pr(>F)`
+  )
+
+cat("\n============================================================\n")
+cat("5. Multivariable Aitchison PERMANOVA with diet PCs\n")
+cat("Model: Aitchison distance ~ ethnicity + diet PCs + age + sex + BMI + HbA1c\n")
+cat("============================================================\n")
+print(perm_multivar_df)
+
+############################################################
+## 12. Variance explained figure
+############################################################
+
+plot_df <- perm_multivar_df %>%
+  filter(!Variable %in% c("Residual", "Total")) %>%
+  mutate(
+    Label = recode(
+      Variable,
+      FREG5_Ethnic_Group = "Ethnicity",
+      FREG8_Age = "Age",
+      FREG7_Gender = "Sex",
+      BMI = "BMI",
+      HbA1c = "HbA1c",
+      diet_PC1 = "Diet PC1",
+      diet_PC2 = "Diet PC2",
+      diet_PC3 = "Diet PC3",
+      diet_PC4 = "Diet PC4"
+    ),
+    Significance = ifelse(p_value < 0.05, "p < 0.05", "ns")
+  ) %>%
+  arrange(R2_percent)
+
+p_var <- ggplot(plot_df, aes(x = reorder(Label, R2_percent),
+                             y = R2_percent,
+                             fill = Significance)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(label = sprintf("%.2f%%", R2_percent)),
+    hjust = -0.15,
+    size = 3.3
+  ) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("p < 0.05" = "#D55E00", "ns" = "grey75")
+  ) +
+  scale_y_continuous(
+    expand = expansion(mult = c(0, 0.18))
+  ) +
+  labs(
+    x = NULL,
+    y = "Variance explained (% of total, Aitchison)",
+    fill = NULL,
+    title = "Host and dietary contributions to microbiome composition",
+    subtitle = paste0(
+      "Multivariable PERMANOVA, marginal adjusted effects, n = ",
+      nrow(model_df)
+    )
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+ggsave(
+  "figure/Reviewer2_Aitchison_multivariable_variance_explained.pdf",
+  p_var,
+  width = 7,
+  height = 4.5
+)
+
+ggsave(
+  "figure/Reviewer2_Aitchison_multivariable_variance_explained.png",
+  p_var,
+  width = 7,
+  height = 4.5,
+  dpi = 300
+)
+
+cat("\nSaved figure:\n")
+cat("figure/Reviewer2_Aitchison_multivariable_variance_explained.pdf\n")
+cat("figure/Reviewer2_Aitchison_multivariable_variance_explained.png\n")
+
+print(p_var)
+```
+
+
+```{r}
+############################################################
+## 13. Copy-paste rebuttal summary
+############################################################
+
+extract_term <- function(df, term) {
+  out <- df %>% filter(Variable == term)
+  if (nrow(out) == 0) return(NULL)
+  data.frame(
+    Variable = out$Variable,
+    R2_percent = round(out$R2_percent, 3),
+    F_value = round(out$F, 3),
+    p_value = out$p_value
+  )
+}
+
+eth_adj <- extract_term(perm_aitchison_df, "FREG5_Ethnic_Group")
+eth_multi <- extract_term(perm_multivar_df, "FREG5_Ethnic_Group")
+
+cat("\n\n############################################################\n")
+cat("COPY-PASTE SUMMARY FOR REBUTTAL\n")
+cat("############################################################\n")
+
+cat("\nAdjusted Aitchison PERMANOVA:\n")
+cat("n =", nrow(meta_cc), "\n")
+print(eth_adj)
+
+cat("\nMultivariable Aitchison PERMANOVA with diet PCs:\n")
+cat("n =", nrow(model_df), "\n")
+print(eth_multi)
+
+cat("\nFull multivariable model results:\n")
+print(
+  perm_multivar_df %>%
+    filter(!Variable %in% c("Residual", "Total")) %>%
+    select(Variable, R2_percent, F, p_value)
+)
+
+cat("\nDiet PC variance explained, first four PCs:\n")
+print(round(diet_var[1:4] * 100, 2))
+
+cat("\nSuggested sentence template:\n")
+cat(
+  paste0(
+    "Using CLR-transformed species abundance and Aitchison distance, ethnicity remained associated with overall microbiome composition after adjustment for age, sex, BMI, and HbA1c ",
+    "(PERMANOVA, R2 = ", round(eth_adj$R2_percent, 3), "%, p = ", eth_adj$p_value, "). ",
+    "In the multivariable model further including diet PCs, ethnicity explained ",
+    round(eth_multi$R2_percent, 3), "% of the total variation ",
+    "(p = ", eth_multi$p_value, ")."
+  )
+)
+
+cat("\n############################################################\n")
+```
+
+
+

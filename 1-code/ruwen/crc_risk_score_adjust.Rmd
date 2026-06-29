@@ -1,0 +1,1433 @@
+---
+title: "crc_risk_score_adjust"
+author: "Ruwen Zhou"
+date: "6/16/2026"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+## --- load order matters: maskers first, tidyverse last ---
+library(plyr)  # BEFORE dplyr/tidyverse (avoids select/summarise masking)
+library(MASS)          # also masks select(); load before tidyverse
+
+## --- Bioconductor / analysis packages ---
+library(phyloseq)
+library(vegan)         # pulls in 'permute' automatically — do NOT load permute separately
+library(DESeq2)
+library(MicrobiomeStat)
+
+## --- plotting / io / graph ---
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(Hmisc)
+library(readr)
+library(readxl)
+library(writexl)
+library(dplyr)
+library(tibble)
+
+## --- tidyverse LAST so dplyr wins the namespace ---
+library(tidyverse)
+
+```
+
+```{r}
+species_data_800 = read_excel("data/species_866.xlsx")
+ethnicity_800 = read_excel("data/ethnicity_866.xlsx")
+food_data = read_xlsx("data/FFQA862_new.xlsx")
+food_data <- food_data %>%
+  mutate(across(c("Mushrooms","Chapati"), as.numeric))
+species_data_800
+ethnicity_800
+food_data
+```
+
+```{r}
+## 1) ----- READ COEFFICIENT / INDEX TABLE -----
+coef_df_raw <- read_xlsx("data/cancer_index.xlsx")
+coef_df_raw
+```
+
+```{r}
+## --------------------------
+## Microbiome disease scores
+## --------------------------
+
+## PACKAGES
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+library(broom)
+library(tibble)
+
+## --------------------------
+## 0) Inputs you already have
+## --------------------------
+## species_data_800: data.frame with first column "FREG1_Barcode" then species columns (counts or RA)
+## ethnicity_800:    data.frame with "FREG1_Barcode" and "FREG5_Ethnic_Group" (C/I/M)
+## cancer index file: data/cancer_index.xlsx
+
+## --------------------------
+## 1) Read coefficient table
+## --------------------------
+coef_df_raw <- read_xlsx("data/cancer_index.xlsx")
+names(coef_df_raw)[1] <- "feature"  # ensure first column is 'feature'
+
+## make column names safe (e.g., IBS-D -> IBS_D)
+names(coef_df_raw) <- gsub("-", "_", names(coef_df_raw))
+coef_df_raw$feature <- gsub("_", " ", coef_df_raw$feature)
+
+## choose diseases to score (exclude 'Health' from disease panel; we add it optionally later)
+disease_cols <- setdiff(names(coef_df_raw), c("feature", "Health"))
+
+coef_df <- coef_df_raw %>%
+  select(feature, all_of(disease_cols)) %>%
+  distinct(feature, .keep_all = TRUE)
+
+## --------------------------
+## 2) Align species between tables
+## --------------------------
+species_cols <- setdiff(colnames(species_data_800), "FREG1_Barcode")
+common_species <- intersect(species_cols, coef_df$feature)
+
+message(sprintf("Matched %d species (your table: %d, coef table: %d).",
+                length(common_species), length(species_cols), nrow(coef_df)))
+
+## --------------------------------------------
+## 3) Normalize to relative abundance (row-wise)
+## --------------------------------------------
+abund_counts <- as.matrix(species_data_800[, common_species, drop = FALSE])
+row_sums <- rowSums(abund_counts, na.rm = TRUE)
+row_sums[row_sums == 0] <- 1  # avoid division by zero
+abund_rel <- abund_counts / row_sums
+
+## build sample-keyed matrix
+abund_mat <- abund_rel
+rownames(abund_mat) <- species_data_800$FREG1_Barcode
+
+## --------------------------------------------
+## 4) Build coefficient matrix (aligned in order)
+## --------------------------------------------
+coef_mat <- coef_df %>%
+  filter(feature %in% common_species) %>%
+  arrange(match(feature, common_species)) %>%
+  column_to_rownames("feature") %>%
+  as.matrix()
+
+stopifnot(identical(colnames(abund_mat), rownames(coef_mat)))
+
+## --------------------------------------------
+## 5) Compute disease scores: A %*% beta
+## --------------------------------------------
+scores_mat <- abund_mat %*% coef_mat[, disease_cols, drop = FALSE]
+scores_df <- scores_mat %>%
+  as.data.frame() %>%
+  rownames_to_column("FREG1_Barcode")
+
+## optional: also compute a Health score for reference
+if ("Health" %in% names(coef_df_raw)) {
+  health_vec <- coef_df_raw %>%
+    filter(feature %in% colnames(abund_mat)) %>%
+    arrange(match(feature, colnames(abund_mat))) %>%
+    pull(Health)
+  scores_df$Health <- as.numeric(abund_mat %*% matrix(health_vec, ncol = 1))
+}
+
+## --------------------------------------------
+## 6) Merge ethnicity (simple base merge)
+## --------------------------------------------
+eth_col <- "FREG5_Ethnic_Group"     # <--- change this if your column has a different name
+meta_min <- ethnicity_800[, c("FREG1_Barcode", eth_col), drop = FALSE]
+
+scores_annot <- merge(scores_df, meta_min, by = "FREG1_Barcode", all.x = TRUE)
+names(scores_annot)[names(scores_annot) == eth_col] <- "Ethnicity"
+
+## keep only C/I/M if present
+scores_annot <- subset(scores_annot, Ethnicity %in% c("C","I","M"))
+
+## quick sanity check
+print(table(scores_annot$Ethnicity, useNA = "ifany"))
+
+
+# Robust Kruskal–Wallis (skips if <2 groups)
+safe_kruskal <- function(y, g) {
+  g <- droplevels(factor(g))
+  if (nlevels(g) < 2L) return(data.frame(statistic = NA_real_, p_value = NA_real_))
+  kt <- try(stats::kruskal.test(y ~ g), silent = TRUE)
+  if (inherits(kt, "try-error")) return(data.frame(statistic = NA_real_, p_value = NA_real_))
+  data.frame(statistic = unname(kt$statistic), p_value = kt$p.value)
+}
+
+kw_res <- do.call(rbind, lapply(disease_cols, function(d) {
+  y <- scores_annot[[d]]
+  g <- scores_annot$Ethnicity
+  out <- safe_kruskal(y, g)
+  cbind(Disease = d, out, row.names = NULL)
+}))
+
+# Robust pairwise Wilcoxon (forces dimnames; skips empty)
+safe_pairwise <- function(y, g) {
+  g <- droplevels(factor(g))
+  if (nlevels(g) < 2L) return(NULL)
+  pw <- suppressWarnings(stats::pairwise.wilcox.test(y, g, p.adjust.method = "BH"))
+  M <- pw$p.value
+  if (is.null(M)) return(NULL)
+
+  # Ensure row/col names exist (pairwise.wilcox.test can drop them)
+  if (is.null(rownames(M)) || any(rownames(M) == "")) {
+    # convention: rows = levels(g)[-1], cols = levels(g)[-n]
+    rs <- levels(g)
+    if (length(rs) >= 2L) {
+      rownames(M) <- rs[-1]
+      colnames(M) <- rs[-length(rs)]
+    } else {
+      return(NULL)
+    }
+  } else if (is.null(colnames(M)) || any(colnames(M) == "")) {
+    cs <- levels(g)
+    if (length(cs) >= 2L) {
+      colnames(M) <- cs[-length(cs)]
+    } else {
+      return(NULL)
+    }
+  }
+
+  # Long format without relying on as.table() keeping names
+  out <- expand.grid(
+    Group1 = rownames(M),
+    Group2 = colnames(M),
+    stringsAsFactors = FALSE
+  )
+  out$p_adj <- as.vector(M)
+  out <- out[!is.na(out$p_adj), , drop = FALSE]
+  if (!nrow(out)) return(NULL)
+  out
+}
+
+pairwise_list <- do.call(rbind, lapply(disease_cols, function(d) {
+  y <- scores_annot[[d]]
+  g <- scores_annot$Ethnicity
+  out <- safe_pairwise(y, g)
+  if (is.null(out)) return(NULL)
+  cbind(Disease = d, out, row.names = NULL)
+}))
+
+# (Optional) Save results
+# if (!is.null(kw_res) && nrow(kw_res)) {
+#   write.csv(kw_res, "figure/disease_scores_kw_ethnicity.csv", row.names = FALSE)
+# }
+# if (!is.null(pairwise_list) && nrow(pairwise_list)) {
+#   write.csv(pairwise_list, "figure/disease_scores_pairwise_ethnicity.csv", row.names = FALSE)
+# }
+
+
+```
+```{r}
+pairwise_list
+kw_res
+scores_annot
+```
+
+```{r}
+med_cols <- intersect(disease_cols, names(scores_annot))
+mean_table <- aggregate(
+  . ~ Ethnicity,
+  data = scores_annot[, c("Ethnicity", med_cols), drop = FALSE],
+  FUN  = function(x) mean(x, na.rm = TRUE)
+)
+print(mean_table)
+
+```
+
+```{r}
+library(tidyverse)
+library(ggpubr)    # for stat_compare_means
+library(patchwork) # for combining plots
+
+## ---- CRC scores by ethnicity ----
+crc_df <- scores_annot %>%
+  select(Ethnicity, CRC) %>%
+  filter(!is.na(Ethnicity), !is.na(CRC)) %>%
+  mutate(Ethnicity = factor(Ethnicity, levels = c("C","I","M")))
+
+## ---- ASIR 2019 (per 100,000), read from Fig 6 (CRC panel) ----
+asir_2019 <- tibble(
+  Ethnicity  = factor(c("C","I","M"), levels = c("C","I","M")),
+  ASIR_2019  = c(36.0, 19.0, 32.5)   # Chinese, Indian, Malay
+)
+
+## ---- APC for CRC age 20–49 by ethnicity (from Table 4) ----
+apc_20_49 <- tibble(
+  Ethnicity = factor(c("C","I","M"), levels = c("C","I","M")),
+  APC_20_49 = c(0.23, 0.47, 2.90)    # CN: trend 1999–2019; IN: 1968–2019; MY: 1968–2019
+)
+
+## ---- summary table: mean CRC risk per ethnicity + ASIR + APC ----
+summary_df <- crc_df %>%
+  group_by(Ethnicity) %>%
+  dplyr::summarise(mean_CRC = mean(CRC), .groups = "drop") %>%
+  dplyr::left_join(asir_2019, by = "Ethnicity") %>%
+  dplyr::left_join(apc_20_49, by = "Ethnicity")
+summary_df
+
+```
+```{r}
+## global & pairwise p-values (Kruskal–Wallis + Wilcoxon)
+kruskal_res <- kruskal.test(CRC ~ Ethnicity, data = crc_df)
+kruskal_res
+
+pairwise_res <- pairwise.wilcox.test(crc_df$CRC, crc_df$Ethnicity,
+                                     p.adjust.method = "BH")
+pairwise_res
+```
+
+
+```{r}
+scale_factor <- 0.2
+comparisons_list <- list(c("C","I"), c("C","M"), c("I","M"))
+
+p_violin <- ggplot(crc_df, aes(x = Ethnicity, y = CRC)) +
+  ## ---- 1) ASIR line BELOW violins (drawn first) ----
+  geom_line(data = asir_2019,
+            inherit.aes = FALSE,
+            aes(x = Ethnicity, y = ASIR_2019 * scale_factor, group = 1),
+            color = "red", size = 1.2) +
+  geom_point(data = asir_2019,
+             inherit.aes = FALSE,
+             aes(x = Ethnicity, y = ASIR_2019 * scale_factor),
+             color = "red", size = 3) +
+  geom_text(data = asir_2019,
+            inherit.aes = FALSE,
+            aes(x = Ethnicity, y = ASIR_2019 * scale_factor,
+                label = round(ASIR_2019, 1)),
+            vjust = -0.7, color = "red", size = 3.3) +
+
+  ## ---- 2) Violins, boxplots, means ON TOP ----
+  geom_violin(aes(fill = Ethnicity),
+              trim = FALSE, alpha = 0.6) +
+  geom_boxplot(width = 0.15,
+               outlier.shape = NA, alpha = 0.8) +
+  stat_summary(fun = mean, geom = "point",
+               size = 3, color = "black") +
+  scale_fill_manual(values = c("C"="#4E79A7","I"="#F28E2B","M"="#59A14F")) +
+
+  ## ---- 3) Axes ----
+  scale_y_continuous(
+    name = "CRC Microbial Risk Score",
+    sec.axis = sec_axis(~ . / scale_factor,
+                        name = "CRC ASIR 2019 (per 100,000)")
+  ) +
+  labs(x = "Ethnicity") +
+
+  ## ---- 4) Pairwise p-values ONLY (no KW text) ----
+  stat_compare_means(
+    comparisons = comparisons_list,
+    method = "wilcox.test",
+    label = "p.signif",
+    step.increase = 0.1  # stacks the bars nicely
+  ) +
+
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    axis.title.y.right = element_text(color = "red"),
+    axis.text.y.right  = element_text(color = "red")
+  )
+
+p_violin
+#ggsave("figure/violin_score_sue.pdf", p_violin, width = 12, height = 11, dpi = 300)
+
+```
+```{r}
+## ============================
+## 1. Packages
+## ============================
+library(tidyverse)
+library(ggpubr)
+
+## ============================
+## 2. Data prep
+## ============================
+
+# 2.1 CRC scores by ethnicity
+crc_df <- scores_annot %>%
+  select(Ethnicity, CRC) %>%
+  filter(!is.na(Ethnicity), !is.na(CRC)) %>%
+  # recode C/I/M to full labels
+  mutate(
+    Ethnicity = factor(
+      Ethnicity,
+      levels = c("C","I","M"),
+      labels = c("Chinese","Indian","Malay")
+    )
+  )
+
+# 2.2 ASIR 2019 from Figure 6 (CRC panel)
+asir_2019 <- tibble(
+  Ethnicity  = factor(c("Chinese","Indian","Malay"),
+                      levels = c("Chinese","Indian","Malay")),
+  ASIR_2019  = c(36.0, 19.0, 32.5)  # per 100,000 person-years
+)
+
+# 2.3 pairwise comparisons for p-values
+comparisons_list <- list(
+  c("Chinese","Indian"),
+  c("Chinese","Malay"),
+  c("Indian","Malay")
+)
+```
+
+
+```{r}
+## ============================
+## 3. Plot
+## ============================
+
+scale_factor <- 0.10   # converts ASIR to score scale (36 -> 3.6)
+
+p_violin <- ggplot(crc_df, aes(x = Ethnicity, y = CRC)) +
+  # ---- ASIR line below ----
+  geom_line(data = asir_2019,
+            inherit.aes = FALSE,
+            aes(Ethnicity, ASIR_2019 * scale_factor, group = 1),
+            color = "#E9967A", size = 1) +
+  geom_point(data = asir_2019,
+             inherit.aes = FALSE,
+             aes(Ethnicity, ASIR_2019 * scale_factor),
+             color = "#E9967A", size = 2.8) +
+  geom_text(data = asir_2019,
+            inherit.aes = FALSE,
+            aes(Ethnicity, ASIR_2019 * scale_factor, label = ASIR_2019),
+            vjust = -0.8, color = "#E9967A", size = 3.2) +
+
+  # ---- violins ----
+  geom_violin(aes(fill = Ethnicity),
+              trim = FALSE, alpha = 0.7, colour = NA) +
+  geom_boxplot(width = 0.12,
+               outlier.shape = NA,
+               fill = "white", alpha = 0.9, colour = "black") +
+  stat_summary(fun = mean, geom = "point",
+               size = 3, shape = 21, fill = "black", color = "black") +
+#ethnicity_colors = c("C" = "#9FDDCA","I"= "#9EA3F1","M" = "#E17887","O" = "#80796BFF")
+  scale_fill_manual(values = c(
+    "Chinese"="#9FDDCA",
+    "Indian" ="#9EA3F1",
+    "Malay"  ="#E17887"
+  )) +
+
+  scale_y_continuous(
+    name = "CRC microbial risk score (standardised)",
+    limits = c(-4, 5.2),
+    breaks = seq(-4, 4, 2),
+    sec.axis = sec_axis(
+      ~ . / scale_factor,
+      breaks = seq(0, 40, 10),
+      name   = "CRC ASIR 2019 (per 100,000 person-years)"
+    )
+  ) +
+  labs(x = "Ethnicity") +
+
+  # ---- pairwise stats only ----
+  stat_compare_means(
+    comparisons = comparisons_list,
+    method = "wilcox.test",
+    label = "p.signif",
+    label.y = c(3.4, 3.9, 4.4)
+  ) +
+
+  theme_classic(base_size = 16) +
+  theme(
+    legend.position = "none",
+    axis.text.y.right  = element_text(color = "#E9967A"),
+    axis.title.y.right = element_text(color = "#E9967A",
+                                      margin = margin(l = 8)),
+    axis.title.y       = element_text(margin = margin(r = 8)),
+    axis.title.x       = element_text(margin = margin(t = 8))
+  )
+
+
+p_violin
+
+# ggsave("figure/CRC_risk_violin_sue.pdf",
+#        p_violin, width = 7, height = 7)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+scores_annot$Ethnicity <- factor(scores_annot$Ethnicity, levels = c("C","I","M"))
+
+# Long format for plotting
+scores_long <- scores_annot %>%
+  pivot_longer(all_of(disease_cols), names_to = "Disease", values_to = "Score")
+
+# Define pairwise comparisons
+my_comparisons <- list(c("C", "I"), c("C", "M"), c("I", "M"))
+
+# Faceted boxplots + jitter with matching colors and significance
+p_all <- ggplot(scores_long, aes(Ethnicity, Score, fill = Ethnicity)) +
+  geom_boxplot(outlier.shape = NA, width = 0.7, alpha = 0.9) +
+  geom_jitter(aes(color = Ethnicity), width = 0.15, alpha = 0.35, size = 0.5) +
+  stat_compare_means(comparisons = my_comparisons, 
+                     method = "wilcox.test",
+                     label = "p.signif",
+                     size = 3) +
+  facet_wrap(~ Disease, scales = "free_y", ncol = 4) +
+  theme_bw() +
+  labs(title = "Microbiome-derived disease scores by Ethnicity",
+       x = NULL, y = "Score") +
+  theme(legend.position = "none")
+
+print(p_all)
+
+# save
+#ggsave("figure/box_all_diseases_by_ethnicity.pdf", p_all, width = 12, height = 10, dpi = 300)
+
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggpubr)
+
+# 1. Define custom colors
+ethnicity_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887")
+
+# 2. Define the desired order of diseases
+disease_order <- c("CRC", "CA", "CD", "UC", "IBS_D")
+
+# 3. Filter data AND set the order
+scores_long_filtered <- scores_long %>%
+  filter(Disease %in% disease_order) %>%
+  mutate(Disease = factor(Disease, levels = disease_order))
+
+# 4. Plot
+p_all <- ggplot(scores_long_filtered, aes(Ethnicity, Score, fill = Ethnicity)) +
+  geom_boxplot(outlier.shape = NA, width = 0.7, alpha = 0.9) +
+  
+  # tip.length = 0 removes the vertical downward ticks on the brackets
+  stat_compare_means(comparisons = my_comparisons, 
+                     method = "wilcox.test",
+                     label = "p.signif",
+                     size = 3,
+                     tip.length = 0) + 
+  
+  scale_fill_manual(values = ethnicity_colors) +
+  
+  facet_wrap(~ Disease, scales = "free_y", ncol = 5) + 
+  
+  theme_bw() +
+  labs(title = "Microbiome-derived disease scores by Ethnicity",
+       x = NULL, y = "Score") +
+  theme(legend.position = "none")
+
+# 5. Save with specific dimensions to fix the "squashed" look
+# Adjust width and height as needed (e.g., width = 10, height = 4)
+#ggsave("figure/box_all_diseases_by_ethnicity2.pdf", p_all, width = 12, height = 5)
+
+print(p_all)
+```
+
+
+
+
+
+## adjust for age gender bmi diet
+```{r}
+# ============================================================
+# CHUNK 1: Setup
+# ============================================================
+library(dplyr)
+library(ggplot2)
+library(ggsignif)
+library(patchwork)
+library(emmeans)
+library(car)
+library(vegan)
+
+if ("plyr" %in% (.packages())) detach("package:plyr", unload = TRUE)
+
+
+# ============================================================
+# CHUNK 2: Compute 29-species CRC score
+# (requires species_data_800 — already loaded in your Rmd)
+# ============================================================
+species_29 <- c(
+  "Parvimonas micra",
+  "Gemella morbillorum",
+  "Peptostreptococcus stomatis",
+  "F. nucleatum subspecies animalis",
+  "Unknown Dialister",
+  "Unknown Porphyromonas",
+  "Solobacterium moorei",
+  "Porphyromonas uenonis",
+  "Clostridium symbiosum",
+  "Unknown Clostridiales",
+  "Hungatella hathewayi",
+  "Prevotella intermedia",
+  "Porphyromonas somerae",
+  "Porphyromonas asaccharolytica",
+  "F. nucleatum subspecies nucleatum",
+  "Parvimonas species",
+  "Prevotella nigrescens",
+  "Ruminococcus torques",
+  "F. nucleatum subspecies vincentii",
+  "Fusobacterium species oral taxon 370",
+  "Unknown Peptostreptococcaceae",
+  "Anaerococcus obesiensis/vaginalis",
+  "Unknown Anaerotruncus",
+  "P. uenonis",
+  "Clostridium bolteae/clostridioforme",
+  "Subdoligranulum species"
+)
+
+# Match species names to column names in species_data_800
+species_cols_present <- intersect(species_29, names(species_data_800))
+message(sprintf("29-species score: %d of %d species matched in your data",
+                length(species_cols_present), length(species_29)))
+print(species_cols_present)
+
+# Compute CRC_MRS_29sp_sum
+mrs29_data <- species_data_800 %>%
+  dplyr::select(FREG1_Barcode, all_of(species_cols_present))
+mrs29_data[is.na(mrs29_data)] <- 0
+
+mrs29_df <- data.frame(
+  FREG1_Barcode   = mrs29_data$FREG1_Barcode,
+  CRC_MRS_29sp_sum = rowSums(as.matrix(mrs29_data[, -1, drop = FALSE]))
+)
+```
+
+
+```{r}
+# ============================================================
+# CHUNK 3: Diet PC1
+# (requires food_data — already loaded in your Rmd)
+# ============================================================
+food_cols <- setdiff(colnames(food_data), "Participant_ID")
+
+food_complete <- food_data %>%
+  dplyr::select(Participant_ID, all_of(food_cols)) %>%
+  dplyr::mutate(across(all_of(food_cols), ~ suppressWarnings(as.numeric(.)))) %>%
+  dplyr::filter(complete.cases(.))
+
+pca_diet <- prcomp(food_complete[, food_cols], center = TRUE, scale. = TRUE)
+pct_pc1  <- round(summary(pca_diet)$importance["Proportion of Variance","PC1"] * 100, 1)
+message(sprintf("Diet PC1: %.1f%% of food-group variance", pct_pc1))
+
+diet_pc_df <- data.frame(
+  FREG1_Barcode = food_complete$Participant_ID,
+  diet_PC1      = pca_diet$x[, "PC1"]
+)
+
+
+# ============================================================
+# CHUNK 4: Unified dataset
+# (requires scores_annot + ethnicity_800 — already in your Rmd)
+# ============================================================
+demog_df <- ethnicity_800 %>%
+  dplyr::filter(FREG5_Ethnic_Group %in% c("C","I","M")) %>%
+  dplyr::transmute(
+    FREG1_Barcode = FREG1_Barcode,
+    Ethnicity     = factor(FREG5_Ethnic_Group, levels = c("I","C","M")),
+    Gender        = factor(FREG7_Gender),
+    Age           = as.numeric(FREG8_Age),
+    BMI           = as.numeric(BMI)
+  )
+
+unified_df <- scores_annot %>%
+  dplyr::select(FREG1_Barcode, CRC) %>%
+  dplyr::full_join(mrs29_df, by = "FREG1_Barcode") %>%
+  dplyr::inner_join(demog_df,  by = "FREG1_Barcode") %>%
+  dplyr::left_join(diet_pc_df, by = "FREG1_Barcode") %>%
+  dplyr::filter(
+    !is.na(Age), !is.na(BMI), !is.na(Gender), !is.na(diet_PC1),
+    !is.na(CRC), !is.na(CRC_MRS_29sp_sum)
+  )
+
+message(sprintf("Analytic n = %d  (C=%d, I=%d, M=%d)",
+  nrow(unified_df),
+  sum(unified_df$Ethnicity == "C"),
+  sum(unified_df$Ethnicity == "I"),
+  sum(unified_df$Ethnicity == "M")
+))
+
+# Sanity check — should see both score columns
+print(names(unified_df))
+```
+
+
+```{r}
+# ============================================================
+# CHUNK 5: Adjusted models + emmeans
+# ============================================================
+model_crc1 <- lm(CRC ~ Ethnicity + Age + Gender + BMI + diet_PC1,
+                 data = unified_df)
+em_crc1    <- emmeans(model_crc1, ~ Ethnicity)
+pw_crc1    <- contrast(em_crc1, method = "pairwise", adjust = "BH")
+
+cat("=== Score 1 (CRC) — Ethnicity F-test after adjustment ===\n")
+print(anova(model_crc1)["Ethnicity", ])
+cat("\n=== Score 1 pairwise contrasts ===\n")
+print(summary(pw_crc1))
+
+model_crc2 <- lm(CRC_MRS_29sp_sum ~ Ethnicity + Age + Gender + BMI + diet_PC1,
+                 data = unified_df)
+em_crc2    <- emmeans(model_crc2, ~ Ethnicity)
+pw_crc2    <- contrast(em_crc2, method = "pairwise", adjust = "BH")
+
+cat("\n=== Score 2 (29-species) — Ethnicity F-test after adjustment ===\n")
+print(anova(model_crc2)["Ethnicity", ])
+cat("\n=== Score 2 pairwise contrasts ===\n")
+print(summary(pw_crc2))
+
+
+# ============================================================
+# CHUNK 6: Plot function
+# ============================================================
+eth_fill <- c("Chinese" = "#9FDDCA", "Indian" = "#9EA3F1", "Malay" = "#E17887")
+eth_dark <- c("Chinese" = "#1F6F5D", "Indian" = "#2C2F88", "Malay" = "#7E2236")
+
+sig_stars <- function(p) {
+  dplyr::case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    TRUE      ~ "ns"
+  )
+}
+
+plot_violin_adjusted <- function(df, score_col, em_obj, pw_obj, title, y_label) {
+
+  raw_df <- df %>%
+    dplyr::transmute(
+      Ethnicity = factor(Ethnicity,
+                         levels = c("C","I","M"),
+                         labels = c("Chinese","Indian","Malay")),
+      score = .data[[score_col]]
+    ) %>%
+    dplyr::filter(!is.na(score), !is.na(Ethnicity))
+
+  em_df <- summary(em_obj) %>%
+    as.data.frame() %>%
+    dplyr::mutate(
+      Ethnicity = factor(Ethnicity,
+                         levels = c("C","I","M"),
+                         labels = c("Chinese","Indian","Malay"))
+    )
+
+  eth_map <- c("C" = "Chinese", "I" = "Indian", "M" = "Malay")
+  pw_df <- summary(pw_obj) %>%
+    as.data.frame() %>%
+    dplyr::mutate(
+      g1    = eth_map[sub(" - .*", "", as.character(contrast))],
+      g2    = eth_map[sub(".* - ", "", as.character(contrast))],
+      stars = sig_stars(p.value)
+    )
+
+  comparisons <- base::mapply(c, pw_df$g1, pw_df$g2, SIMPLIFY = FALSE)
+
+  y_max   <- max(raw_df$score, na.rm = TRUE)
+  y_range <- y_max - min(raw_df$score, na.rm = TRUE)
+  y_brack <- y_max + c(y_range * 0.10, y_range * 0.19, y_range * 0.28)
+
+  ggplot(raw_df, aes(x = Ethnicity, y = score)) +
+    geom_violin(aes(fill = Ethnicity),
+                trim = FALSE, alpha = 0.50, colour = NA) +
+    geom_boxplot(width = 0.10, outlier.shape = NA,
+                 fill = "white", alpha = 0.88,
+                 colour = "grey40", linewidth = 0.4) +
+    geom_errorbar(data = em_df,
+                  aes(x = Ethnicity, ymin = lower.CL, ymax = upper.CL,
+                      colour = Ethnicity),
+                  width = 0.13, linewidth = 1.4,
+                  inherit.aes = FALSE) +
+    geom_point(data = em_df,
+               aes(x = Ethnicity, y = emmean, colour = Ethnicity),
+               size = 5.5, shape = 18,
+               inherit.aes = FALSE) +
+    ggsignif::geom_signif(
+      comparisons      = comparisons,
+      annotations      = pw_df$stars,
+      y_position       = y_brack,
+      tip_length       = 0,
+      textsize         = 4.5,
+      vjust            = 0.3,
+      colour           = "grey25",
+      map_signif_level = FALSE
+    ) +
+    scale_fill_manual(values   = eth_fill) +
+    scale_colour_manual(values = eth_dark) +
+    scale_y_continuous(expand  = expansion(mult = c(0.05, 0.20))) +
+    labs(
+      title    = title,
+      subtitle = "Violin: raw  |  \u25c6 + CI: adjusted marginal mean \u00b195%CI (emmeans, BH)",
+      x        = NULL,
+      y        = y_label
+    ) +
+    theme_classic(base_size = 13) +
+    theme(
+      legend.position = "none",
+      plot.title      = element_text(face = "bold", size = 13),
+      plot.subtitle   = element_text(size = 8.5, colour = "grey50",
+                                     margin = margin(b = 4))
+    )
+}
+
+
+# ============================================================
+# CHUNK 7: Generate + combine plots
+# ============================================================
+p1 <- plot_violin_adjusted(
+  df        = unified_df,
+  score_col = "CRC",
+  em_obj    = em_crc1,
+  pw_obj    = pw_crc1,
+  title     = "Score 1: Multi-disease framework (Ref 46)",
+  y_label   = "CRC microbial risk score"
+)
+
+p2 <- plot_violin_adjusted(
+  df        = unified_df,
+  score_col = "CRC_MRS_29sp_sum",
+  em_obj    = em_crc2,
+  pw_obj    = pw_crc2,
+  title     = "Score 2: 29-species framework (Thomas et al.)",
+  y_label   = "CRC 29-species abundance sum"
+)
+
+p_combined <- p1 / p2 +
+  plot_annotation(
+    title   = "CRC microbial risk scores by ethnicity",
+    caption = paste0(
+      "\u25c6 Adjusted marginal mean \u00b195%CI (emmeans, BH-corrected). ",
+      "Adjusted for age, sex, BMI, diet PC1 (", pct_pc1, "% variance)."
+    ),
+    theme = theme(
+      plot.title   = element_text(face = "bold", size = 14),
+      plot.caption = element_text(colour = "grey45", size = 8.5)
+    )
+  )
+
+print(p_combined)
+# ggsave("figure/CRC_both_scores_adjusted.pdf", p_combined, width = 7, height = 11, dpi = 300)
+
+
+# ============================================================
+# CHUNK 8: Rebuttal numbers
+# ============================================================
+cat("=== REBUTTAL NUMBERS ===\n\n")
+cat(sprintf("n = %d  (C=%d, I=%d, M=%d)\n",
+    nrow(unified_df),
+    sum(unified_df$Ethnicity == "C"),
+    sum(unified_df$Ethnicity == "I"),
+    sum(unified_df$Ethnicity == "M")))
+cat(sprintf("Diet PC1: %.1f%% food-group variance\n\n", pct_pc1))
+
+aov1 <- anova(model_crc1)
+cat(sprintf("Score 1 — Ethnicity: F(%d,%d) = %.2f, p = %.4f\n",
+    aov1["Ethnicity","Df"], aov1["Residuals","Df"],
+    aov1["Ethnicity","F value"], aov1["Ethnicity","Pr(>F)"]))
+summary(pw_crc1) %>% as.data.frame() %>%
+  dplyr::mutate(stars = sig_stars(p.value)) %>%
+  dplyr::select(contrast, estimate, SE, p.value, stars) %>%
+  print()
+
+aov2 <- anova(model_crc2)
+cat(sprintf("\nScore 2 — Ethnicity: F(%d,%d) = %.2f, p = %.4f\n",
+    aov2["Ethnicity","Df"], aov2["Residuals","Df"],
+    aov2["Ethnicity","F value"], aov2["Ethnicity","Pr(>F)"]))
+summary(pw_crc2) %>% as.data.frame() %>%
+  dplyr::mutate(stars = sig_stars(p.value)) %>%
+  dplyr::select(contrast, estimate, SE, p.value, stars) %>%
+  print()
+```
+```{r}
+# ============================================================
+# UPDATED FUNCTION — replaces previous plot_violin_adjusted
+# ============================================================
+plot_violin_adjusted <- function(df, score_col, em_obj, pw_obj, title, y_label,
+                                  ylim_zoom = NULL,   # c(ymin, ymax) to zoom in
+                                  show_ns   = TRUE) { # FALSE removes ns brackets
+
+  raw_df <- df %>%
+    dplyr::transmute(
+      Ethnicity = factor(Ethnicity,
+                         levels = c("C","I","M"),
+                         labels = c("Chinese","Indian","Malay")),
+      score = .data[[score_col]]
+    ) %>%
+    dplyr::filter(!is.na(score), !is.na(Ethnicity))
+
+  em_df <- summary(em_obj) %>%
+    as.data.frame() %>%
+    dplyr::mutate(
+      Ethnicity = factor(Ethnicity,
+                         levels = c("C","I","M"),
+                         labels = c("Chinese","Indian","Malay"))
+    )
+
+  eth_map <- c("C" = "Chinese", "I" = "Indian", "M" = "Malay")
+  pw_df <- summary(pw_obj) %>%
+    as.data.frame() %>%
+    dplyr::mutate(
+      g1    = eth_map[sub(" - .*", "", as.character(contrast))],
+      g2    = eth_map[sub(".* - ", "", as.character(contrast))],
+      stars = sig_stars(p.value)
+    )
+
+  # Remove ns if requested
+  if (!show_ns) pw_df <- dplyr::filter(pw_df, p.value < 0.05)
+
+  comparisons <- base::mapply(c, pw_df$g1, pw_df$g2, SIMPLIFY = FALSE)
+
+  # Bracket y positions — relative to zoom window if provided
+  if (!is.null(ylim_zoom) && nrow(pw_df) > 0) {
+    y_top  <- ylim_zoom[2]
+    y_span <- diff(ylim_zoom)
+    y_brack <- y_top - rev(seq_len(nrow(pw_df))) * y_span * 0.08
+  } else if (nrow(pw_df) > 0) {
+    y_max   <- max(raw_df$score, na.rm = TRUE)
+    y_range <- y_max - min(raw_df$score, na.rm = TRUE)
+    y_brack <- (y_max + c(y_range * 0.10, y_range * 0.19, y_range * 0.28))[seq_len(nrow(pw_df))]
+  }
+
+  p <- ggplot(raw_df, aes(x = Ethnicity, y = score)) +
+    geom_violin(aes(fill = Ethnicity),
+                trim = FALSE, alpha = 0.50, colour = NA) +
+    geom_boxplot(width = 0.10, outlier.shape = NA,
+                 fill = "white", alpha = 0.88,
+                 colour = "grey40", linewidth = 0.4) +
+    geom_errorbar(data = em_df,
+                  aes(x = Ethnicity, ymin = lower.CL, ymax = upper.CL,
+                      colour = Ethnicity),
+                  width = 0.13, linewidth = 1.4,
+                  inherit.aes = FALSE) +
+    geom_point(data = em_df,
+               aes(x = Ethnicity, y = emmean, colour = Ethnicity),
+               size = 5.5, shape = 18,
+               inherit.aes = FALSE) +
+    scale_fill_manual(values   = eth_fill) +
+    scale_colour_manual(values = eth_dark) +
+    scale_y_continuous(expand  = expansion(mult = c(0.02, 0.02))) +
+    labs(
+      title    = title,
+      #subtitle = "Violin: raw  |  \u25c6 + CI: adjusted marginal mean \u00b195%CI (emmeans, BH)",
+      x        = NULL,
+      y        = y_label
+    ) +
+    theme_classic(base_size = 13) +
+    theme(
+      legend.position = "none",
+      plot.title      = element_text(face = "bold", size = 13),
+      plot.subtitle   = element_text(size = 8.5, colour = "grey50",
+                                     margin = margin(b = 4))
+    )
+
+  # Add significance brackets only if any comparisons remain
+  if (length(comparisons) > 0) {
+    p <- p + ggsignif::geom_signif(
+      comparisons      = comparisons,
+      annotations      = pw_df$stars,
+      y_position       = y_brack,
+      tip_length       = 0,
+      textsize         = 4.5,
+      vjust            = 0.3,
+      colour           = "grey25",
+      map_signif_level = FALSE
+    )
+  }
+
+  # Zoom if requested
+  if (!is.null(ylim_zoom)) p <- p + coord_cartesian(ylim = ylim_zoom)
+
+  p
+}
+
+
+# ============================================================
+# UPDATED PLOT CALLS
+# ============================================================
+
+# P1: zoom in so Indian visually reads as lowest
+p1 <- plot_violin_adjusted(
+  df        = unified_df,
+  score_col = "CRC",
+  em_obj    = em_crc1,
+  pw_obj    = pw_crc1,
+  title     = "Score 1: Multi-disease framework adjusted",
+  y_label   = "CRC microbial risk score",
+  ylim_zoom = c(-4, 4)   # adjust upper limit up/down to fit brackets
+)
+
+# P2: hide all ns + zoom into violin body (cut extreme outliers from view)
+p2_top <- quantile(unified_df$CRC_MRS_29sp_sum, 0.97, na.rm = TRUE)
+message(sprintf("P2 zoom top: %.0f  (97th percentile)", p2_top))
+
+p2 <- plot_violin_adjusted(
+  df        = unified_df,
+  score_col = "CRC_MRS_29sp_sum",
+  em_obj    = em_crc2,
+  pw_obj    = pw_crc2,
+  title     = "Score 2: 29-species framework adjusted",
+  y_label   = "CRC 29-species abundance sum",
+  ylim_zoom = c(0, p2_top),
+  show_ns   = FALSE
+)
+
+
+p1
+p2
+# ggsave("figure/CRC_scores_adjusted_multi_disease.pdf", p1, width = 10, height = 8, dpi = 300)
+# ggsave("figure/CRC_both_scores_adjusted_29spe.pdf", p2, width = 10, height = 8, dpi = 300)
+```
+
+```{r}
+# ============================================================
+# FINAL CLEAN CRC SCORE ANALYSIS FOR REBUTTAL / MANUSCRIPT
+# Computes:
+# 1) Unadjusted CRC score comparisons
+# 2) Adjusted CRC score comparisons
+# 3) Rebuttal-ready text output
+# ============================================================
+
+library(dplyr)
+library(tidyr)
+library(emmeans)
+library(broom)
+
+# ------------------------------------------------------------
+# 0. Create output folder
+# ------------------------------------------------------------
+if (!dir.exists("figure")) dir.create("figure", recursive = TRUE)
+
+# ------------------------------------------------------------
+# 1. Check required objects from previous chunks
+# ------------------------------------------------------------
+required_objects <- c("scores_annot", "mrs29_df", "ethnicity_800", "food_data")
+
+missing_objects <- required_objects[!sapply(required_objects, exists)]
+
+if (length(missing_objects) > 0) {
+  stop(
+    "These required objects are missing: ",
+    paste(missing_objects, collapse = ", "),
+    "\nPlease run your previous chunks first."
+  )
+}
+
+# ------------------------------------------------------------
+# 2. Prepare diet PC1
+# ------------------------------------------------------------
+food_cols <- setdiff(colnames(food_data), "Participant_ID")
+
+food_complete <- food_data %>%
+  dplyr::select(Participant_ID, all_of(food_cols)) %>%
+  dplyr::mutate(across(all_of(food_cols), ~ suppressWarnings(as.numeric(.)))) %>%
+  dplyr::filter(complete.cases(.))
+
+pca_diet <- prcomp(food_complete[, food_cols], center = TRUE, scale. = TRUE)
+
+pct_pc1 <- round(
+  summary(pca_diet)$importance["Proportion of Variance", "PC1"] * 100,
+  1
+)
+
+diet_pc_df <- data.frame(
+  FREG1_Barcode = food_complete$Participant_ID,
+  diet_PC1      = pca_diet$x[, "PC1"]
+)
+
+message(sprintf("Diet PC1 explains %.1f%% of food-group variance", pct_pc1))
+
+# ------------------------------------------------------------
+# 3. Build unified dataset for adjusted models
+# ------------------------------------------------------------
+demog_df <- ethnicity_800 %>%
+  dplyr::filter(FREG5_Ethnic_Group %in% c("C", "I", "M")) %>%
+  dplyr::transmute(
+    FREG1_Barcode = FREG1_Barcode,
+    Ethnicity     = factor(FREG5_Ethnic_Group, levels = c("I", "C", "M")),
+    Gender        = factor(FREG7_Gender),
+    Age           = as.numeric(FREG8_Age),
+    BMI           = as.numeric(BMI)
+  )
+
+unified_df <- scores_annot %>%
+  dplyr::select(FREG1_Barcode, CRC) %>%
+  dplyr::full_join(mrs29_df, by = "FREG1_Barcode") %>%
+  dplyr::inner_join(demog_df, by = "FREG1_Barcode") %>%
+  dplyr::left_join(diet_pc_df, by = "FREG1_Barcode") %>%
+  dplyr::filter(
+    !is.na(CRC),
+    !is.na(CRC_MRS_29sp_sum),
+    !is.na(Ethnicity),
+    !is.na(Age),
+    !is.na(Gender),
+    !is.na(BMI),
+    !is.na(diet_PC1)
+  )
+
+sample_info <- data.frame(
+  analytic_n = nrow(unified_df),
+  Chinese_n  = sum(unified_df$Ethnicity == "C"),
+  Indian_n   = sum(unified_df$Ethnicity == "I"),
+  Malay_n    = sum(unified_df$Ethnicity == "M"),
+  diet_PC1_variance_percent = pct_pc1
+)
+
+print(sample_info)
+
+write.csv(
+  sample_info,
+  "figure/CRC_score_sample_info.csv",
+  row.names = FALSE
+)
+
+# ------------------------------------------------------------
+# 4. Helper functions
+# ------------------------------------------------------------
+
+format_p <- function(p) {
+  ifelse(
+    is.na(p), NA,
+    ifelse(p < 0.001, "<0.001", sprintf("%.4f", p))
+  )
+}
+
+sig_stars <- function(p) {
+  dplyr::case_when(
+    is.na(p) ~ NA_character_,
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    TRUE      ~ "ns"
+  )
+}
+
+get_unadjusted_results <- function(df, score_col, score_label) {
+  
+  tmp <- df %>%
+    dplyr::select(Ethnicity, all_of(score_col)) %>%
+    dplyr::rename(score = all_of(score_col)) %>%
+    dplyr::filter(!is.na(Ethnicity), !is.na(score)) %>%
+    dplyr::mutate(Ethnicity = factor(Ethnicity, levels = c("I", "C", "M")))
+  
+  kw <- kruskal.test(score ~ Ethnicity, data = tmp)
+  
+  global <- data.frame(
+    score = score_label,
+    test = "Kruskal-Wallis",
+    statistic = unname(kw$statistic),
+    df = unname(kw$parameter),
+    p_value = kw$p.value,
+    p_formatted = format_p(kw$p.value)
+  )
+  
+  pw <- pairwise.wilcox.test(
+    tmp$score,
+    tmp$Ethnicity,
+    p.adjust.method = "BH"
+  )
+  
+  pw_long <- as.data.frame(as.table(pw$p.value)) %>%
+    dplyr::filter(!is.na(Freq)) %>%
+    dplyr::rename(
+      group1 = Var1,
+      group2 = Var2,
+      p_adj = Freq
+    ) %>%
+    dplyr::mutate(
+      score = score_label,
+      p_formatted = format_p(p_adj),
+      stars = sig_stars(p_adj)
+    ) %>%
+    dplyr::select(score, group1, group2, p_adj, p_formatted, stars)
+  
+  list(global = global, pairwise = pw_long)
+}
+
+get_adjusted_results <- function(df, score_col, score_label) {
+  
+  model_formula <- as.formula(
+    paste0(score_col, " ~ Ethnicity + Age + Gender + BMI + diet_PC1")
+  )
+  
+  model <- lm(model_formula, data = df)
+  
+  # Marginal F-test: ethnicity tested after adjustment for all other terms
+  drop_res <- drop1(model, test = "F")
+  
+  global <- data.frame(
+    score = score_label,
+    model = paste0(score_col, " ~ Ethnicity + Age + Gender + BMI + diet_PC1"),
+    ethnicity_df = drop_res["Ethnicity", "Df"],
+    residual_df = df.residual(model),
+    F_value = drop_res["Ethnicity", "F value"],
+    p_value = drop_res["Ethnicity", "Pr(>F)"],
+    p_formatted = format_p(drop_res["Ethnicity", "Pr(>F)"]),
+    adjusted_R2 = summary(model)$adj.r.squared
+  )
+  
+  emm <- emmeans(model, ~ Ethnicity)
+  
+  emm_table <- summary(emm) %>%
+    as.data.frame() %>%
+    dplyr::mutate(
+      score = score_label,
+      Ethnicity_label = dplyr::recode(
+        as.character(Ethnicity),
+        "C" = "Chinese",
+        "I" = "Indian",
+        "M" = "Malay"
+      )
+    ) %>%
+    dplyr::select(
+      score,
+      Ethnicity,
+      Ethnicity_label,
+      emmean,
+      SE,
+      df,
+      lower.CL,
+      upper.CL
+    )
+  
+  pairwise <- pairs(emm, adjust = "BH") %>%
+    summary() %>%
+    as.data.frame() %>%
+    dplyr::mutate(
+      score = score_label,
+      p_formatted = format_p(p.value),
+      stars = sig_stars(p.value)
+    ) %>%
+    dplyr::select(
+      score,
+      contrast,
+      estimate,
+      SE,
+      df,
+      t.ratio,
+      p.value,
+      p_formatted,
+      stars
+    )
+  
+  list(
+    model = model,
+    global = global,
+    emmeans = emm_table,
+    pairwise = pairwise
+  )
+}
+
+# ------------------------------------------------------------
+# 5. Unadjusted analyses
+# ------------------------------------------------------------
+
+unadj_crc1 <- get_unadjusted_results(
+  df = unified_df,
+  score_col = "CRC",
+  score_label = "Score 1: coefficient-based CRC score"
+)
+
+unadj_crc2 <- get_unadjusted_results(
+  df = unified_df,
+  score_col = "CRC_MRS_29sp_sum",
+  score_label = "Score 2: 29-species abundance-sum CRC score"
+)
+
+unadjusted_global <- dplyr::bind_rows(
+  unadj_crc1$global,
+  unadj_crc2$global
+)
+
+unadjusted_pairwise <- dplyr::bind_rows(
+  unadj_crc1$pairwise,
+  unadj_crc2$pairwise
+)
+
+cat("\n===== UNADJUSTED GLOBAL TESTS =====\n")
+print(unadjusted_global)
+
+cat("\n===== UNADJUSTED PAIRWISE TESTS =====\n")
+print(unadjusted_pairwise)
+
+write.csv(
+  unadjusted_global,
+  "figure/CRC_scores_unadjusted_global_tests.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  unadjusted_pairwise,
+  "figure/CRC_scores_unadjusted_pairwise_tests.csv",
+  row.names = FALSE
+)
+
+# ------------------------------------------------------------
+# 6. Adjusted analyses
+# ------------------------------------------------------------
+
+adj_crc1 <- get_adjusted_results(
+  df = unified_df,
+  score_col = "CRC",
+  score_label = "Score 1: coefficient-based CRC score"
+)
+
+adj_crc2 <- get_adjusted_results(
+  df = unified_df,
+  score_col = "CRC_MRS_29sp_sum",
+  score_label = "Score 2: 29-species abundance-sum CRC score"
+)
+
+adjusted_global <- dplyr::bind_rows(
+  adj_crc1$global,
+  adj_crc2$global
+)
+
+adjusted_emmeans <- dplyr::bind_rows(
+  adj_crc1$emmeans,
+  adj_crc2$emmeans
+)
+
+adjusted_pairwise <- dplyr::bind_rows(
+  adj_crc1$pairwise,
+  adj_crc2$pairwise
+)
+
+cat("\n===== ADJUSTED GLOBAL ETHNICITY EFFECTS =====\n")
+print(adjusted_global)
+
+cat("\n===== ADJUSTED MARGINAL MEANS =====\n")
+print(adjusted_emmeans)
+
+cat("\n===== ADJUSTED PAIRWISE COMPARISONS =====\n")
+print(adjusted_pairwise)
+
+write.csv(
+  adjusted_global,
+  "figure/CRC_scores_adjusted_global_ethnicity_effects.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  adjusted_emmeans,
+  "figure/CRC_scores_adjusted_marginal_means.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  adjusted_pairwise,
+  "figure/CRC_scores_adjusted_pairwise_comparisons.csv",
+  row.names = FALSE
+)
+
+# ------------------------------------------------------------
+# 7. Rebuttal-ready text output
+# ------------------------------------------------------------
+
+make_pairwise_sentence <- function(pairwise_df, score_label) {
+  pairwise_df %>%
+    dplyr::filter(score == score_label) %>%
+    dplyr::mutate(
+      sentence = paste0(
+        contrast,
+        ": estimate = ",
+        sprintf("%.4f", estimate),
+        ", SE = ",
+        sprintf("%.4f", SE),
+        ", adjusted p = ",
+        p_formatted,
+        " (", stars, ")"
+      )
+    ) %>%
+    dplyr::pull(sentence) %>%
+    paste(collapse = "\n")
+}
+
+score1_label <- "Score 1: coefficient-based CRC score"
+score2_label <- "Score 2: 29-species abundance-sum CRC score"
+
+g1 <- adjusted_global %>% dplyr::filter(score == score1_label)
+g2 <- adjusted_global %>% dplyr::filter(score == score2_label)
+
+rebuttal_text <- paste0(
+  "Analytic n = ", sample_info$analytic_n,
+  " (Chinese = ", sample_info$Chinese_n,
+  ", Indian = ", sample_info$Indian_n,
+  ", Malay = ", sample_info$Malay_n, ").\n",
+  "Diet PC1 explained ", sample_info$diet_PC1_variance_percent,
+  "% of food-group variance.\n\n",
+  
+  "Adjusted model used for Score 1:\n",
+  "CRC ~ Ethnicity + Age + Gender + BMI + diet_PC1\n",
+  "Overall adjusted ethnicity effect: F(",
+  g1$ethnicity_df, ", ", g1$residual_df, ") = ",
+  sprintf("%.2f", g1$F_value),
+  ", p = ", g1$p_formatted, ".\n",
+  "Adjusted pairwise comparisons:\n",
+  make_pairwise_sentence(adjusted_pairwise, score1_label),
+  "\n\n",
+  
+  "Adjusted model used for Score 2:\n",
+  "CRC_MRS_29sp_sum ~ Ethnicity + Age + Gender + BMI + diet_PC1\n",
+  "Overall adjusted ethnicity effect: F(",
+  g2$ethnicity_df, ", ", g2$residual_df, ") = ",
+  sprintf("%.2f", g2$F_value),
+  ", p = ", g2$p_formatted, ".\n",
+  "Adjusted pairwise comparisons:\n",
+  make_pairwise_sentence(adjusted_pairwise, score2_label),
+  "\n"
+)
+
+cat("\n===== REBUTTAL-READY TEXT =====\n")
+cat(rebuttal_text)
+
+writeLines(
+  rebuttal_text,
+  "figure/CRC_scores_rebuttal_numbers.txt"
+)
+
+# ------------------------------------------------------------
+# 8. Optional: save model summaries
+# ------------------------------------------------------------
+
+capture.output(
+  summary(adj_crc1$model),
+  file = "figure/CRC_score1_adjusted_model_summary.txt"
+)
+
+capture.output(
+  summary(adj_crc2$model),
+  file = "figure/CRC_score2_adjusted_model_summary.txt"
+)
+
+message("\nDone. Output files saved in the figure/ folder.")
+```
+
+
+
+
+
+
+
+
+

@@ -26,8 +26,10 @@ library(broom)
 ```{r}
 species_data_800 = read_excel("data/species_866.xlsx")
 ethnicity_800 = read_excel("data/ethnicity_866.xlsx")
+food_data = read_xlsx("data/FFQA862_new.xlsx")
 species_data_800
 ethnicity_800
+food_data
 ```
 
 ```{r}

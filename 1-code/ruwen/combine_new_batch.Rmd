@@ -42,14 +42,43 @@ helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Ge
 
 ```
 ```{r}
+# Check which columns are missing from each dataframe
+cols_needed <- c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", 
+                 "FREG8_Age", "DBI13_Height", "DBI14_Weight", "DLAB27_Hba1C_Percent",
+                 "DLAB83_CRP", "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L")
+
+setdiff(cols_needed, colnames(helios_core_new))  # missing from new
+setdiff(cols_needed, colnames(helios_core_old))  # missing from old
+helios_core_new
+```
+
+
+
+```{r}
 library(writexl)
+
+helios_core_new <- helios_core_new %>%
+  rename(DLAB27_Hba1C_Percent = DLAB27_HbA1c_Percent,
+         DLAB25_Gluf_Mmol_L   = DLAB25_Gluf_mmol_L)
+
+helios800_diabetes <- rbind(
+  helios_core_new[, cols_needed],
+  helios_core_old[, cols_needed]
+)
+helios800_diabetes
 helios800 = rbind(helios_core_new[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")], helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight")])
 
 helios500 = helios_core_old[,c("FREG0_PID", "FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "DBI13_Height", "DBI14_Weight", "DLAB27_Hba1C_Percent",
                    "DLAB83_CRP", "DLAB81_Insulin", "DLAB25_Gluf_Mmol_L")]
 helios800
-#write_xlsx(helios800, "data/helios800.xlsx")
+#write_xlsx(helios800_diabetes, "data/helios800_diabetes.xlsx")
 ```
+```{r}
+helios_core_new
+helios_core_old
+```
+
+
 ```{r}
 helios800$BMI = helios800$DBI14_Weight/(helios800$DBI13_Height*0.01)^2
 helios800$BMI_groups <- cut(helios800$BMI, breaks = c(0,18.5,23,25,Inf),
@@ -80,6 +109,7 @@ helios500
 
 ```{r}
 helios_core = read_excel("data/helios800.xlsx")
+helios_core
 metadata_micro = read_csv("data/metadata_fil_01032024_redacted.csv")
 sample_list = metadata_micro$`Original Sample name`
 helios_new <- filter(helios_core, FREG1_Barcode %in% sample_list)
@@ -101,6 +131,7 @@ helios_new_list = helios_new$FREG1_Barcode
 micro_list <- filter(metadata_micro, metadata_micro$`Original Sample name` %in% helios_new_list)
 species_new = filter(species, species$`SAM id` %in% micro_list$`Library ID`)
 species_new
+helios_new
 ```
 
 ```{r}
@@ -109,6 +140,9 @@ new_merge = merge(metadata_micro, species_new, by.x = "Library ID", by.y = "SAM 
 species_meta = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "BMI", "BMI_groups")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
 species_meta = species_meta %>% drop_na(FREG5_Ethnic_Group)
 species_meta
+
+species_meta2 = merge(x = helios_new[,c("FREG1_Barcode", "FREG5_Ethnic_Group", "FREG7_Gender", "FREG8_Age", "BMI", "BMI_groups")], y = new_merge, by.y = "Original Sample name", by.x = "FREG1_Barcode")
+species_meta = species_meta %>% drop_na(FREG5_Ethnic_Group)
 ```
 
 ```{r}
