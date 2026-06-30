@@ -6,14 +6,8 @@ library(scales)
 
 gender_colors <- c("F" = "#00A1D5FF", "M" = "#B24745FF")
 
-ethnicity_colors <-
-  c(
-    "C" = "#B24745FF",
-    "I" = "#79AF97FF",
-    "M" = "#DF8F44FF",
-    "O" = "#80796BFF"
-  )
 
+ethnicity_colors <- c("C" = "#9FDDCA", "I" = "#9EA3F1", "M" = "#E17887", "O" = "#80796BFF")
 #
 #
 # scales::show_col(ggsci::pal_jama()(7))
