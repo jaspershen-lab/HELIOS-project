@@ -130,7 +130,7 @@ These scripts analyze associations between microbiome features and clinical or m
 
 The suggested order for running the scripts is:
 
-### Step 1: Open the project
+Step 1: Open the project
 
 Open the RStudio project file:
 
@@ -140,21 +140,21 @@ HELIOS-project.Rproj
 
 Alternatively, set the working directory to the repository root.
 
-### Step 2: Load shared functions
+Step 2: Load shared functions
 
-### Step 3: Prepare input data
+Step 3: Prepare input data
 
-### Step 4: Generate study summary tables and figures
+Step 4: Generate study summary tables and figures
 
-### Step 5: Run diversity and PERMANOVA analyses
+Step 5: Run diversity and PERMANOVA analyses
 
-### Step 6: Run differential abundance analyses
+Step 6: Run differential abundance analyses
 
-### Step 7: Run diet–microbiome analyses
+Step 7: Run diet–microbiome analyses
 
-### Step 8: Run metabolic and disease risk analyses
+Step 8: Run metabolic and disease risk analyses
 
-### Step 9: Generate final manuscript and supplementary figures
+Step 9: Generate final manuscript and supplementary figures
 
 
 
